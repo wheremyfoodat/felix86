@@ -1,0 +1,63 @@
+cmake_minimum_required(VERSION 3.20)
+
+project(felix86)
+
+add_compile_options(-fsanitize=address)
+add_link_options(-fsanitize=address)
+
+set(CMAKE_BUILD_TYPE RelWithDebInfo)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 20)
+
+# add_subdirectory(external/biscuit)
+# add_subdirectory(external/plog)
+add_subdirectory(external/Catch2)
+add_subdirectory(external/xbyak)
+# add_subdirectory(external/riscv-disassembler)
+# add_subdirectory(external/zydis)
+# add_subdirectory(external/ELFIO)
+
+set(FELIX86_FRONTEND_SOURCES
+    src/felix86/frontend/frontend.c
+)
+
+set(FELIX86_IR_SOURCES
+    src/felix86/ir/block_metadata.cpp
+    src/felix86/ir/emitter.c
+    src/felix86/ir/handlers_weak.c
+    src/felix86/ir/handlers.c
+    src/felix86/ir/instruction_list.c
+    src/felix86/ir/passes.c
+    src/felix86/ir/passes.cpp
+    src/felix86/ir/print.c
+)
+
+set(FELIX86_COMMON_SOURCES
+)
+
+set(FELIX86_BACKEND_SOURCES
+    src/felix86/backend/block_metadata.cpp
+)
+
+set(FELIX86_CORE_SOURCES
+    ${FELIX86_COMMON_SOURCES}
+    ${FELIX86_FRONTEND_SOURCES}
+    ${FELIX86_IR_SOURCES}
+    ${FELIX86_BACKEND_SOURCES}
+    src/felix86/felix86.c
+)
+
+set(FELIX86_INCLUDES
+    include
+    src
+    external/robin-map/include
+)
+
+add_library(felix86_core STATIC)
+target_sources(felix86_core PUBLIC ${FELIX86_CORE_SOURCES})
+target_include_directories(felix86_core PUBLIC ${FELIX86_INCLUDES})
+
+add_executable(felix86_test)
+target_sources(felix86_test PRIVATE tests/add.cpp)
+target_link_libraries(felix86_test PRIVATE felix86_core Catch2::Catch2WithMain xbyak)
+target_compile_options(felix86_test PRIVATE $<$<COMPILE_LANGUAGE:CPP>:-fno-operator-names>)

@@ -1,0 +1,5 @@
+#pragma once
+
+#include "felix86/ir/block.h"
+
+void ir_print_block(ir_block_t* block);
