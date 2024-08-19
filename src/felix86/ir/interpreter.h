@@ -1,0 +1,7 @@
+#pragma once
+
+#include "felix86/common/state.h"
+#include "felix86/common/environment.h"
+#include "felix86/ir/block.h"
+
+void ir_interpret_block(environment_t* env, ir_block_t* block, x86_state_t* state);

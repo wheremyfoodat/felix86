@@ -13,6 +13,7 @@ typedef struct {
     ir_block_t* block;
     u64 current_address;
     bool exit;
+    bool testing;
 } ir_emitter_state_t;
 
 ir_instruction_t* ir_emit_add(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);

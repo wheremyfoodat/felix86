@@ -82,6 +82,11 @@ ir_instruction_t* ir_emit_greater_than(ir_emitter_state_t* state, ir_instruction
 
 ir_instruction_t* ir_emit_lea(ir_emitter_state_t* state, ir_instruction_t* base, ir_instruction_t* index, u8 scale, u32 displacement)
 {
+    if (!base && !index) {
+        ir_instruction_t* rip = ir_emit_get_guest(state, X86_REF_RIP);
+        base = rip;
+    }
+
     ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
     instruction->opcode = IR_LEA;
     instruction->type = IR_TYPE_LEA;

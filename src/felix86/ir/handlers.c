@@ -61,6 +61,9 @@ IR_HANDLE(mov_rm8_imm8) {
 }
 
 IR_HANDLE(hlt) {
-    printf("Hit hlt!\n");
-    state->exit = true;
+    if (!state->testing) {
+        ERROR("Hit HLT instruction during: %016lx", state->current_address);
+    } else {
+        state->exit = true;
+    }
 }

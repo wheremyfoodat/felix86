@@ -1,5 +1,5 @@
 #include "felix86/frontend/frontend.h"
-#include "felix86/frontend/environment.h"
+#include "felix86/common/environment.h"
 #include "felix86/frontend/instruction.h"
 #include "felix86/ir/handlers.h"
 #include "felix86/ir/emitter.h"
@@ -214,7 +214,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state, environment_t* env)
         }
     } else if (primary.decoding_flag == OPCODE_FLAG) {
         inst.operand_reg.type = X86_OP_TYPE_REGISTER;
-        inst.operand_reg.reg = X86_REF_RAX + (opcode & 0x07);
+        inst.operand_reg.reg = (X86_REF_RAX + (opcode & 0x07)) | (prefixes.rex_b << 3);
     }
 
     switch (primary.immediate_size) {

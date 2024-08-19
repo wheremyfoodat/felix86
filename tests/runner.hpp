@@ -51,10 +51,29 @@ static void interrupt(void* context, u8 vector) {}
 #define FELIX86_TEST(name) struct Code_##name : Xbyak::CodeGenerator { \
     Code_##name(); \
     ~Code_##name() { free(data); } \
+    void verify(x86_ref_t ref, u64 value) { checks.push_back({ ref, value }); } \
+    void verify_flag(x86_flag_t flag, bool value) { switch (flag) { \
+        case X86_FLAG_CF: flag_check &= ~(1 << 0); flag_check |= value << 0; break; \
+        case X86_FLAG_PF: flag_check &= ~(1 << 2); flag_check |= value << 2; break; \
+        case X86_FLAG_AF: flag_check &= ~(1 << 4); flag_check |= value << 4; break; \
+        case X86_FLAG_ZF: flag_check &= ~(1 << 6); flag_check |= value << 6; break; \
+        case X86_FLAG_SF: flag_check &= ~(1 << 7); flag_check |= value << 7; break; \
+        case X86_FLAG_OF: flag_check &= ~(1 << 11); flag_check |= value << 11; break; \
+        default: REQUIRE(false); break; \
+    } } \
+    u8* data; \
+private: \
     void emit_code(); \
+    void verify_checks() { \
+        for (auto& check : checks) { \
+            REQUIRE(felix86_get_guest(recompiler, check.first) == check.second); \
+        } \
+        REQUIRE(felix86_get_guest(recompiler, X86_REF_FLAGS) == flag_check); \
+    } \
     environment_t env; \
     felix86_recompiler_t* recompiler; \
-    u8* data; \
+    std::vector<std::pair<x86_ref_t, u64>> checks; \
+    u64 flag_check = 0; \
 }; \
 TEST_CASE(#name, "[felix86]") { \
     Code_##name c; \
@@ -72,9 +91,11 @@ Code_##name::Code_##name() : Xbyak::CodeGenerator(0x1000, malloc(0x2000)) { \
     env.get_pointer = get_pointer; \
     env.context = data; \
     emit_code(); \
-    felix86_recompiler_config_t config = { .env = &env }; \
+    hlt(); /* emit a hlt instruction to stop the recompiler */ \
+    felix86_recompiler_config_t config = { .env = &env, .testing = true }; \
     recompiler = felix86_recompiler_create(&config); \
     felix86_recompiler_run(recompiler, 0); \
+    verify_checks(); \
     felix86_recompiler_destroy(recompiler); \
 } \
 void Code_##name::emit_code()

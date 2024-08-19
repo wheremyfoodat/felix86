@@ -6,18 +6,21 @@
 #include "felix86/ir/emitter.h"
 #include "felix86/ir/passes.h"
 #include "felix86/ir/print.h"
+#include "felix86/ir/interpreter.h"
 #include <stdlib.h>
 
 struct felix86_recompiler_s {
     environment_t* env;
     ir_block_metadata_t* block_metadata;
     x86_state_t state;
+    bool testing;
 };
 
 felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* config) {
     felix86_recompiler_t* recompiler = calloc(1, sizeof(felix86_recompiler_t));
     recompiler->env = config->env;
     recompiler->block_metadata = ir_block_metadata_create();
+    recompiler->testing = config->testing;
 
     return recompiler;
 }
@@ -27,7 +30,7 @@ void felix86_recompiler_destroy(felix86_recompiler_t* recompiler) {
     free(recompiler);
 }
 
-u64 felix86_get_gpr(felix86_recompiler_t* recompiler, x86_ref_t ref) {
+u64 felix86_get_guest(felix86_recompiler_t* recompiler, x86_ref_t ref) {
     switch (ref) {
         case X86_REF_RAX:
             return recompiler->state.gprs[0];
@@ -74,7 +77,7 @@ u64 felix86_get_gpr(felix86_recompiler_t* recompiler, x86_ref_t ref) {
     }
 }
 
-void felix86_set_gpr(felix86_recompiler_t* recompiler, x86_ref_t ref, u64 value) {
+void felix86_set_guest(felix86_recompiler_t* recompiler, x86_ref_t ref, u64 value) {
     switch (ref) {
         case X86_REF_RAX:
             recompiler->state.gprs[0] = value;
@@ -145,18 +148,20 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler, u
     // TODO: check for backend block? needs asm dispatcher
     ir_block_t* block = ir_block_metadata_get_block(recompiler->block_metadata, recompiler->state.rip);
 
-    ir_emitter_state_t state;
+    ir_emitter_state_t state = {0};
     state.block = block;
     state.current_address = recompiler->state.rip;
     state.exit = false;
+    state.testing = recompiler->testing;
     frontend_compile_block(&state, recompiler->env);
 
-    ir_naming_pass(block);
     ir_local_common_subexpression_elimination_pass(block);
     ir_copy_propagation_pass(block);
     ir_dead_store_elimination_pass(block);
     ir_dead_code_elimination_pass(block);
-    ir_print_block(block);
+    ir_naming_pass(block);
+    // ir_print_block(block);
+    ir_interpret_block(recompiler->env, block, &recompiler->state);
 
     return OutOfCycles;
 }
