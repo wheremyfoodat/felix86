@@ -5,7 +5,7 @@
 
 static u64 temps[4096] = {0};
 
-void ir_interpret_instruction(environment_t* env, ir_instruction_t* instruction, x86_state_t* state)
+void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
 {
     switch (instruction->opcode) {
         case IR_NULL: {
@@ -123,35 +123,35 @@ void ir_interpret_instruction(environment_t* env, ir_instruction_t* instruction,
             break;
         }
         case IR_READ_BYTE: {
-            temps[instruction->name] = env->read8(env->context, temps[instruction->one_operand.source->name]);
+            temps[instruction->name] = *(u8*)(temps[instruction->one_operand.source->name]);
             break;
         }
         case IR_READ_WORD: {
-            temps[instruction->name] = env->read16(env->context, temps[instruction->one_operand.source->name]);
+            temps[instruction->name] = *(u16*)(temps[instruction->one_operand.source->name]);
             break;
         }
         case IR_READ_DWORD: {
-            temps[instruction->name] = env->read32(env->context, temps[instruction->one_operand.source->name]);
+            temps[instruction->name] = *(u32*)(temps[instruction->one_operand.source->name]);
             break;
         }
         case IR_READ_QWORD: {
-            temps[instruction->name] = env->read64(env->context, temps[instruction->one_operand.source->name]);
+            temps[instruction->name] = *(u64*)(temps[instruction->one_operand.source->name]);
             break;
         }
         case IR_WRITE_BYTE: {
-            env->write8(env->context, temps[instruction->one_operand.source->name], temps[instruction->one_operand.source->name]);
+            *(u8*)(temps[instruction->one_operand.source->name]) = temps[instruction->one_operand.source->name];
             break;
         }
         case IR_WRITE_WORD: {
-            env->write16(env->context, temps[instruction->one_operand.source->name], temps[instruction->one_operand.source->name]);
+            *(u16*)(temps[instruction->one_operand.source->name]) = temps[instruction->one_operand.source->name];
             break;
         }
         case IR_WRITE_DWORD: {
-            env->write32(env->context, temps[instruction->one_operand.source->name], temps[instruction->one_operand.source->name]);
+            *(u32*)(temps[instruction->one_operand.source->name]) = temps[instruction->one_operand.source->name];
             break;
         }
         case IR_WRITE_QWORD: {
-            env->write64(env->context, temps[instruction->one_operand.source->name], temps[instruction->one_operand.source->name]);
+            *(u64*)(temps[instruction->one_operand.source->name]) = temps[instruction->one_operand.source->name];
             break;
         }
         case IR_START_OF_BLOCK: {
@@ -254,12 +254,12 @@ void ir_interpret_instruction(environment_t* env, ir_instruction_t* instruction,
     // printf("t%d = %016lx\n", instruction->name, temps[instruction->name]);
 }
 
-void ir_interpret_block(environment_t* env, ir_block_t* block, x86_state_t* state)
+void ir_interpret_block(ir_block_t* block, x86_state_t* state)
 {
     memset(temps, 0, sizeof(temps));
     ir_instruction_list_t* current = block->instructions;
     while (current) {
-        ir_interpret_instruction(env, &current->instruction, state);
+        ir_interpret_instruction(&current->instruction, state);
         current = current->next;
     }
 }

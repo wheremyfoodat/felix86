@@ -1,5 +1,4 @@
 #include "felix86/frontend/frontend.h"
-#include "felix86/common/environment.h"
 #include "felix86/frontend/instruction.h"
 #include "felix86/ir/handlers.h"
 #include "felix86/ir/emitter.h"
@@ -99,9 +98,9 @@ u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, x86_prefi
     return displacement_size;
 }
 
-void frontend_compile_instruction(ir_emitter_state_t* state, environment_t* env)
+void frontend_compile_instruction(ir_emitter_state_t* state)
 {
-    u8* data = env->get_pointer(env->context, state->current_address);
+    u8* data = (u8*)state->current_address;
 
     int index = 0;
     bool prefix = false;
@@ -267,14 +266,15 @@ void frontend_compile_instruction(ir_emitter_state_t* state, environment_t* env)
         }
     }
 
+    inst.length = index;
     primary.fn(state, &inst);
 
-    state->current_address += index;
+    state->current_address += inst.length;
 }
 
-void frontend_compile_block(ir_emitter_state_t* state, environment_t* env)
+void frontend_compile_block(ir_emitter_state_t* state)
 {
     while (!state->exit) {
-        frontend_compile_instruction(state, env);
+        frontend_compile_instruction(state);
     }
 }

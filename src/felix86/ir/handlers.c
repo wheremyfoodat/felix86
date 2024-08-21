@@ -42,6 +42,51 @@ IR_HANDLE(add_rm8_r8) {
     ir_emit_set_cpazso(state, c, p, a, z, s, o);
 }
 
+IR_HANDLE(push_r64) {
+    ir_instruction_t* rsp = ir_emit_get_gpr64(state, X86_REF_RSP);
+    if (inst->prefixes.operand_override) {
+        ir_instruction_t* reg = ir_emit_get_gpr16(state, inst->operand_reg.reg);
+        ir_instruction_t* size = ir_emit_immediate(state, 2);
+        ir_instruction_t* rsp_sub = ir_emit_sub(state, rsp, size);
+        ir_emit_write_word(state, rsp_sub, reg);
+        ir_emit_set_gpr64(state, X86_REF_RSP, rsp_sub);
+    } else {
+        ir_instruction_t* reg = ir_emit_get_gpr64(state, inst->operand_reg.reg);
+        ir_instruction_t* size = ir_emit_immediate(state, 8);
+        ir_instruction_t* rsp_sub = ir_emit_sub(state, rsp, size);
+        ir_emit_write_qword(state, rsp_sub, reg);
+        ir_emit_set_gpr64(state, X86_REF_RSP, rsp_sub);
+    }
+}
+
+IR_HANDLE(pop_r64) {
+    ir_instruction_t* rsp = ir_emit_get_gpr64(state, X86_REF_RSP);
+    if (inst->prefixes.operand_override) {
+        ir_instruction_t* size = ir_emit_immediate(state, 2);
+        ir_instruction_t* rsp_add = ir_emit_add(state, rsp, size);
+        ir_instruction_t* value = ir_emit_read_word(state, rsp_add);
+        ir_emit_set_gpr64(state, X86_REF_RSP, rsp_add);
+        ir_emit_set_gpr16(state, inst->operand_reg.reg, value);
+    } else {
+        ir_instruction_t* size = ir_emit_immediate(state, 8);
+        ir_instruction_t* rsp_add = ir_emit_add(state, rsp, size);
+        ir_instruction_t* value = ir_emit_read_qword(state, rsp_add);
+        ir_emit_set_gpr64(state, X86_REF_RSP, rsp_add);
+        ir_emit_set_gpr64(state, inst->operand_reg.reg, value);
+    }
+}
+
+IR_HANDLE(mov_rm32_r32) {
+    ir_instruction_t* reg = ir_emit_get_reg(state, &inst->prefixes, &inst->operand_reg);
+    ir_emit_set_rm(state, &inst->prefixes, &inst->operand_rm, reg);
+}
+
+IR_HANDLE(lea) {
+    ir_instruction_t* address = ir_emit_get_rm(state, &inst->prefixes, &inst->operand_rm);
+    ir_instruction_t* reg = ir_emit_get_reg(state, &inst->prefixes, &inst->operand_reg);
+    ir_emit_set_reg(state, &inst->prefixes, &inst->operand_reg, address);
+}
+
 IR_HANDLE(mov_r8_imm8) {
     if (inst->operand_imm.immediate.size != 1) {
         ERROR("Invalid immediate size for mov_r8_imm8: %d", inst->operand_imm.immediate.size);
@@ -51,6 +96,11 @@ IR_HANDLE(mov_r8_imm8) {
     ir_emit_set_reg8(state, &inst->prefixes, &inst->operand_reg, imm);
 }
 
+IR_HANDLE(mov_r32_imm32) {
+    ir_instruction_t* imm = ir_emit_immediate(state, inst->operand_imm.immediate.data);
+    ir_emit_set_reg(state, &inst->prefixes, &inst->operand_reg, imm);
+}
+
 IR_HANDLE(mov_rm8_imm8) {
     if (inst->operand_imm.immediate.size != 1) {
         ERROR("Invalid immediate size for mov_rm8_imm8: %d", inst->operand_imm.immediate.size);
@@ -58,6 +108,31 @@ IR_HANDLE(mov_rm8_imm8) {
 
     ir_instruction_t* imm = ir_emit_immediate(state, inst->operand_imm.immediate.data);
     ir_emit_set_rm8(state, &inst->prefixes, &inst->operand_rm, imm);
+}
+
+IR_HANDLE(mov_rm32_imm32) {
+    ir_instruction_t* imm = ir_emit_immediate(state, inst->operand_imm.immediate.data);
+    ir_emit_set_rm(state, &inst->prefixes, &inst->operand_rm, imm);
+}
+
+IR_HANDLE(call_rel32) {
+    if (inst->operand_imm.immediate.size != 4) {
+        ERROR("Invalid immediate size for call_rel32: %d", inst->operand_imm.immediate.size);
+    }
+
+    u64 displacement = (i64)(i32)inst->operand_imm.immediate.data;
+    u64 jumpAddress = state->current_address + inst->length + displacement;
+    u64 returnAddress = state->current_address + inst->length;
+    ir_instruction_t* rip = ir_emit_immediate(state, jumpAddress);
+    ir_instruction_t* returnRip = ir_emit_immediate(state, returnAddress);
+    ir_instruction_t* rsp = ir_emit_get_gpr64(state, X86_REF_RSP);
+    ir_instruction_t* size = ir_emit_immediate(state, 8);
+    ir_instruction_t* rsp_sub = ir_emit_sub(state, rsp, size);
+    ir_emit_write_qword(state, rsp_sub, returnRip);
+    ir_emit_set_gpr64(state, X86_REF_RSP, rsp_sub);
+    ir_emit_set_gpr64(state, X86_REF_RIP, rip);
+
+    state->exit = true;
 }
 
 IR_HANDLE(hlt) {

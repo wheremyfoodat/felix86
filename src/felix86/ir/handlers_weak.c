@@ -50,8 +50,8 @@ void __attribute__((weak)) ir_handle_cmp_r8_rm8(ir_emitter_state_t* state, x86_i
 void __attribute__((weak)) ir_handle_cmp_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "cmp_r32_rm32"); }
 void __attribute__((weak)) ir_handle_cmp_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "cmp_al_imm8"); }
 void __attribute__((weak)) ir_handle_cmp_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "cmp_eax_imm32"); }
-void __attribute__((weak)) ir_handle_push_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "push_r32"); }
-void __attribute__((weak)) ir_handle_pop_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "pop_r32"); }
+void __attribute__((weak)) ir_handle_push_r64(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "push_r64"); }
+void __attribute__((weak)) ir_handle_pop_r64(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "pop_r64"); }
 void __attribute__((weak)) ir_handle_movsxd(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "movsxd"); }
 void __attribute__((weak)) ir_handle_push_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "push_imm32"); }
 void __attribute__((weak)) ir_handle_imul_r32_rm32_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "imul_r32_rm32_imm32"); }

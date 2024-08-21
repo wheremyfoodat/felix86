@@ -257,7 +257,7 @@ ir_instruction_t* ir_emit_get_rm8(ir_emitter_state_t* state, x86_prefixes_t* pre
     }
 }
 
-ir_instruction_t* ir_emit_get_gpr(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* reg_operand)
+ir_instruction_t* ir_emit_get_reg(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* reg_operand)
 {
     if (prefixes->rex_w) {
         return ir_emit_get_gpr64(state, reg_operand->reg);
@@ -271,7 +271,7 @@ ir_instruction_t* ir_emit_get_gpr(ir_emitter_state_t* state, x86_prefixes_t* pre
 ir_instruction_t* ir_emit_get_rm(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* rm_operand)
 {
     if (rm_operand->type == X86_OP_TYPE_REGISTER) {
-        return ir_emit_get_gpr(state, prefixes, rm_operand);
+        return ir_emit_get_reg(state, prefixes, rm_operand);
     } else {
         ir_instruction_t* (*get_guest)(ir_emitter_state_t* state, x86_ref_t reg) = prefixes->address_override ? ir_emit_get_gpr32 : ir_emit_get_gpr64;
         ir_instruction_t* base = rm_operand->memory.base != X86_REF_COUNT ? get_guest(state, rm_operand->memory.base) : NULL;
@@ -333,7 +333,7 @@ ir_instruction_t* ir_emit_set_rm8(ir_emitter_state_t* state, x86_prefixes_t* pre
     }
 }
 
-ir_instruction_t* ir_emit_set_gpr(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* reg_operand, ir_instruction_t* source)
+ir_instruction_t* ir_emit_set_reg(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* reg_operand, ir_instruction_t* source)
 {
     if (prefixes->rex_w) {
         return ir_emit_set_gpr64(state, reg_operand->reg, source);
@@ -347,7 +347,7 @@ ir_instruction_t* ir_emit_set_gpr(ir_emitter_state_t* state, x86_prefixes_t* pre
 ir_instruction_t* ir_emit_set_rm(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* rm_operand, ir_instruction_t* source)
 {
     if (rm_operand->type == X86_OP_TYPE_REGISTER) {
-        return ir_emit_set_gpr(state, prefixes, rm_operand, source);
+        return ir_emit_set_reg(state, prefixes, rm_operand, source);
     } else {
         ir_instruction_t* (*get_guest)(ir_emitter_state_t* state, x86_ref_t reg) = prefixes->address_override ? ir_emit_get_gpr32 : ir_emit_get_gpr64;
         ir_instruction_t* base = rm_operand->memory.base != X86_REF_COUNT ? get_guest(state, rm_operand->memory.base) : NULL;

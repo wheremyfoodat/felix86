@@ -167,8 +167,36 @@ void ir_print_instruction(ir_instruction_t* instruction) {
             printf(", t%d)", instruction->set_flag.source->name);
             break;
         }
+        case IR_READ_BYTE: {
+            printf("t%d = byte[t%d]", instruction->name, instruction->one_operand.source->name);
+            break;
+        }
+        case IR_READ_WORD: {
+            printf("t%d = word[t%d]", instruction->name, instruction->one_operand.source->name);
+            break;
+        }
+        case IR_READ_DWORD: {
+            printf("t%d = dword[t%d]", instruction->name, instruction->one_operand.source->name);
+            break;
+        }
+        case IR_READ_QWORD: {
+            printf("t%d = qword[t%d]", instruction->name, instruction->one_operand.source->name);
+            break;
+        }
         case IR_WRITE_BYTE: {
             printf("byte[t%d] = t%d", instruction->two_operand.source1->name, instruction->two_operand.source2->name);
+            break;
+        }
+        case IR_WRITE_WORD: {
+            printf("word[t%d] = t%d", instruction->two_operand.source1->name, instruction->two_operand.source2->name);
+            break;
+        }
+        case IR_WRITE_DWORD: {
+            printf("dword[t%d] = t%d", instruction->two_operand.source1->name, instruction->two_operand.source2->name);
+            break;
+        }
+        case IR_WRITE_QWORD: {
+            printf("qword[t%d] = t%d", instruction->two_operand.source1->name, instruction->two_operand.source2->name);
             break;
         }
         case IR_START_OF_BLOCK: {
@@ -176,12 +204,12 @@ void ir_print_instruction(ir_instruction_t* instruction) {
             break;
         }
         default: {
-            printf("Unknown opcode\n");
+            printf("Unknown opcode: %d", instruction->opcode);
             break;
         }
     }
 
-    printf("\t\t(uses: %d)", instruction->uses);
+    // printf("\t\t(uses: %d)", instruction->uses);
     printf("\n");
 }
 

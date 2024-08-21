@@ -185,7 +185,6 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
 
     if (ehdr.e_shstrndx == 0) {
         WARN("File %s has no section header string table", path);
-        goto cleanup;
     }
 
     elf.entry = ehdr.e_entry;

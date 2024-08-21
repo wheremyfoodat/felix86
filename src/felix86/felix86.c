@@ -10,7 +10,6 @@
 #include <stdlib.h>
 
 struct felix86_recompiler_s {
-    environment_t* env;
     ir_block_metadata_t* block_metadata;
     x86_state_t state;
     bool testing;
@@ -18,7 +17,6 @@ struct felix86_recompiler_s {
 
 felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* config) {
     felix86_recompiler_t* recompiler = calloc(1, sizeof(felix86_recompiler_t));
-    recompiler->env = config->env;
     recompiler->block_metadata = ir_block_metadata_create();
     recompiler->testing = config->testing;
 
@@ -153,15 +151,15 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler, u
     state.current_address = recompiler->state.rip;
     state.exit = false;
     state.testing = recompiler->testing;
-    frontend_compile_block(&state, recompiler->env);
+    frontend_compile_block(&state);
 
     ir_local_common_subexpression_elimination_pass(block);
     ir_copy_propagation_pass(block);
     ir_dead_store_elimination_pass(block);
     ir_dead_code_elimination_pass(block);
     ir_naming_pass(block);
-    // ir_print_block(block);
-    ir_interpret_block(recompiler->env, block, &recompiler->state);
+    ir_print_block(block);
+    ir_interpret_block(block, &recompiler->state);
 
     return OutOfCycles;
 }

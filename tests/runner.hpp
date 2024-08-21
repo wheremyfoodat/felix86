@@ -70,7 +70,6 @@ private: \
         } \
         REQUIRE(felix86_get_guest(recompiler, X86_REF_FLAGS) == flag_check); \
     } \
-    environment_t env; \
     felix86_recompiler_t* recompiler; \
     std::vector<std::pair<x86_ref_t, u64>> checks; \
     u64 flag_check = 0; \
@@ -80,20 +79,11 @@ TEST_CASE(#name, "[felix86]") { \
 } \
 Code_##name::Code_##name() : Xbyak::CodeGenerator(0x1000, malloc(0x2000)) { \
     data = (u8*)getCode(); \
-    env.read8 = read8; \
-    env.read16 = read16; \
-    env.read32 = read32; \
-    env.read64 = read64; \
-    env.write8 = write8; \
-    env.write16 = write16; \
-    env.write32 = write32; \
-    env.write64 = write64; \
-    env.get_pointer = get_pointer; \
-    env.context = data; \
     emit_code(); \
     hlt(); /* emit a hlt instruction to stop the recompiler */ \
-    felix86_recompiler_config_t config = { .env = &env, .testing = true }; \
+    felix86_recompiler_config_t config = { .testing = true }; \
     recompiler = felix86_recompiler_create(&config); \
+    felix86_set_guest(recompiler, X86_REF_RIP, (u64)data); \
     felix86_recompiler_run(recompiler, 0); \
     verify_checks(); \
     felix86_recompiler_destroy(recompiler); \

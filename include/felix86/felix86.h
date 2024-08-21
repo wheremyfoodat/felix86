@@ -4,11 +4,9 @@
 extern "C" {
 #endif
 
-#include "felix86/common/environment.h"
 #include "felix86/frontend/instruction.h"
 
 typedef struct {
-    environment_t* env;
     bool testing;
 } felix86_recompiler_config_t;
 
