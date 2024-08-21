@@ -232,81 +232,7 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
         }
     }
 
-    elf.program = mmap(NULL, highest_vaddr, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (elf.program == MAP_FAILED) {
-        WARN("Failed to allocate memory for ELF file %s", path);
-        goto cleanup;
-    }
-
-    for (Elf64_Half i = 0; i < phdrtable_size; i += ehdr.e_phentsize) {
-        Elf64_Phdr* phdr = (Elf64_Phdr*)(phdrtable + i);
-        switch (phdr->p_type) {
-            case PT_LOAD: {
-                if (phdr->p_filesz == 0) {
-                    break;
-                }
-
-                u8 prot = 0;
-                if (phdr->p_flags & PF_R) {
-                    prot |= PROT_READ;
-                }
-
-                if (phdr->p_flags & PF_W) {
-                    prot |= PROT_WRITE;
-                }
-
-                if (phdr->p_flags & PF_X) {
-                    prot |= PROT_EXEC;
-                }
-
-                u64 segment_base = (u64)elf.program + PAGE_START(phdr->p_vaddr);
-                u64 segment_size = phdr->p_filesz + PAGE_OFFSET(phdr->p_vaddr);
-
-                // TODO: instead of reading the segment, we should file map it and remove the fopen stuff
-                void* addr = mmap((void*)segment_base, segment_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0);
-                if (addr == MAP_FAILED) {
-                    WARN("Failed to allocate memory for segment in file %s", path);
-                    WARN("Error: %s (%d)", strerror(errno), errno);
-                    goto cleanup;
-                }
-
-                if (phdr->p_filesz > 0) {
-                    result = fread(file, addr, phdr->p_offset, phdr->p_filesz, user_data);
-                    if (!result) {
-                        WARN("Failed to read segment from file %s", path);
-                        goto cleanup;
-                    }
-                }
-
-                mprotect(addr, segment_size, prot);
-
-                if (phdr->p_memsz > phdr->p_filesz) {
-                    u64 bss_start = (u64)elf.program + phdr->p_vaddr + phdr->p_filesz;
-                    u64 bss_page_start = PAGE_ALIGN(bss_start);
-                    u64 bss_page_end = PAGE_ALIGN((u64)elf.program + phdr->p_vaddr + phdr->p_memsz);
-
-                    // Only clear padding bytes if the section is writable (why does FEX-Emu do this?)
-                    if (phdr->p_flags & PF_W) {
-                        memset((void*)bss_start, 0, bss_page_start - bss_start);
-                    }
-
-                    if (bss_page_start != bss_page_end) {
-                        void* bss = mmap((void*)bss_page_start, bss_page_end - bss_page_start, prot, MAP_PRIVATE | MAP_FIXED_NOREPLACE | MAP_ANONYMOUS, -1, 0);
-                        if (bss == MAP_FAILED) {
-                            WARN("Failed to allocate memory for BSS in file %s", path);
-                            goto cleanup;
-                        }
-
-                        memset(bss, 0, bss_page_end - bss_page_start);
-                    }
-                }
-
-                mprotect(addr, phdr->p_memsz, prot);
-                break;
-            }
-        }
-    }
-
+    // Allocate the stack first using host stack limits in case anyone wants to configure it
     struct rlimit stack_limit = {0};
     if (getrlimit(RLIMIT_STACK, &stack_limit) == -1) {
         WARN("Failed to get stack size limit");
@@ -336,9 +262,84 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
         WARN("Failed to allocate stack for ELF file %s", path);
         goto cleanup;
     }
-
-    LOG("Allocated program at %p", elf.program);
     LOG("Allocated stack at %p", elf.stackBase);
+
+    elf.program = mmap(NULL, highest_vaddr, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (elf.program == MAP_FAILED) {
+        WARN("Failed to allocate memory for ELF file %s", path);
+        goto cleanup;
+    }
+    LOG("Allocated program at %p", elf.program);
+
+    for (Elf64_Half i = 0; i < phdrtable_size; i += ehdr.e_phentsize) {
+        Elf64_Phdr* phdr = (Elf64_Phdr*)(phdrtable + i);
+        switch (phdr->p_type) {
+            case PT_LOAD: {
+                if (phdr->p_filesz == 0) {
+                    break;
+                }
+
+                u8 prot = 0;
+                if (phdr->p_flags & PF_R) {
+                    prot |= PROT_READ;
+                }
+
+                if (phdr->p_flags & PF_W) {
+                    prot |= PROT_WRITE;
+                }
+
+                if (phdr->p_flags & PF_X) {
+                    prot |= PROT_EXEC;
+                }
+
+                u64 segment_base = (u64)elf.program + PAGE_START(phdr->p_vaddr);
+                u64 segment_size = phdr->p_filesz + PAGE_OFFSET(phdr->p_vaddr);
+
+                // TODO: instead of reading the segment, we should file map it and remove the fopen stuff
+                void* addr = mmap((void*)segment_base, segment_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0);
+                if (addr == MAP_FAILED) {
+                    WARN("Failed to allocate memory for segment in file %s", path);
+                    goto cleanup;
+                } else {
+                    LOG("Mapping segment with vaddr %p to %p-%p", (void*)phdr->p_vaddr, addr, addr + segment_size);
+                }
+
+                if (phdr->p_filesz > 0) {
+                    result = fread(file, addr, phdr->p_offset, phdr->p_filesz, user_data);
+                    if (!result) {
+                        WARN("Failed to read segment from file %s", path);
+                        goto cleanup;
+                    }
+                }
+
+                mprotect(addr, segment_size, prot);
+
+                if (phdr->p_memsz > phdr->p_filesz) {
+                    u64 bss_start = (u64)elf.program + phdr->p_vaddr + phdr->p_filesz;
+                    u64 bss_page_start = PAGE_ALIGN(bss_start);
+                    u64 bss_page_end = PAGE_ALIGN((u64)elf.program + phdr->p_vaddr + phdr->p_memsz);
+
+                    // Only clear padding bytes if the section is writable (why does FEX-Emu do this?)
+                    if (phdr->p_flags & PF_W) {
+                        memset((void*)bss_start, 0, bss_page_start - bss_start);
+                    }
+
+                    if (bss_page_start != bss_page_end) {
+                        void* bss = mmap((void*)bss_page_start, bss_page_end - bss_page_start, prot, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0);
+                        if (bss == MAP_FAILED) {
+                            WARN("Failed to allocate memory for BSS in file %s", path);
+                            goto cleanup;
+                        }
+
+                        memset(bss, 0, bss_page_end - bss_page_start);
+                    }
+                }
+
+                mprotect(addr, phdr->p_memsz, prot);
+                break;
+            }
+        }
+    }
 
     // Allocate it last so we don't have to free it if we fail
     elf_t* pelf = malloc(sizeof(elf_t));
