@@ -1,6 +1,6 @@
 #include <xbyak/xbyak.h>
 #include "felix86/common/utility.h"
-#include "felix86.h"
+#include "felix86/felix86.h"
 
 static u8 read8(void* context, u64 address) {
     u8* data = (u8*)context;

@@ -34,10 +34,17 @@ set(FELIX86_IR_SOURCES
 )
 
 set(FELIX86_COMMON_SOURCES
+    src/felix86/common/allocator.c
+    src/felix86/common/file.c
 )
 
 set(FELIX86_BACKEND_SOURCES
     src/felix86/backend/block_metadata.cpp
+)
+
+set(FELIX86_LOADER_SOURCES
+    src/felix86/loader/elf.c
+    src/felix86/loader/loader.c
 )
 
 set(FELIX86_CORE_SOURCES
@@ -57,6 +64,10 @@ set(FELIX86_INCLUDES
 add_library(felix86_core STATIC)
 target_sources(felix86_core PUBLIC ${FELIX86_CORE_SOURCES})
 target_include_directories(felix86_core PUBLIC ${FELIX86_INCLUDES})
+
+add_executable(felix86)
+target_sources(felix86 PRIVATE src/felix86/main.c)
+target_link_libraries(felix86 PRIVATE felix86_core)
 
 add_executable(felix86_test)
 target_sources(felix86_test PRIVATE tests/add.cpp)

@@ -1,4 +1,4 @@
-#include "felix86.h"
+#include "felix86/felix86.h"
 #include "felix86/common/log.h"
 #include "felix86/common/state.h"
 #include "felix86/frontend/frontend.h"
