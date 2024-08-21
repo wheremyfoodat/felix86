@@ -2,5 +2,7 @@
 #include "felix86/common/log.h"
 
 void loader_run_elf(const char* path) {
-    ERROR("TODO: Implement loader_run_elf");
+    elf_t* elf = elf_load(path, NULL);
+
+    elf_destroy(elf);
 }

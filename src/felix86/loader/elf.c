@@ -1,13 +1,20 @@
 #include "felix86/loader/elf.h"
 #include "felix86/common/log.h"
 #include "felix86/common/file.h"
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
+#include <sys/personality.h>
 
 // Not a full ELF implementation, but one that suits our needs as a loader of both the
 // executable and the dynamic linker, and one that only supports x86_64 little-endian
+
+#define PAGE_START(x) ((x) & ~(uintptr_t)(4095))
+#define PAGE_OFFSET(x) ((x) & 4095)
+#define PAGE_ALIGN(x) (((x) + 4095) & ~(uintptr_t)(4095))
 
 #define ELFCLASS64 2
 #define ELFDATA2LSB 1
@@ -23,6 +30,7 @@
 
 #define PT_LOAD 1
 #define PT_INTERP 3
+#define PT_GNU_STACK 0x6474e551
 
 #define PF_X 1
 #define PF_W 2
@@ -85,6 +93,8 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
     u8* phdrtable = NULL;
     u8* shdrtable = NULL;
     void* file = NULL;
+    u64 highest_vaddr = 0;
+    u64 max_stack_size = 0;
 
     void* (*fopen)(const char* path, void* user_data);
     bool (*fread)(void* handle, void* buffer, u64 offset, u64 size, void* user_data);
@@ -188,9 +198,6 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
     shdrtable = malloc(shdrtable_size);
     result = fread(file, shdrtable, ehdr.e_shoff, shdrtable_size, user_data);
 
-    u64 lowest_vaddr = UINT64_MAX;
-    u64 highest_vaddr = 0;
-
     for (Elf64_Half i = 0; i < phdrtable_size; i += ehdr.e_phentsize) {
         Elf64_Phdr* phdr = (Elf64_Phdr*)(phdrtable + i);
         switch (phdr->p_type) {
@@ -203,13 +210,18 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
                 }
                 break;
             }
+            case PT_GNU_STACK: {
+                if (phdr->p_flags & PF_X) {
+                    if (personality(PER_LINUX | READ_IMPLIES_EXEC) == -1) {
+                        WARN("Failed to set executable stack");
+                        goto cleanup;
+                    }
+                }
+                break;
+            }
             case PT_LOAD: {
                 if (phdr->p_filesz == 0) {
                     break;
-                }
-
-                if (phdr->p_vaddr < lowest_vaddr) {
-                    lowest_vaddr = phdr->p_vaddr;
                 }
 
                 if (phdr->p_vaddr + phdr->p_memsz > highest_vaddr) {
@@ -220,7 +232,7 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
         }
     }
 
-    elf.program = mmap(NULL, highest_vaddr - lowest_vaddr, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    elf.program = mmap(NULL, highest_vaddr, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (elf.program == MAP_FAILED) {
         WARN("Failed to allocate memory for ELF file %s", path);
         goto cleanup;
@@ -247,16 +259,46 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
                     prot |= PROT_EXEC;
                 }
 
-                void* addr = mmap(elf.program + (phdr->p_vaddr - lowest_vaddr), phdr->p_memsz, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED_NOREPLACE | MAP_ANONYMOUS, -1, 0);
+                u64 segment_base = (u64)elf.program + PAGE_START(phdr->p_vaddr);
+                u64 segment_size = phdr->p_filesz + PAGE_OFFSET(phdr->p_vaddr);
+
+                // TODO: instead of reading the segment, we should file map it and remove the fopen stuff
+                void* addr = mmap((void*)segment_base, segment_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0);
                 if (addr == MAP_FAILED) {
                     WARN("Failed to allocate memory for segment in file %s", path);
+                    WARN("Error: %s (%d)", strerror(errno), errno);
                     goto cleanup;
                 }
 
-                result = fread(file, addr, phdr->p_offset, phdr->p_filesz, user_data);
-                if (!result) {
-                    WARN("Failed to read segment from file %s", path);
-                    goto cleanup;
+                if (phdr->p_filesz > 0) {
+                    result = fread(file, addr, phdr->p_offset, phdr->p_filesz, user_data);
+                    if (!result) {
+                        WARN("Failed to read segment from file %s", path);
+                        goto cleanup;
+                    }
+                }
+
+                mprotect(addr, segment_size, prot);
+
+                if (phdr->p_memsz > phdr->p_filesz) {
+                    u64 bss_start = (u64)elf.program + phdr->p_vaddr + phdr->p_filesz;
+                    u64 bss_page_start = PAGE_ALIGN(bss_start);
+                    u64 bss_page_end = PAGE_ALIGN((u64)elf.program + phdr->p_vaddr + phdr->p_memsz);
+
+                    // Only clear padding bytes if the section is writable (why does FEX-Emu do this?)
+                    if (phdr->p_flags & PF_W) {
+                        memset((void*)bss_start, 0, bss_page_start - bss_start);
+                    }
+
+                    if (bss_page_start != bss_page_end) {
+                        void* bss = mmap((void*)bss_page_start, bss_page_end - bss_page_start, prot, MAP_PRIVATE | MAP_FIXED_NOREPLACE | MAP_ANONYMOUS, -1, 0);
+                        if (bss == MAP_FAILED) {
+                            WARN("Failed to allocate memory for BSS in file %s", path);
+                            goto cleanup;
+                        }
+
+                        memset(bss, 0, bss_page_end - bss_page_start);
+                    }
                 }
 
                 mprotect(addr, phdr->p_memsz, prot);
@@ -265,41 +307,60 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
         }
     }
 
-    u64 bss_offset = 0;
-    u64 bss_size = 0;
-    for (Elf64_Half i = 0; i < shdrtable_size; i += ehdr.e_shentsize) {
-        Elf64_Shdr* shdr = (Elf64_Shdr*)(shdrtable + i);
-        if (shdr->sh_type == SHT_PROGBITS) {
-            char* name = (char*)(shdrtable + ehdr.e_shstrndx + shdr->sh_name);
-            if (strncmp(name, ".bss", 4) == 0) {
-                bss_size = shdr->sh_size;
-                bss_offset = shdr->sh_addr;
-
-                if (bss_offset + bss_size > highest_vaddr || bss_offset < lowest_vaddr) {
-                    WARN("Invalid .bss section in file %s", path);
-                    goto cleanup;
-                }
-            }
-            break;
-        }
+    struct rlimit stack_limit = {0};
+    if (getrlimit(RLIMIT_STACK, &stack_limit) == -1) {
+        WARN("Failed to get stack size limit");
+        goto cleanup;
     }
 
-    if (bss_size == 0) {
-        WARN("File %s has no .bss section", path);
+    u64 stack_size = stack_limit.rlim_cur;
+    if (stack_size == RLIM_INFINITY) {
+        stack_size = 8 * 1024 * 1024;
     }
 
-    memset(elf.program + (bss_offset - lowest_vaddr), 0, bss_size);
+    max_stack_size = stack_limit.rlim_max;
+    if (max_stack_size == RLIM_INFINITY) {
+        max_stack_size = 128 * 1024 * 1024;
+    }
+
+    u64 hint = 0x7FFFFFFFF000 - max_stack_size;
+
+    elf.stackBase = mmap((void*)hint, max_stack_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK | MAP_GROWSDOWN | MAP_NORESERVE, -1, 0);
+    if (elf.stackBase == MAP_FAILED) {
+        WARN("Failed to allocate stack for ELF file %s", path);
+        goto cleanup;
+    }
+
+    elf.stackPointer = mmap(elf.stackBase + max_stack_size - stack_size, stack_size, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK | MAP_GROWSDOWN, -1, 0);
+    if (elf.stackPointer == MAP_FAILED) {
+        WARN("Failed to allocate stack for ELF file %s", path);
+        goto cleanup;
+    }
+
+    LOG("Allocated program at %p", elf.program);
+    LOG("Allocated stack at %p", elf.stackBase);
 
     // Allocate it last so we don't have to free it if we fail
     elf_t* pelf = malloc(sizeof(elf_t));
     memcpy(pelf, &elf, sizeof(elf_t));
+    fclose(file, user_data);
+    free(phdrtable);
+    free(shdrtable);
     return pelf;
 
 cleanup:
     if (phdrtable) free(phdrtable);
     if (shdrtable) free(shdrtable);
     if (elf.interpreter) free(elf.interpreter);
-    if (elf.program) free(elf.program);
+    if (elf.program) munmap(elf.program, highest_vaddr);
+    if (elf.stackBase) munmap(elf.stackBase, max_stack_size);
     if (file) fclose(file, user_data);
     return NULL;
+}
+
+void elf_destroy(elf_t* elf) {
+    if (elf->interpreter) free(elf->interpreter);
+    if (elf->program) munmap(elf->program, 0);
+    if (elf->stackBase) munmap(elf->stackBase, 0);
+    free(elf);
 }

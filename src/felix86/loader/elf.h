@@ -11,6 +11,9 @@ typedef struct {
     void* program;
     u64 entry;
     char* interpreter;
+    void* stackBase;
+    void* stackPointer;
+    bool executableStack;
 } elf_t;
 
 /// Load an ELF file from the given path
@@ -19,6 +22,8 @@ typedef struct {
 /// @param callbacks The file reading callbacks, NULL for fopen etc
 /// @return The loaded ELF file
 elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks);
+
+void elf_destroy(elf_t* elf);
 
 #ifdef __cplusplus
 }
