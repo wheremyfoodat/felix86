@@ -19,4 +19,5 @@
 
 ## Other useful documentation
 - [How programs get run: ELF binaries](https://lwn.net/Articles/631631/)
-- [ELF format specification, really pleasant read](http://www.skyfree.org/linux/references/ELF_Format.pdf)
+- [ELF format specification](http://www.skyfree.org/linux/references/ELF_Format.pdf), really pleasant read
+- [System-V ABI - AMD64 Architecture Supplement](./docs/sysv-x86-64.pdf), particularly Chapter 5 on Program Loading 

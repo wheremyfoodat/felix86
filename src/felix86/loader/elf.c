@@ -6,6 +6,9 @@
 #include <string.h>
 #include <sys/mman.h>
 
+// Not a full ELF implementation, but one that suits our needs as a loader of both the
+// executable and the dynamic linker, and one that only supports x86_64 little-endian
+
 #define ELFCLASS64 2
 #define ELFDATA2LSB 1
 
@@ -77,7 +80,7 @@ typedef struct {
 
 elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
     // No, I am not a K&R enthusiast, I just want to make sure they are null before they are
-    // allocated so we can free them in cleanup
+    // allocated so we can check and free them in cleanup
     elf_t elf = {0};
     u8* phdrtable = NULL;
     u8* shdrtable = NULL;
