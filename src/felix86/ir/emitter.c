@@ -75,9 +75,24 @@ ir_instruction_t* ir_emit_not_equal(ir_emitter_state_t* state, ir_instruction_t*
     return ir_emit_two_operand(state, IR_NOT_EQUAL, source1, source2);
 }
 
-ir_instruction_t* ir_emit_greater_than(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2)
+ir_instruction_t* ir_emit_greater_than_signed(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2)
 {
-    return ir_emit_two_operand(state, IR_GREATER_THAN, source1, source2);
+    return ir_emit_two_operand(state, IR_GREATER_THAN_SIGNED, source1, source2);
+}
+
+ir_instruction_t* ir_emit_less_than_signed(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    return ir_emit_two_operand(state, IR_LESS_THAN_SIGNED, source1, source2);
+}
+
+ir_instruction_t* ir_emit_greater_than_unsigned(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    return ir_emit_two_operand(state, IR_GREATER_THAN_UNSIGNED, source1, source2);
+}
+
+ir_instruction_t* ir_emit_less_than_unsigned(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    return ir_emit_two_operand(state, IR_LESS_THAN_UNSIGNED, source1, source2);
 }
 
 ir_instruction_t* ir_emit_lea(ir_emitter_state_t* state, ir_instruction_t* base, ir_instruction_t* index, u8 scale, u32 displacement)
@@ -218,60 +233,21 @@ ir_instruction_t* ir_emit_immediate(ir_emitter_state_t* state, u64 value)
 // ██   ██ ██      ██      ██      ██      ██   ██      ██
 // ██   ██ ███████ ███████ ██      ███████ ██   ██ ███████
 
-ir_instruction_t* ir_emit_get_reg8(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* reg_operand)
+ir_instruction_t* ir_emit_get_reg(ir_emitter_state_t* state, x86_operand_t* reg_operand)
 {
-    x86_ref_t reg = reg_operand->reg;
-    if (!prefixes->rex) {
-        // Only ah, ch, dh, bh are valid
-        int reg_index = (reg - X86_REF_RAX) & 0x7;
-        bool high = reg_index >= 4;
-        reg = (X86_REF_RAX + (reg_index & 0x3));
-
-        if (high) {
-            return ir_emit_get_gpr8_high(state, reg);
-        } else {
-            return ir_emit_get_gpr8_low(state, reg);
-        }
-    } else {
-        return ir_emit_get_gpr8_low(state, reg);
-    }
-}
-
-ir_instruction_t* ir_emit_get_rm8(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* rm_operand)
-{
-    if (rm_operand->type == X86_OP_TYPE_REGISTER) {
-        return ir_emit_get_reg8(state, prefixes, rm_operand);
-    } else {
-        ir_instruction_t* (*get_guest)(ir_emitter_state_t* state, x86_ref_t reg) = prefixes->address_override ? ir_emit_get_gpr32 : ir_emit_get_gpr64;
-        ir_instruction_t* base = rm_operand->memory.base != X86_REF_COUNT ? get_guest(state, rm_operand->memory.base) : NULL;
-        ir_instruction_t* index = rm_operand->memory.index != X86_REF_COUNT ? get_guest(state, rm_operand->memory.index) : NULL;
-        ir_instruction_t* address = ir_emit_lea(state, base, index, rm_operand->memory.scale, rm_operand->memory.displacement);
-        ir_instruction_t* final_address = address;
-
-        if (prefixes->address_override) {
-            ir_instruction_t* mask = ir_emit_immediate(state, 0xFFFFFFFF);
-            final_address = ir_emit_and(state, address, mask);
-        }
-
-        return ir_emit_read_byte(state, final_address);
-    }
-}
-
-ir_instruction_t* ir_emit_get_reg(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* reg_operand)
-{
-    if (prefixes->rex_w) {
-        return ir_emit_get_gpr64(state, reg_operand->reg);
-    } else if (prefixes->operand_override) {
-        return ir_emit_get_gpr16(state, reg_operand->reg);
-    } else {
-        return ir_emit_get_gpr32(state, reg_operand->reg);
+    switch (reg_operand->reg.size) {
+        case BYTE_LOW: return ir_emit_get_gpr8_low(state, reg_operand->reg.ref);
+        case BYTE_HIGH: return ir_emit_get_gpr8_high(state, reg_operand->reg.ref);
+        case WORD: return ir_emit_get_gpr16(state, reg_operand->reg.ref);
+        case DWORD: return ir_emit_get_gpr32(state, reg_operand->reg.ref);
+        case QWORD: return ir_emit_get_gpr64(state, reg_operand->reg.ref);
     }
 }
 
 ir_instruction_t* ir_emit_get_rm(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* rm_operand)
 {
     if (rm_operand->type == X86_OP_TYPE_REGISTER) {
-        return ir_emit_get_reg(state, prefixes, rm_operand);
+        return ir_emit_get_reg(state, rm_operand);
     } else {
         ir_instruction_t* (*get_guest)(ir_emitter_state_t* state, x86_ref_t reg) = prefixes->address_override ? ir_emit_get_gpr32 : ir_emit_get_gpr64;
         ir_instruction_t* base = rm_operand->memory.base != X86_REF_COUNT ? get_guest(state, rm_operand->memory.base) : NULL;
@@ -284,70 +260,25 @@ ir_instruction_t* ir_emit_get_rm(ir_emitter_state_t* state, x86_prefixes_t* pref
             final_address = ir_emit_and(state, address, mask);
         }
 
-        if (prefixes->rex_w) {
-            return ir_emit_read_qword(state, final_address);
-        } else if (prefixes->operand_override) {
-            return ir_emit_read_word(state, final_address);
-        } else {
-            return ir_emit_read_dword(state, final_address);
-        }
+        return ir_emit_read_memory(state, prefixes, final_address);
     }
 }
 
-ir_instruction_t* ir_emit_set_reg8(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* reg_operand, ir_instruction_t* source)
+ir_instruction_t* ir_emit_set_reg(ir_emitter_state_t* state, x86_operand_t* reg_operand, ir_instruction_t* source)
 {
-    x86_ref_t reg = reg_operand->reg;
-    if (!prefixes->rex) {
-        // Only ah, ch, dh, bh are valid
-        int reg_index = (reg - X86_REF_RAX) & 0x7;
-        bool high = reg_index >= 4;
-        reg = (X86_REF_RAX + (reg_index & 0x3));
-
-        if (high) {
-            return ir_emit_set_gpr8_high(state, reg, source);
-        } else {
-            return ir_emit_set_gpr8_low(state, reg, source);
-        }
-    } else {
-        return ir_emit_set_gpr8_low(state, reg, source);
-    }
-}
-
-ir_instruction_t* ir_emit_set_rm8(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* rm_operand, ir_instruction_t* source)
-{
-    if (rm_operand->type == X86_OP_TYPE_REGISTER) {
-        return ir_emit_set_reg8(state, prefixes, rm_operand, source);
-    } else {
-        ir_instruction_t* (*get_guest)(ir_emitter_state_t* state, x86_ref_t reg) = prefixes->address_override ? ir_emit_get_gpr32 : ir_emit_get_gpr64;
-        ir_instruction_t* base = rm_operand->memory.base != X86_REF_COUNT ? get_guest(state, rm_operand->memory.base) : NULL;
-        ir_instruction_t* index = rm_operand->memory.index != X86_REF_COUNT ? get_guest(state, rm_operand->memory.index) : NULL;
-        ir_instruction_t* address = ir_emit_lea(state, base, index, rm_operand->memory.scale, rm_operand->memory.displacement);
-        ir_instruction_t* final_address = address;
-
-        if (prefixes->address_override) {
-            ir_instruction_t* mask = ir_emit_immediate(state, 0xFFFFFFFF);
-            final_address = ir_emit_and(state, address, mask);
-        }
-
-        return ir_emit_write_byte(state, final_address, source);
-    }
-}
-
-ir_instruction_t* ir_emit_set_reg(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* reg_operand, ir_instruction_t* source)
-{
-    if (prefixes->rex_w) {
-        return ir_emit_set_gpr64(state, reg_operand->reg, source);
-    } else if (prefixes->operand_override) {
-        return ir_emit_set_gpr16(state, reg_operand->reg, source);
-    } else {
-        return ir_emit_set_gpr32(state, reg_operand->reg, source);
+    switch (reg_operand->reg.size) {
+        case BYTE_LOW: return ir_emit_set_gpr8_low(state, reg_operand->reg.ref, source);
+        case BYTE_HIGH: return ir_emit_set_gpr8_high(state, reg_operand->reg.ref, source);
+        case WORD: return ir_emit_set_gpr16(state, reg_operand->reg.ref, source);
+        case DWORD: return ir_emit_set_gpr32(state, reg_operand->reg.ref, source);
+        case QWORD: return ir_emit_set_gpr64(state, reg_operand->reg.ref, source);
     }
 }
 
 ir_instruction_t* ir_emit_set_rm(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* rm_operand, ir_instruction_t* source)
 {
     if (rm_operand->type == X86_OP_TYPE_REGISTER) {
-        return ir_emit_set_reg(state, prefixes, rm_operand, source);
+        return ir_emit_set_reg(state, rm_operand, source);
     } else {
         ir_instruction_t* (*get_guest)(ir_emitter_state_t* state, x86_ref_t reg) = prefixes->address_override ? ir_emit_get_gpr32 : ir_emit_get_gpr64;
         ir_instruction_t* base = rm_operand->memory.base != X86_REF_COUNT ? get_guest(state, rm_operand->memory.base) : NULL;
@@ -360,13 +291,33 @@ ir_instruction_t* ir_emit_set_rm(ir_emitter_state_t* state, x86_prefixes_t* pref
             final_address = ir_emit_and(state, address, mask);
         }
 
-        if (prefixes->rex_w) {
-            return ir_emit_write_qword(state, final_address, source);
-        } else if (prefixes->operand_override) {
-            return ir_emit_write_word(state, final_address, source);
-        } else {
-            return ir_emit_write_dword(state, final_address, source);
-        }
+        return ir_emit_write_memory(state, prefixes, final_address, source);
+    }
+}
+
+ir_instruction_t* ir_emit_write_memory(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* address, ir_instruction_t* value)
+{
+    if (prefixes->byte_override) {
+        return ir_emit_write_byte(state, address, value);
+    } else if (prefixes->rex_w) {
+        return ir_emit_write_qword(state, address, value);
+    } else if (prefixes->operand_override) {
+        return ir_emit_write_word(state, address, value);
+    } else {
+        return ir_emit_write_dword(state, address, value);
+    }
+}
+
+ir_instruction_t* ir_emit_read_memory(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* address)
+{
+    if (prefixes->byte_override) {
+        return ir_emit_read_byte(state, address);
+    } else if (prefixes->rex_w) {
+        return ir_emit_read_qword(state, address);
+    } else if (prefixes->operand_override) {
+        return ir_emit_read_word(state, address);
+    } else {
+        return ir_emit_read_dword(state, address);
     }
 }
 
@@ -490,6 +441,106 @@ ir_instruction_t* ir_emit_get_zero(ir_emitter_state_t* state, ir_instruction_t* 
     ir_instruction_t* instruction = ir_emit_equal(state, source, zero);
 
     return instruction;
+}
+
+ir_instruction_t* ir_emit_get_sign_mask(ir_emitter_state_t* state, x86_prefixes_t* prefixes)
+{
+    if (prefixes->byte_override) {
+        return ir_emit_immediate(state, 1ull << 7);
+    } else if (prefixes->rex_w) {
+        return ir_emit_immediate(state, 1ull << 63);
+    } else if (prefixes->operand_override) {
+        return ir_emit_immediate(state, 1ull << 15);
+    } else {
+        return ir_emit_immediate(state, 1ull << 31);
+    }
+}
+
+ir_instruction_t* ir_emit_get_mask(ir_emitter_state_t* state, x86_prefixes_t* prefixes)
+{
+    if (prefixes->byte_override) {
+        return ir_emit_immediate(state, 0xFF);
+    } else if (prefixes->rex_w) {
+        return ir_emit_immediate(state, 0xFFFFFFFFFFFFFFFF);
+    } else if (prefixes->operand_override) {
+        return ir_emit_immediate(state, 0xFFFF);
+    } else {
+        return ir_emit_immediate(state, 0xFFFFFFFF);
+    }
+}
+
+ir_instruction_t* ir_emit_get_sign(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source)
+{
+    ir_instruction_t* mask = ir_emit_get_sign_mask(state, prefixes);
+    ir_instruction_t* masked = ir_emit_and(state, source, mask);
+    ir_instruction_t* instruction = ir_emit_equal(state, masked, mask);
+
+    return instruction;
+}
+
+ir_instruction_t* ir_emit_get_overflow_add(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result)
+{
+    ir_instruction_t* mask = ir_emit_get_sign_mask(state, prefixes);
+
+    // for x + y = z, overflow occurs if ((z ^ x) & (z ^ y) & mask) == mask
+    // which essentially checks if the sign bits of x and y are equal, but the sign bit of z is different
+    ir_instruction_t* xor1 = ir_emit_xor(state, result, source1);
+    ir_instruction_t* xor2 = ir_emit_xor(state, result, source2);
+    ir_instruction_t* and = ir_emit_and(state, xor1, xor2);
+    ir_instruction_t* masked = ir_emit_and(state, and, mask);
+
+    return ir_emit_equal(state, masked, mask);
+}
+
+ir_instruction_t* ir_emit_get_overflow_sub(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result)
+{
+    ir_instruction_t* mask = ir_emit_get_sign_mask(state, prefixes);
+
+    // for x - y = z, overflow occurs if ((x ^ y) & (x ^ z) & mask) == mask
+    ir_instruction_t* xor1 = ir_emit_xor(state, source1, source2);
+    ir_instruction_t* xor2 = ir_emit_xor(state, source1, result);
+    ir_instruction_t* and = ir_emit_and(state, xor1, xor2);
+    ir_instruction_t* masked = ir_emit_and(state, and, mask);
+
+    return ir_emit_equal(state, masked, mask);
+}
+
+ir_instruction_t* ir_emit_get_carry_add(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result)
+{
+    (void)source2; // dont need, just keeping for consistency
+
+    // CF = result < source1, as that means that the result overflowed
+    ir_instruction_t* mask = ir_emit_get_mask(state, prefixes);
+    ir_instruction_t* masked_result = ir_emit_and(state, result, mask);
+    return ir_emit_less_than_unsigned(state, masked_result, source1);
+}
+
+ir_instruction_t* ir_emit_get_carry_sub(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result)
+{
+    (void)result; // dont need, just keeping for consistency
+    (void)prefixes;
+
+    // CF = source1 < source2, as that means that the result would underflow
+    return ir_emit_less_than_unsigned(state, source1, source2);
+}
+
+ir_instruction_t* ir_emit_get_aux_add(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    ir_instruction_t* mask = ir_emit_immediate(state, 0xF);
+    ir_instruction_t* and1 = ir_emit_and(state, source1, mask);
+    ir_instruction_t* and2 = ir_emit_and(state, source2, mask);
+    ir_instruction_t* result = ir_emit_add(state, and1, and2);
+
+    return ir_emit_greater_than_unsigned(state, result, mask);
+}
+
+ir_instruction_t* ir_emit_get_aux_sub(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    ir_instruction_t* mask = ir_emit_immediate(state, 0xF);
+    ir_instruction_t* and1 = ir_emit_and(state, source1, mask);
+    ir_instruction_t* and2 = ir_emit_and(state, source2, mask);
+
+    return ir_emit_less_than_unsigned(state, and1, and2);
 }
 
 ir_instruction_t* ir_emit_set_cpazso(ir_emitter_state_t* state, ir_instruction_t* c, ir_instruction_t* p, ir_instruction_t* a, ir_instruction_t* z, ir_instruction_t* s, ir_instruction_t* o)

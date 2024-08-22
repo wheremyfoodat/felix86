@@ -1,6 +1,10 @@
+#include <catch2/catch_test_macros.hpp>
 #include <xbyak/xbyak.h>
 #include "felix86/common/utility.h"
 #include "felix86/felix86.h"
+
+using namespace Xbyak;
+using namespace Xbyak::util;
 
 static u8 read8(void* context, u64 address) {
     u8* data = (u8*)context;
@@ -48,19 +52,16 @@ static u8* get_pointer(void* context, u64 address) {
 
 static void interrupt(void* context, u8 vector) {}
 
-#define FELIX86_TEST(name) struct Code_##name : Xbyak::CodeGenerator { \
+#define FELIX86_TEST(name) struct Code_##name final : Xbyak::CodeGenerator { \
     Code_##name(); \
     ~Code_##name() { free(data); } \
     void verify(x86_ref_t ref, u64 value) { checks.push_back({ ref, value }); } \
-    void verify_flag(x86_flag_t flag, bool value) { switch (flag) { \
-        case X86_FLAG_CF: flag_check &= ~(1 << 0); flag_check |= value << 0; break; \
-        case X86_FLAG_PF: flag_check &= ~(1 << 2); flag_check |= value << 2; break; \
-        case X86_FLAG_AF: flag_check &= ~(1 << 4); flag_check |= value << 4; break; \
-        case X86_FLAG_ZF: flag_check &= ~(1 << 6); flag_check |= value << 6; break; \
-        case X86_FLAG_SF: flag_check &= ~(1 << 7); flag_check |= value << 7; break; \
-        case X86_FLAG_OF: flag_check &= ~(1 << 11); flag_check |= value << 11; break; \
-        default: REQUIRE(false); break; \
-    } } \
+    void verify_c(bool value) { c = value; } \
+    void verify_p(bool value) { p = value; } \
+    void verify_a(bool value) { a = value; } \
+    void verify_z(bool value) { z = value; } \
+    void verify_s(bool value) { s = value; } \
+    void verify_o(bool value) { o = value; } \
     u8* data; \
 private: \
     void emit_code(); \
@@ -68,11 +69,16 @@ private: \
         for (auto& check : checks) { \
             REQUIRE(felix86_get_guest(recompiler, check.first) == check.second); \
         } \
-        REQUIRE(felix86_get_guest(recompiler, X86_REF_FLAGS) == flag_check); \
+        if (c.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_FLAGS) & (1 << X86_FLAG_CF)) == c.value()); \
+        if (p.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_FLAGS) & (1 << X86_FLAG_PF)) == p.value()); \
+        if (a.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_FLAGS) & (1 << X86_FLAG_AF)) == a.value()); \
+        if (z.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_FLAGS) & (1 << X86_FLAG_ZF)) == z.value()); \
+        if (s.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_FLAGS) & (1 << X86_FLAG_SF)) == s.value()); \
+        if (o.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_FLAGS) & (1 << X86_FLAG_OF)) == o.value()); \
     } \
     felix86_recompiler_t* recompiler; \
     std::vector<std::pair<x86_ref_t, u64>> checks; \
-    u64 flag_check = 0; \
+    std::optional<bool> c,p,a,z,s,o; \
 }; \
 TEST_CASE(#name, "[felix86]") { \
     Code_##name c; \

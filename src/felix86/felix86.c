@@ -158,7 +158,7 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler, u
     ir_dead_store_elimination_pass(block);
     ir_dead_code_elimination_pass(block);
     ir_naming_pass(block);
-    ir_print_block(block);
+    // ir_print_block(block);
     ir_interpret_block(block, &recompiler->state);
 
     return OutOfCycles;

@@ -97,8 +97,20 @@ void ir_print_instruction(ir_instruction_t* instruction) {
             print_two_op(instruction, "!=");
             break;
         }
-        case IR_GREATER_THAN: {
-            print_two_op(instruction, ">");
+        case IR_GREATER_THAN_SIGNED: {
+            print_two_op(instruction, "s>");
+            break;
+        }
+        case IR_LESS_THAN_SIGNED: {
+            print_two_op(instruction, "s<");
+            break;
+        }
+        case IR_GREATER_THAN_UNSIGNED: {
+            print_two_op(instruction, "u>");
+            break;
+        }
+        case IR_LESS_THAN_UNSIGNED: {
+            print_two_op(instruction, "u<");
             break;
         }
         case IR_MOV: {

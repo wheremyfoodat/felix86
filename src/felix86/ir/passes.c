@@ -14,7 +14,7 @@ void ir_naming_pass(ir_block_t* block) {
 void ir_dead_store_elimination_pass(ir_block_t* block) {
     ir_instruction_list_t* current = block->instructions->next;
 
-    ir_instruction_list_t* set_flags[6] = {0};
+    ir_instruction_list_t* set_flags[16] = {0};
     ir_instruction_list_t* set_regs[X86_REF_COUNT] = {0};
 
     while (current) {

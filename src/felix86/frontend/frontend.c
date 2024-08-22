@@ -24,7 +24,7 @@ typedef union {
     u8 raw;
 } sib_t;
 
-typedef enum {
+typedef enum : u8 {
     NO_IMMEDIATE,
     BYTE_IMMEDIATE = 1,
     WORD_IMMEDIATE = 2,
@@ -32,16 +32,18 @@ typedef enum {
     UP_TO_QWORD_IMMEDIATE = 8,
 } immediate_size_e;
 
-typedef enum {
+typedef enum : u8 {
     NO_FLAG,
-    MODRM_FLAG,
-    OPCODE_FLAG, // register encoded in the opcode itself
-} decoding_flag_e;
+    MODRM_FLAG = 1,
+    OPCODE_FLAG = 2, // register encoded in the opcode itself
+    BYTE_OVERRIDE_FLAG = 4,
+    EAX_OVERRIDE_FLAG = 8,
+} decoding_flags_e;
 
 typedef struct {
     u8 opcode;
     ir_handle_fn_t fn;
-    decoding_flag_e decoding_flag;
+    decoding_flags_e decoding_flags;
     immediate_size_e immediate_size;
 } instruction_metadata_t;
 
@@ -67,13 +69,13 @@ u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, x86_prefi
     operand_reg->type = X86_OP_TYPE_REGISTER;
     operand_rm->type = (modrm.mod == 0b11) ? X86_OP_TYPE_REGISTER : X86_OP_TYPE_MEMORY;
 
-    operand_reg->reg = X86_REF_RAX + (modrm.reg | (prefixes.rex_r << 3));
+    operand_reg->reg.ref = X86_REF_RAX + (modrm.reg | (prefixes.rex_r << 3));
         
     operand_rm->memory.base = X86_REF_COUNT;
     operand_rm->memory.index = X86_REF_COUNT;
 
     if (operand_rm->type == X86_OP_TYPE_REGISTER) {
-        operand_rm->reg = X86_REF_RAX + (modrm.rm | (prefixes.rex_b << 3));
+        operand_rm->reg.ref = X86_REF_RAX + (modrm.rm | (prefixes.rex_b << 3));
     } else if (operand_rm->type == X86_OP_TYPE_MEMORY) {
         bool has_sib = needs_sib(modrm);
         if (has_sib) {
@@ -172,23 +174,34 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         }
     } while (prefix);
 
-    x86_instruction_t inst;
-    inst.opcode = data[index++];
+    u8 opcode = data[index++];
+    instruction_metadata_t primary = primary_table[opcode];
+
+    u8 size = DWORD;
+    if (primary.decoding_flags & BYTE_OVERRIDE_FLAG) {
+        prefixes.byte_override = true;
+        size = BYTE_LOW;
+    } else if (prefixes.operand_override) {
+        size = WORD;
+    } else if (prefixes.rex_w) {
+        size = QWORD;
+    }
+
+    x86_instruction_t inst = {0};
+    inst.opcode = opcode;
     inst.prefixes = prefixes;
 
     if (prefixes.operand_override && prefixes.rex_w) {
         ERROR("Both operand override and REX.W are set, which is sus");
     }
     
-    u8 opcode = inst.opcode;
-    instruction_metadata_t primary = primary_table[opcode];
     if (opcode == 0x0F) {
         opcode = data[index++];
         inst.opcode = opcode;
         primary = secondary_table[opcode];
     }
 
-    if (primary.decoding_flag == MODRM_FLAG) {
+    if (primary.decoding_flags & MODRM_FLAG) {
         modrm_t modrm;
         modrm.raw = data[index++];
 
@@ -211,9 +224,12 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
                 break;
             }
         }
-    } else if (primary.decoding_flag == OPCODE_FLAG) {
+    } else if (primary.decoding_flags & OPCODE_FLAG) {
         inst.operand_reg.type = X86_OP_TYPE_REGISTER;
-        inst.operand_reg.reg = (X86_REF_RAX + (opcode & 0x07)) | (prefixes.rex_b << 3);
+        inst.operand_reg.reg.ref = (X86_REF_RAX + (opcode & 0x07)) | (prefixes.rex_b << 3);
+    } else if (primary.decoding_flags & EAX_OVERRIDE_FLAG) {
+        inst.operand_rm.type = X86_OP_TYPE_REGISTER;
+        inst.operand_rm.reg.ref = X86_REF_RAX;
     }
 
     switch (primary.immediate_size) {
@@ -263,6 +279,28 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
 
         case NO_IMMEDIATE: {
             break;
+        }
+    }
+
+    if (inst.operand_reg.type == X86_OP_TYPE_REGISTER) {
+        inst.operand_reg.reg.size = size;
+
+        if (!prefixes.rex && inst.operand_reg.reg.size == BYTE_LOW) {
+            int reg_index = (inst.operand_reg.reg.ref - X86_REF_RAX) & 0x7;
+            bool high = reg_index >= 4;
+            inst.operand_reg.reg.ref = X86_REF_RAX + (reg_index & 0x3);
+            inst.operand_reg.reg.size = high ? BYTE_HIGH : BYTE_LOW;
+        }
+    }
+
+    if (inst.operand_rm.type == X86_OP_TYPE_REGISTER) {
+        inst.operand_rm.reg.size = size;
+
+        if (!prefixes.rex && inst.operand_rm.reg.size == BYTE_LOW) {
+            int reg_index = (inst.operand_rm.reg.ref - X86_REF_RAX) & 0x7;
+            bool high = reg_index >= 4;
+            inst.operand_rm.reg.ref = X86_REF_RAX + (reg_index & 0x3);
+            inst.operand_rm.reg.size = high ? BYTE_HIGH : BYTE_LOW;
         }
     }
 

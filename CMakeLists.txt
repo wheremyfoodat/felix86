@@ -70,7 +70,15 @@ add_executable(felix86)
 target_sources(felix86 PRIVATE src/felix86/main.c)
 target_link_libraries(felix86 PRIVATE felix86_core)
 
+set(FELIX86_TEST_SOURCES
+    tests/add.cpp
+    tests/sub.cpp
+    tests/mov.cpp
+    tests/aux_add.cpp
+    tests/aux_sub.cpp
+)
+
 add_executable(felix86_test)
-target_sources(felix86_test PRIVATE tests/add.cpp)
+target_sources(felix86_test PRIVATE ${FELIX86_TEST_SOURCES})
 target_link_libraries(felix86_test PRIVATE felix86_core Catch2::Catch2WithMain xbyak)
 target_compile_options(felix86_test PRIVATE $<$<COMPILE_LANGUAGE:CPP>:-fno-operator-names>)

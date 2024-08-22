@@ -110,8 +110,20 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             temps[instruction->name] = temps[instruction->two_operand.source1->name] != temps[instruction->two_operand.source2->name];
             break;
         }
-        case IR_GREATER_THAN: {
+        case IR_GREATER_THAN_SIGNED: {
+            temps[instruction->name] = (i64)temps[instruction->two_operand.source1->name] > (i64)temps[instruction->two_operand.source2->name];
+            break;
+        }
+        case IR_LESS_THAN_SIGNED: {
+            temps[instruction->name] = (i64)temps[instruction->two_operand.source1->name] < (i64)temps[instruction->two_operand.source2->name];
+            break;
+        }
+        case IR_GREATER_THAN_UNSIGNED: {
             temps[instruction->name] = temps[instruction->two_operand.source1->name] > temps[instruction->two_operand.source2->name];
+            break;
+        }
+        case IR_LESS_THAN_UNSIGNED: {
+            temps[instruction->name] = temps[instruction->two_operand.source1->name] < temps[instruction->two_operand.source2->name];
             break;
         }
         case IR_LEA: {
@@ -174,36 +186,7 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             break;
         }
         case IR_GET_FLAG: {
-            switch (instruction->get_flag.flag) {
-                case X86_FLAG_CF: {
-                    temps[instruction->name] = (state->flags >> 0) & 1;
-                    break;
-                }
-                case X86_FLAG_PF: {
-                    temps[instruction->name] = (state->flags >> 2) & 1;
-                    break;
-                }
-                case X86_FLAG_AF: {
-                    temps[instruction->name] = (state->flags >> 4) & 1;
-                    break;
-                }
-                case X86_FLAG_ZF: {
-                    temps[instruction->name] = (state->flags >> 6) & 1;
-                    break;
-                }
-                case X86_FLAG_SF: {
-                    temps[instruction->name] = (state->flags >> 7) & 1;
-                    break;
-                }
-                case X86_FLAG_OF: {
-                    temps[instruction->name] = (state->flags >> 11) & 1;
-                    break;
-                }
-                default: {
-                    ERROR("Invalid flag reference");
-                    break;
-                }
-            }
+            temps[instruction->name] = (state->flags >> instruction->get_flag.flag) & 1;
             break;
         }
         case IR_MOV: {
@@ -218,36 +201,13 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             if (temps[instruction->set_flag.source->name] & ~1) {
                 ERROR("Invalid flag value");
             }
-            switch (instruction->set_flag.flag) {
-                case X86_FLAG_CF: {
-                    state->flags = (state->flags & ~(1 << 0)) | (temps[instruction->set_flag.source->name] << 0);
-                    break;
-                }
-                case X86_FLAG_PF: {
-                    state->flags = (state->flags & ~(1 << 2)) | (temps[instruction->set_flag.source->name] << 2);
-                    break;
-                }
-                case X86_FLAG_AF: {
-                    state->flags = (state->flags & ~(1 << 4)) | (temps[instruction->set_flag.source->name] << 4);
-                    break;
-                }
-                case X86_FLAG_ZF: {
-                    state->flags = (state->flags & ~(1 << 6)) | (temps[instruction->set_flag.source->name] << 6);
-                    break;
-                }
-                case X86_FLAG_SF: {
-                    state->flags = (state->flags & ~(1 << 7)) | (temps[instruction->set_flag.source->name] << 7);
-                    break;
-                }
-                case X86_FLAG_OF: {
-                    state->flags = (state->flags & ~(1 << 11)) | (temps[instruction->set_flag.source->name] << 11);
-                    break;
-                }
-                default: {
-                    ERROR("Invalid flag reference");
-                    break;
-                }
-            }
+
+            state->flags &= ~(1 << instruction->set_flag.flag);
+            state->flags |= temps[instruction->set_flag.source->name] << instruction->set_flag.flag;
+            break;
+        }
+        default: {
+            ERROR("Invalid opcode");
             break;
         }
     }

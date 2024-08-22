@@ -46,12 +46,12 @@ typedef enum {
 } x86_ref_t;
 
 typedef enum {
-    X86_FLAG_CF,
-    X86_FLAG_PF,
-    X86_FLAG_AF,
-    X86_FLAG_ZF,
-    X86_FLAG_SF,
-    X86_FLAG_OF,
+    X86_FLAG_CF = 0,
+    X86_FLAG_PF = 2,
+    X86_FLAG_AF = 4,
+    X86_FLAG_ZF = 6,
+    X86_FLAG_SF = 7,
+    X86_FLAG_OF = 11,
 } x86_flag_t;
 
 typedef union {
@@ -67,7 +67,8 @@ typedef union {
         u16 prefix_count : 2;
         u16 rep : 2;
         u16 segment_override : 2;
-        u16 : 2;
+        u16 byte_override : 1;
+        u16 : 1;
     };
 
     u16 raw;
@@ -80,6 +81,14 @@ typedef enum {
     X86_OP_TYPE_IMMEDIATE,
 } x86_operand_type_e;
 
+typedef enum {
+    BYTE_LOW,
+    WORD,
+    DWORD,
+    QWORD,
+    BYTE_HIGH,
+} x86_register_size_e;
+
 typedef struct {
     union {
         struct {
@@ -89,7 +98,10 @@ typedef struct {
             u8 scale;
         } memory;
 
-        x86_ref_t reg;
+        struct {
+            x86_ref_t ref;
+            x86_register_size_e size;
+        } reg;
 
         struct {
             u64 data;
