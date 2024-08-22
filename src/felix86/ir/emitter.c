@@ -136,7 +136,7 @@ ir_instruction_t* ir_emit_sext32(ir_emitter_state_t* state, ir_instruction_t* so
     return ir_emit_one_operand(state, IR_SEXT32, source);
 }
 
-ir_instruction_t* ir_emit_get_guest(ir_emitter_state_t* state, x86_ref_t ref)
+ir_instruction_t* ir_emit_get_guest(ir_emitter_state_t* state, x86_ref_e ref)
 {
     if (ref == X86_REF_COUNT) {
         ERROR("Invalid register reference");
@@ -149,7 +149,7 @@ ir_instruction_t* ir_emit_get_guest(ir_emitter_state_t* state, x86_ref_t ref)
     return instruction;
 }
 
-ir_instruction_t* ir_emit_set_guest(ir_emitter_state_t* state, x86_ref_t ref, ir_instruction_t* source)
+ir_instruction_t* ir_emit_set_guest(ir_emitter_state_t* state, x86_ref_e ref, ir_instruction_t* source)
 {
     ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
     instruction->opcode = IR_SET_GUEST;
@@ -160,7 +160,7 @@ ir_instruction_t* ir_emit_set_guest(ir_emitter_state_t* state, x86_ref_t ref, ir
     return instruction;
 }
 
-ir_instruction_t* ir_emit_get_flag(ir_emitter_state_t* state, x86_flag_t flag) {
+ir_instruction_t* ir_emit_get_flag(ir_emitter_state_t* state, x86_flag_e flag) {
     ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
     instruction->opcode = IR_GET_FLAG;
     instruction->type = IR_TYPE_GET_FLAG;
@@ -168,7 +168,7 @@ ir_instruction_t* ir_emit_get_flag(ir_emitter_state_t* state, x86_flag_t flag) {
     return instruction;
 }
 
-ir_instruction_t* ir_emit_set_flag(ir_emitter_state_t* state, x86_flag_t flag, ir_instruction_t* source) {
+ir_instruction_t* ir_emit_set_flag(ir_emitter_state_t* state, x86_flag_e flag, ir_instruction_t* source) {
     ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
     instruction->opcode = IR_SET_FLAG;
     instruction->type = IR_TYPE_SET_FLAG;
@@ -227,6 +227,22 @@ ir_instruction_t* ir_emit_immediate(ir_emitter_state_t* state, u64 value)
     return instruction;
 }
 
+ir_instruction_t* ir_emit_immediate_sext(ir_emitter_state_t* state, x86_operand_t* operand)
+{
+    i64 value = operand->immediate.data;
+    switch (operand->immediate.size) {
+        case 1: value = (i8)value; break;
+        case 2: value = (i16)value; break;
+        case 4: value = (i32)value; break;
+    }
+
+    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    instruction->opcode = IR_IMMEDIATE;
+    instruction->type = IR_TYPE_LOAD_IMMEDIATE;
+    instruction->load_immediate.immediate = value;
+    return instruction;
+}
+
 // ██   ██ ███████ ██      ██████  ███████ ██████  ███████
 // ██   ██ ██      ██      ██   ██ ██      ██   ██ ██     
 // ███████ █████   ██      ██████  █████   ██████  ███████
@@ -236,11 +252,11 @@ ir_instruction_t* ir_emit_immediate(ir_emitter_state_t* state, u64 value)
 ir_instruction_t* ir_emit_get_reg(ir_emitter_state_t* state, x86_operand_t* reg_operand)
 {
     switch (reg_operand->reg.size) {
-        case BYTE_LOW: return ir_emit_get_gpr8_low(state, reg_operand->reg.ref);
-        case BYTE_HIGH: return ir_emit_get_gpr8_high(state, reg_operand->reg.ref);
-        case WORD: return ir_emit_get_gpr16(state, reg_operand->reg.ref);
-        case DWORD: return ir_emit_get_gpr32(state, reg_operand->reg.ref);
-        case QWORD: return ir_emit_get_gpr64(state, reg_operand->reg.ref);
+        case X86_REG_SIZE_BYTE_LOW: return ir_emit_get_gpr8_low(state, reg_operand->reg.ref);
+        case X86_REG_SIZE_BYTE_HIGH: return ir_emit_get_gpr8_high(state, reg_operand->reg.ref);
+        case X86_REG_SIZE_WORD: return ir_emit_get_gpr16(state, reg_operand->reg.ref);
+        case X86_REG_SIZE_DWORD: return ir_emit_get_gpr32(state, reg_operand->reg.ref);
+        case X86_REG_SIZE_QWORD: return ir_emit_get_gpr64(state, reg_operand->reg.ref);
     }
 }
 
@@ -249,7 +265,7 @@ ir_instruction_t* ir_emit_get_rm(ir_emitter_state_t* state, x86_prefixes_t* pref
     if (rm_operand->type == X86_OP_TYPE_REGISTER) {
         return ir_emit_get_reg(state, rm_operand);
     } else {
-        ir_instruction_t* (*get_guest)(ir_emitter_state_t* state, x86_ref_t reg) = prefixes->address_override ? ir_emit_get_gpr32 : ir_emit_get_gpr64;
+        ir_instruction_t* (*get_guest)(ir_emitter_state_t* state, x86_ref_e reg) = prefixes->address_override ? ir_emit_get_gpr32 : ir_emit_get_gpr64;
         ir_instruction_t* base = rm_operand->memory.base != X86_REF_COUNT ? get_guest(state, rm_operand->memory.base) : NULL;
         ir_instruction_t* index = rm_operand->memory.index != X86_REF_COUNT ? get_guest(state, rm_operand->memory.index) : NULL;
         ir_instruction_t* address = ir_emit_lea(state, base, index, rm_operand->memory.scale, rm_operand->memory.displacement);
@@ -267,11 +283,11 @@ ir_instruction_t* ir_emit_get_rm(ir_emitter_state_t* state, x86_prefixes_t* pref
 ir_instruction_t* ir_emit_set_reg(ir_emitter_state_t* state, x86_operand_t* reg_operand, ir_instruction_t* source)
 {
     switch (reg_operand->reg.size) {
-        case BYTE_LOW: return ir_emit_set_gpr8_low(state, reg_operand->reg.ref, source);
-        case BYTE_HIGH: return ir_emit_set_gpr8_high(state, reg_operand->reg.ref, source);
-        case WORD: return ir_emit_set_gpr16(state, reg_operand->reg.ref, source);
-        case DWORD: return ir_emit_set_gpr32(state, reg_operand->reg.ref, source);
-        case QWORD: return ir_emit_set_gpr64(state, reg_operand->reg.ref, source);
+        case X86_REG_SIZE_BYTE_LOW: return ir_emit_set_gpr8_low(state, reg_operand->reg.ref, source);
+        case X86_REG_SIZE_BYTE_HIGH: return ir_emit_set_gpr8_high(state, reg_operand->reg.ref, source);
+        case X86_REG_SIZE_WORD: return ir_emit_set_gpr16(state, reg_operand->reg.ref, source);
+        case X86_REG_SIZE_DWORD: return ir_emit_set_gpr32(state, reg_operand->reg.ref, source);
+        case X86_REG_SIZE_QWORD: return ir_emit_set_gpr64(state, reg_operand->reg.ref, source);
     }
 }
 
@@ -280,7 +296,7 @@ ir_instruction_t* ir_emit_set_rm(ir_emitter_state_t* state, x86_prefixes_t* pref
     if (rm_operand->type == X86_OP_TYPE_REGISTER) {
         return ir_emit_set_reg(state, rm_operand, source);
     } else {
-        ir_instruction_t* (*get_guest)(ir_emitter_state_t* state, x86_ref_t reg) = prefixes->address_override ? ir_emit_get_gpr32 : ir_emit_get_gpr64;
+        ir_instruction_t* (*get_guest)(ir_emitter_state_t* state, x86_ref_e reg) = prefixes->address_override ? ir_emit_get_gpr32 : ir_emit_get_gpr64;
         ir_instruction_t* base = rm_operand->memory.base != X86_REF_COUNT ? get_guest(state, rm_operand->memory.base) : NULL;
         ir_instruction_t* index = rm_operand->memory.index != X86_REF_COUNT ? get_guest(state, rm_operand->memory.index) : NULL;
         ir_instruction_t* address = ir_emit_lea(state, base, index, rm_operand->memory.scale, rm_operand->memory.displacement);
@@ -321,7 +337,7 @@ ir_instruction_t* ir_emit_read_memory(ir_emitter_state_t* state, x86_prefixes_t*
     }
 }
 
-ir_instruction_t* ir_emit_get_gpr8_low(ir_emitter_state_t* state, x86_ref_t reg)
+ir_instruction_t* ir_emit_get_gpr8_low(ir_emitter_state_t* state, x86_ref_e reg)
 {
     ir_instruction_t* full_reg = ir_emit_get_guest(state, reg);
     ir_instruction_t* mask = ir_emit_immediate(state, 0xFF);
@@ -330,7 +346,7 @@ ir_instruction_t* ir_emit_get_gpr8_low(ir_emitter_state_t* state, x86_ref_t reg)
     return instruction;
 }
 
-ir_instruction_t* ir_emit_get_gpr8_high(ir_emitter_state_t* state, x86_ref_t reg)
+ir_instruction_t* ir_emit_get_gpr8_high(ir_emitter_state_t* state, x86_ref_e reg)
 {
     ir_instruction_t* full_reg = ir_emit_get_guest(state, reg);
     ir_instruction_t* shift = ir_emit_immediate(state, 8);
@@ -341,7 +357,7 @@ ir_instruction_t* ir_emit_get_gpr8_high(ir_emitter_state_t* state, x86_ref_t reg
     return instruction;
 }
 
-ir_instruction_t* ir_emit_get_gpr16(ir_emitter_state_t* state, x86_ref_t reg)
+ir_instruction_t* ir_emit_get_gpr16(ir_emitter_state_t* state, x86_ref_e reg)
 {
     ir_instruction_t* full_reg = ir_emit_get_guest(state, reg);
     ir_instruction_t* mask = ir_emit_immediate(state, 0xFFFF);
@@ -350,7 +366,7 @@ ir_instruction_t* ir_emit_get_gpr16(ir_emitter_state_t* state, x86_ref_t reg)
     return instruction;
 }
 
-ir_instruction_t* ir_emit_get_gpr32(ir_emitter_state_t* state, x86_ref_t reg)
+ir_instruction_t* ir_emit_get_gpr32(ir_emitter_state_t* state, x86_ref_e reg)
 {
     ir_instruction_t* full_reg = ir_emit_get_guest(state, reg);
     ir_instruction_t* mask = ir_emit_immediate(state, 0xFFFFFFFF);
@@ -359,14 +375,14 @@ ir_instruction_t* ir_emit_get_gpr32(ir_emitter_state_t* state, x86_ref_t reg)
     return instruction;
 }
 
-ir_instruction_t* ir_emit_get_gpr64(ir_emitter_state_t* state, x86_ref_t reg)
+ir_instruction_t* ir_emit_get_gpr64(ir_emitter_state_t* state, x86_ref_e reg)
 {
     ir_instruction_t* instruction = ir_emit_get_guest(state, reg);
 
     return instruction;
 }
 
-ir_instruction_t* ir_emit_set_gpr8_low(ir_emitter_state_t* state, x86_ref_t reg, ir_instruction_t* source)
+ir_instruction_t* ir_emit_set_gpr8_low(ir_emitter_state_t* state, x86_ref_e reg, ir_instruction_t* source)
 {
     ir_instruction_t* full_reg = ir_emit_get_guest(state, reg);
     ir_instruction_t* mask = ir_emit_immediate(state, 0xFFFFFFFFFFFFFF00);
@@ -379,7 +395,7 @@ ir_instruction_t* ir_emit_set_gpr8_low(ir_emitter_state_t* state, x86_ref_t reg,
     return instruction;
 }
 
-ir_instruction_t* ir_emit_set_gpr8_high(ir_emitter_state_t* state, x86_ref_t reg, ir_instruction_t* source)
+ir_instruction_t* ir_emit_set_gpr8_high(ir_emitter_state_t* state, x86_ref_e reg, ir_instruction_t* source)
 {
     ir_instruction_t* full_reg = ir_emit_get_guest(state, reg);
     ir_instruction_t* mask = ir_emit_immediate(state, 0xFFFFFFFFFFFF00FF);
@@ -394,7 +410,7 @@ ir_instruction_t* ir_emit_set_gpr8_high(ir_emitter_state_t* state, x86_ref_t reg
     return instruction;
 }
 
-ir_instruction_t* ir_emit_set_gpr16(ir_emitter_state_t* state, x86_ref_t reg, ir_instruction_t* source)
+ir_instruction_t* ir_emit_set_gpr16(ir_emitter_state_t* state, x86_ref_e reg, ir_instruction_t* source)
 {
     ir_instruction_t* full_reg = ir_emit_get_guest(state, reg);
     ir_instruction_t* mask = ir_emit_immediate(state, 0xFFFFFFFFFFFF0000);
@@ -407,7 +423,7 @@ ir_instruction_t* ir_emit_set_gpr16(ir_emitter_state_t* state, x86_ref_t reg, ir
     return instruction;
 }
 
-ir_instruction_t* ir_emit_set_gpr32(ir_emitter_state_t* state, x86_ref_t reg, ir_instruction_t* source)
+ir_instruction_t* ir_emit_set_gpr32(ir_emitter_state_t* state, x86_ref_e reg, ir_instruction_t* source)
 {
     ir_instruction_t* value_mask = ir_emit_immediate(state, 0xFFFFFFFF);
     ir_instruction_t* final_value = ir_emit_and(state, source, value_mask);
@@ -416,7 +432,7 @@ ir_instruction_t* ir_emit_set_gpr32(ir_emitter_state_t* state, x86_ref_t reg, ir
     return instruction;
 }
 
-ir_instruction_t* ir_emit_set_gpr64(ir_emitter_state_t* state, x86_ref_t reg, ir_instruction_t* source)
+ir_instruction_t* ir_emit_set_gpr64(ir_emitter_state_t* state, x86_ref_e reg, ir_instruction_t* source)
 {
     ir_instruction_t* instruction = ir_emit_set_guest(state, reg, source);
 
@@ -515,6 +531,18 @@ ir_instruction_t* ir_emit_get_carry_add(ir_emitter_state_t* state, x86_prefixes_
     return ir_emit_less_than_unsigned(state, masked_result, source1);
 }
 
+ir_instruction_t* ir_emit_get_carry_adc(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    ir_instruction_t* carry_in = ir_emit_get_flag(state, X86_FLAG_CF);
+    ir_instruction_t* sum = ir_emit_add(state, source1, source2);
+    ir_instruction_t* sum_with_carry = ir_emit_add(state, sum, carry_in);
+
+    ir_instruction_t* carry1 = ir_emit_get_carry_add(state, prefixes, source1, source2, sum);
+    ir_instruction_t* carry2 = ir_emit_get_carry_add(state, prefixes, sum, carry_in, sum_with_carry);
+
+    return ir_emit_or(state, carry1, carry2);
+}
+
 ir_instruction_t* ir_emit_get_carry_sub(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result)
 {
     (void)result; // dont need, just keeping for consistency
@@ -522,6 +550,18 @@ ir_instruction_t* ir_emit_get_carry_sub(ir_emitter_state_t* state, x86_prefixes_
 
     // CF = source1 < source2, as that means that the result would underflow
     return ir_emit_less_than_unsigned(state, source1, source2);
+}
+
+ir_instruction_t* ir_emit_get_carry_sbb(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    ir_instruction_t* carry_in = ir_emit_get_flag(state, X86_FLAG_CF);
+    ir_instruction_t* sum = ir_emit_sub(state, source1, source2);
+    ir_instruction_t* sum_with_carry = ir_emit_sub(state, sum, carry_in);
+
+    ir_instruction_t* carry1 = ir_emit_get_carry_sub(state, prefixes, source1, source2, sum);
+    ir_instruction_t* carry2 = ir_emit_get_carry_sub(state, prefixes, sum, carry_in, sum_with_carry);
+
+    return ir_emit_or(state, carry1, carry2);
 }
 
 ir_instruction_t* ir_emit_get_aux_add(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2)

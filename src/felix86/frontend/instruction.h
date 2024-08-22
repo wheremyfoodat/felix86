@@ -6,21 +6,42 @@ extern "C" {
 
 #include "felix86/common/utility.h"
 
-typedef enum {
+typedef enum : u8 {
     REP_NONE = 0,
     REP_Z = 1,
     REP_NZ = 2,
 } rep_type_e;
 
-typedef enum {
+typedef enum : u8 {
     SEGMENT_NONE = 0,
     SEGMENT_FS = 1,
     SEGMENT_GS = 2,
     SEGMENT_FS_GS = 3,
 } segment_override_e;
 
+typedef enum : u8 {
+    X86_GROUP1_ADD = 0,
+    X86_GROUP1_OR  = 1,
+    X86_GROUP1_ADC = 2,
+    X86_GROUP1_SBB = 3,
+    X86_GROUP1_AND = 4,
+    X86_GROUP1_SUB = 5,
+    X86_GROUP1_XOR = 6,
+    X86_GROUP1_CMP = 7,
+} x86_group1_e;
 
-typedef enum {
+typedef enum : u8 {
+    X86_GROUP2_ROL = 0,
+    X86_GROUP2_ROR = 1,
+    X86_GROUP2_RCL = 2,
+    X86_GROUP2_RCR = 3,
+    X86_GROUP2_SHL = 4,
+    X86_GROUP2_SHR = 5,
+    X86_GROUP2_SAL = 6,
+    X86_GROUP2_SAR = 7,
+} x86_group2_e;
+
+typedef enum : u8 {
     X86_REF_RAX,
     X86_REF_RCX,
     X86_REF_RDX,
@@ -43,16 +64,32 @@ typedef enum {
     X86_REF_FS,
 
     X86_REF_COUNT,
-} x86_ref_t;
+} x86_ref_e;
 
-typedef enum {
+typedef enum : u8 {
     X86_FLAG_CF = 0,
     X86_FLAG_PF = 2,
     X86_FLAG_AF = 4,
     X86_FLAG_ZF = 6,
     X86_FLAG_SF = 7,
     X86_FLAG_OF = 11,
-} x86_flag_t;
+} x86_flag_e;
+
+
+typedef enum : u8 {
+    X86_OP_TYPE_NONE,
+    X86_OP_TYPE_MEMORY,
+    X86_OP_TYPE_REGISTER,
+    X86_OP_TYPE_IMMEDIATE,
+} x86_operand_type_e;
+
+typedef enum : u8 {
+    X86_REG_SIZE_BYTE_LOW,
+    X86_REG_SIZE_WORD,
+    X86_REG_SIZE_DWORD,
+    X86_REG_SIZE_QWORD,
+    X86_REG_SIZE_BYTE_HIGH,
+} x86_register_size_e;
 
 typedef union {
     struct {
@@ -74,32 +111,17 @@ typedef union {
     u16 raw;
 } x86_prefixes_t;
 
-typedef enum {
-    X86_OP_TYPE_NONE,
-    X86_OP_TYPE_MEMORY,
-    X86_OP_TYPE_REGISTER,
-    X86_OP_TYPE_IMMEDIATE,
-} x86_operand_type_e;
-
-typedef enum {
-    BYTE_LOW,
-    WORD,
-    DWORD,
-    QWORD,
-    BYTE_HIGH,
-} x86_register_size_e;
-
 typedef struct {
     union {
         struct {
             u64 displacement;
-            x86_ref_t base;
-            x86_ref_t index;
+            x86_ref_e base;
+            x86_ref_e index;
             u8 scale;
         } memory;
 
         struct {
-            x86_ref_t ref;
+            x86_ref_e ref;
             x86_register_size_e size;
         } reg;
 

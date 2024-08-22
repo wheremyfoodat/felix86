@@ -6,6 +6,7 @@ extern "C" {
 
 #include "felix86/common/utility.h"
 
+void loader_set_args(int argc, const char** argv);
 void loader_run_elf(const char* path);
 
 #ifdef __cplusplus

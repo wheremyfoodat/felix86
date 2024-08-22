@@ -86,20 +86,20 @@ typedef struct ir_instruction_s {
         } lea;
 
         struct {
-            x86_ref_t ref;
+            x86_ref_e ref;
         } get_guest;
 
         struct {
             struct ir_instruction_s* source;
-            x86_ref_t ref;
+            x86_ref_e ref;
         } set_guest;
 
         struct {
-            x86_flag_t flag;
+            x86_flag_e flag;
         } get_flag;
 
         struct {
-            x86_flag_t flag;
+            x86_flag_e flag;
             struct ir_instruction_s* source;
         } set_flag;
     };

@@ -28,7 +28,7 @@ void felix86_recompiler_destroy(felix86_recompiler_t* recompiler) {
     free(recompiler);
 }
 
-u64 felix86_get_guest(felix86_recompiler_t* recompiler, x86_ref_t ref) {
+u64 felix86_get_guest(felix86_recompiler_t* recompiler, x86_ref_e ref) {
     switch (ref) {
         case X86_REF_RAX:
             return recompiler->state.gprs[0];
@@ -75,7 +75,7 @@ u64 felix86_get_guest(felix86_recompiler_t* recompiler, x86_ref_t ref) {
     }
 }
 
-void felix86_set_guest(felix86_recompiler_t* recompiler, x86_ref_t ref, u64 value) {
+void felix86_set_guest(felix86_recompiler_t* recompiler, x86_ref_e ref, u64 value) {
     switch (ref) {
         case X86_REF_RAX:
             recompiler->state.gprs[0] = value;

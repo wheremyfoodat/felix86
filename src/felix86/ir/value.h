@@ -7,7 +7,7 @@ extern "C" {
 #include "felix86/common/utility.h"
 #include "felix86/frontend/instruction.h"
 
-typedef enum {
+typedef enum : u8 {
     IR_VALUE_TYPE_NULL,
     IR_VALUE_TYPE_IMMEDIATE,
     IR_VALUE_TYPE_VARIABLE,
@@ -20,7 +20,7 @@ typedef struct {
     union {
         u64 imm;
         ir_temp_t var;
-        x86_ref_t reg;
+        x86_ref_e reg;
     };
 
     ir_value_type_t type;

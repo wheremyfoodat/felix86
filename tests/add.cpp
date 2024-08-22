@@ -21,3 +21,10 @@ TEST_ADD(255, 0)
 TEST_ADD(0, 255)
 TEST_ADD(127, 0)
 TEST_ADD(0, 127)
+
+FELIX86_TEST(add_sign_extend) {
+    mov(ebx, 0);
+    add(ebx, -1); // encoded as add rm32, imm8 - gets sign extended
+
+    verify(X86_REF_RBX, (uint32_t)-1ull);
+}

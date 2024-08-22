@@ -55,7 +55,7 @@ static void interrupt(void* context, u8 vector) {}
 #define FELIX86_TEST(name) struct Code_##name final : Xbyak::CodeGenerator { \
     Code_##name(); \
     ~Code_##name() { free(data); } \
-    void verify(x86_ref_t ref, u64 value) { checks.push_back({ ref, value }); } \
+    void verify(x86_ref_e ref, u64 value) { checks.push_back({ ref, value }); } \
     void verify_c(bool value) { c = value; } \
     void verify_p(bool value) { p = value; } \
     void verify_a(bool value) { a = value; } \
@@ -77,7 +77,7 @@ private: \
         if (o.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_FLAGS) & (1 << X86_FLAG_OF)) == o.value()); \
     } \
     felix86_recompiler_t* recompiler; \
-    std::vector<std::pair<x86_ref_t, u64>> checks; \
+    std::vector<std::pair<x86_ref_e, u64>> checks; \
     std::optional<bool> c,p,a,z,s,o; \
 }; \
 TEST_CASE(#name, "[felix86]") { \

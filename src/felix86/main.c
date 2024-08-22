@@ -7,6 +7,7 @@ int main(int argc, const char* argv[]) {
         return 1;
     }
 
+    loader_set_args(1, argv);
     loader_run_elf(argv[1]);
     return 0;
 }

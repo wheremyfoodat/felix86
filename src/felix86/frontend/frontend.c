@@ -177,14 +177,14 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     u8 opcode = data[index++];
     instruction_metadata_t primary = primary_table[opcode];
 
-    u8 size = DWORD;
+    u8 size = X86_REG_SIZE_DWORD;
     if (primary.decoding_flags & BYTE_OVERRIDE_FLAG) {
         prefixes.byte_override = true;
-        size = BYTE_LOW;
+        size = X86_REG_SIZE_BYTE_LOW;
     } else if (prefixes.operand_override) {
-        size = WORD;
+        size = X86_REG_SIZE_WORD;
     } else if (prefixes.rex_w) {
-        size = QWORD;
+        size = X86_REG_SIZE_QWORD;
     }
 
     x86_instruction_t inst = {0};
@@ -285,22 +285,22 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     if (inst.operand_reg.type == X86_OP_TYPE_REGISTER) {
         inst.operand_reg.reg.size = size;
 
-        if (!prefixes.rex && inst.operand_reg.reg.size == BYTE_LOW) {
+        if (!prefixes.rex && inst.operand_reg.reg.size == X86_REG_SIZE_BYTE_LOW) {
             int reg_index = (inst.operand_reg.reg.ref - X86_REF_RAX) & 0x7;
             bool high = reg_index >= 4;
             inst.operand_reg.reg.ref = X86_REF_RAX + (reg_index & 0x3);
-            inst.operand_reg.reg.size = high ? BYTE_HIGH : BYTE_LOW;
+            inst.operand_reg.reg.size = high ? X86_REG_SIZE_BYTE_HIGH : X86_REG_SIZE_BYTE_LOW;
         }
     }
 
     if (inst.operand_rm.type == X86_OP_TYPE_REGISTER) {
         inst.operand_rm.reg.size = size;
 
-        if (!prefixes.rex && inst.operand_rm.reg.size == BYTE_LOW) {
+        if (!prefixes.rex && inst.operand_rm.reg.size == X86_REG_SIZE_BYTE_LOW) {
             int reg_index = (inst.operand_rm.reg.ref - X86_REF_RAX) & 0x7;
             bool high = reg_index >= 4;
             inst.operand_rm.reg.ref = X86_REF_RAX + (reg_index & 0x3);
-            inst.operand_rm.reg.size = high ? BYTE_HIGH : BYTE_LOW;
+            inst.operand_rm.reg.size = high ? X86_REG_SIZE_BYTE_HIGH : X86_REG_SIZE_BYTE_LOW;
         }
     }
 

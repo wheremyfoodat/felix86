@@ -2,7 +2,7 @@
 
 #include <stdio.h>
 
-void print_guest(x86_ref_t guest) {
+void print_guest(x86_ref_e guest) {
     switch (guest) {
         case X86_REF_RAX: printf("rax"); break;
         case X86_REF_RCX: printf("rcx"); break;
@@ -28,7 +28,7 @@ void print_guest(x86_ref_t guest) {
     }
 }
 
-void print_flag(x86_flag_t flag) {
+void print_flag(x86_flag_e flag) {
     switch (flag) {
         case X86_FLAG_CF: printf("CF"); break;
         case X86_FLAG_PF: printf("PF"); break;

@@ -36,10 +36,10 @@ ir_instruction_t* ir_emit_sext8(ir_emitter_state_t* state, ir_instruction_t* sou
 ir_instruction_t* ir_emit_sext16(ir_emitter_state_t* state, ir_instruction_t* source);
 ir_instruction_t* ir_emit_sext32(ir_emitter_state_t* state, ir_instruction_t* source);
 
-ir_instruction_t* ir_emit_get_guest(ir_emitter_state_t* state, x86_ref_t ref);
-ir_instruction_t* ir_emit_set_guest(ir_emitter_state_t* state, x86_ref_t ref, ir_instruction_t* source);
-ir_instruction_t* ir_emit_get_flag(ir_emitter_state_t* state, x86_flag_t flag);
-ir_instruction_t* ir_emit_set_flag(ir_emitter_state_t* state, x86_flag_t flag, ir_instruction_t* source);
+ir_instruction_t* ir_emit_get_guest(ir_emitter_state_t* state, x86_ref_e ref);
+ir_instruction_t* ir_emit_set_guest(ir_emitter_state_t* state, x86_ref_e ref, ir_instruction_t* source);
+ir_instruction_t* ir_emit_get_flag(ir_emitter_state_t* state, x86_flag_e flag);
+ir_instruction_t* ir_emit_set_flag(ir_emitter_state_t* state, x86_flag_e flag, ir_instruction_t* source);
 
 ir_instruction_t* ir_emit_read_byte(ir_emitter_state_t* state, ir_instruction_t* address);
 ir_instruction_t* ir_emit_read_word(ir_emitter_state_t* state, ir_instruction_t* address);
@@ -52,6 +52,7 @@ ir_instruction_t* ir_emit_write_qword(ir_emitter_state_t* state, ir_instruction_
 
 // Helpers
 ir_instruction_t* ir_emit_immediate(ir_emitter_state_t* state, u64 value);
+ir_instruction_t* ir_emit_immediate_sext(ir_emitter_state_t* state, x86_operand_t* operand);
 
 ir_instruction_t* ir_emit_get_reg(ir_emitter_state_t* state, x86_operand_t* reg_operand);
 ir_instruction_t* ir_emit_get_rm(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* rm_operand);
@@ -61,16 +62,16 @@ ir_instruction_t* ir_emit_set_rm(ir_emitter_state_t* state, x86_prefixes_t* pref
 ir_instruction_t* ir_emit_write_memory(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* address, ir_instruction_t* value);
 ir_instruction_t* ir_emit_read_memory(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* address);
 
-ir_instruction_t* ir_emit_get_gpr8_low(ir_emitter_state_t* state, x86_ref_t reg);
-ir_instruction_t* ir_emit_get_gpr8_high(ir_emitter_state_t* state, x86_ref_t reg);
-ir_instruction_t* ir_emit_get_gpr16(ir_emitter_state_t* state, x86_ref_t reg);
-ir_instruction_t* ir_emit_get_gpr32(ir_emitter_state_t* state, x86_ref_t reg);
-ir_instruction_t* ir_emit_get_gpr64(ir_emitter_state_t* state, x86_ref_t reg);
-ir_instruction_t* ir_emit_set_gpr8_low(ir_emitter_state_t* state, x86_ref_t reg, ir_instruction_t* source);
-ir_instruction_t* ir_emit_set_gpr8_high(ir_emitter_state_t* state, x86_ref_t reg, ir_instruction_t* source);
-ir_instruction_t* ir_emit_set_gpr16(ir_emitter_state_t* state, x86_ref_t reg, ir_instruction_t* source);
-ir_instruction_t* ir_emit_set_gpr32(ir_emitter_state_t* state, x86_ref_t reg, ir_instruction_t* source);
-ir_instruction_t* ir_emit_set_gpr64(ir_emitter_state_t* state, x86_ref_t reg, ir_instruction_t* source);
+ir_instruction_t* ir_emit_get_gpr8_low(ir_emitter_state_t* state, x86_ref_e reg);
+ir_instruction_t* ir_emit_get_gpr8_high(ir_emitter_state_t* state, x86_ref_e reg);
+ir_instruction_t* ir_emit_get_gpr16(ir_emitter_state_t* state, x86_ref_e reg);
+ir_instruction_t* ir_emit_get_gpr32(ir_emitter_state_t* state, x86_ref_e reg);
+ir_instruction_t* ir_emit_get_gpr64(ir_emitter_state_t* state, x86_ref_e reg);
+ir_instruction_t* ir_emit_set_gpr8_low(ir_emitter_state_t* state, x86_ref_e reg, ir_instruction_t* source);
+ir_instruction_t* ir_emit_set_gpr8_high(ir_emitter_state_t* state, x86_ref_e reg, ir_instruction_t* source);
+ir_instruction_t* ir_emit_set_gpr16(ir_emitter_state_t* state, x86_ref_e reg, ir_instruction_t* source);
+ir_instruction_t* ir_emit_set_gpr32(ir_emitter_state_t* state, x86_ref_e reg, ir_instruction_t* source);
+ir_instruction_t* ir_emit_set_gpr64(ir_emitter_state_t* state, x86_ref_e reg, ir_instruction_t* source);
 
 ir_instruction_t* ir_emit_get_parity(ir_emitter_state_t* state, ir_instruction_t* source);
 ir_instruction_t* ir_emit_get_zero(ir_emitter_state_t* state, ir_instruction_t* source);
@@ -78,7 +79,9 @@ ir_instruction_t* ir_emit_get_sign(ir_emitter_state_t* state, x86_prefixes_t* pr
 ir_instruction_t* ir_emit_get_overflow_add(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result);
 ir_instruction_t* ir_emit_get_overflow_sub(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result);
 ir_instruction_t* ir_emit_get_carry_add(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result);
+ir_instruction_t* ir_emit_get_carry_adc(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_get_carry_sub(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result);
+ir_instruction_t* ir_emit_get_carry_sbb(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_get_aux_add(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_get_aux_sub(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 

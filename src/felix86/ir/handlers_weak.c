@@ -1,143 +1,143 @@
 #include "felix86/ir/emitter.h"
 #include "felix86/common/log.h"
 
-void __attribute__((weak)) ir_handle_add_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "add_rm8_r8"); }
-void __attribute__((weak)) ir_handle_add_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "add_rm32_r32"); }
-void __attribute__((weak)) ir_handle_add_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "add_r8_rm8"); }
-void __attribute__((weak)) ir_handle_add_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "add_r32_rm32"); }
-void __attribute__((weak)) ir_handle_add_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "add_al_imm8"); }
-void __attribute__((weak)) ir_handle_add_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "add_eax_imm32"); }
-void __attribute__((weak)) ir_handle_or_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "or_rm8_r8"); }
-void __attribute__((weak)) ir_handle_or_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "or_rm32_r32"); }
-void __attribute__((weak)) ir_handle_or_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "or_r8_rm8"); }
-void __attribute__((weak)) ir_handle_or_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "or_r32_rm32"); }
-void __attribute__((weak)) ir_handle_or_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "or_al_imm8"); }
-void __attribute__((weak)) ir_handle_or_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "or_eax_imm32"); }
-void __attribute__((weak)) ir_handle_secondary_table(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "secondary_table"); }
-void __attribute__((weak)) ir_handle_adc_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "adc_rm8_r8"); }
-void __attribute__((weak)) ir_handle_adc_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "adc_rm32_r32"); }
-void __attribute__((weak)) ir_handle_adc_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "adc_r8_rm8"); }
-void __attribute__((weak)) ir_handle_adc_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "adc_r32_rm32"); }
-void __attribute__((weak)) ir_handle_adc_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "adc_al_imm8"); }
-void __attribute__((weak)) ir_handle_adc_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "adc_eax_imm32"); }
-void __attribute__((weak)) ir_handle_sbb_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "sbb_rm8_r8"); }
-void __attribute__((weak)) ir_handle_sbb_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "sbb_rm32_r32"); }
-void __attribute__((weak)) ir_handle_sbb_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "sbb_r8_rm8"); }
-void __attribute__((weak)) ir_handle_sbb_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "sbb_r32_rm32"); }
-void __attribute__((weak)) ir_handle_sbb_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "sbb_al_imm8"); }
-void __attribute__((weak)) ir_handle_sbb_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "sbb_eax_imm32"); }
-void __attribute__((weak)) ir_handle_and_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "and_rm8_r8"); }
-void __attribute__((weak)) ir_handle_and_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "and_rm32_r32"); }
-void __attribute__((weak)) ir_handle_and_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "and_r8_rm8"); }
-void __attribute__((weak)) ir_handle_and_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "and_r32_rm32"); }
-void __attribute__((weak)) ir_handle_and_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "and_al_imm8"); }
-void __attribute__((weak)) ir_handle_and_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "and_eax_imm32"); }
-void __attribute__((weak)) ir_handle_sub_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "sub_rm8_r8"); }
-void __attribute__((weak)) ir_handle_sub_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "sub_rm32_r32"); }
-void __attribute__((weak)) ir_handle_sub_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "sub_r8_rm8"); }
-void __attribute__((weak)) ir_handle_sub_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "sub_r32_rm32"); }
-void __attribute__((weak)) ir_handle_sub_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "sub_al_imm8"); }
-void __attribute__((weak)) ir_handle_sub_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "sub_eax_imm32"); }
-void __attribute__((weak)) ir_handle_xor_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "xor_rm8_r8"); }
-void __attribute__((weak)) ir_handle_xor_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "xor_rm32_r32"); }
-void __attribute__((weak)) ir_handle_xor_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "xor_r8_rm8"); }
-void __attribute__((weak)) ir_handle_xor_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "xor_r32_rm32"); }
-void __attribute__((weak)) ir_handle_xor_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "xor_al_imm8"); }
-void __attribute__((weak)) ir_handle_xor_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "xor_eax_imm32"); }
-void __attribute__((weak)) ir_handle_cmp_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "cmp_rm8_r8"); }
-void __attribute__((weak)) ir_handle_cmp_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "cmp_rm32_r32"); }
-void __attribute__((weak)) ir_handle_cmp_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "cmp_r8_rm8"); }
-void __attribute__((weak)) ir_handle_cmp_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "cmp_r32_rm32"); }
-void __attribute__((weak)) ir_handle_cmp_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "cmp_al_imm8"); }
-void __attribute__((weak)) ir_handle_cmp_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "cmp_eax_imm32"); }
-void __attribute__((weak)) ir_handle_push_r64(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "push_r64"); }
-void __attribute__((weak)) ir_handle_pop_r64(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "pop_r64"); }
-void __attribute__((weak)) ir_handle_movsxd(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "movsxd"); }
-void __attribute__((weak)) ir_handle_push_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "push_imm32"); }
-void __attribute__((weak)) ir_handle_imul_r32_rm32_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "imul_r32_rm32_imm32"); }
-void __attribute__((weak)) ir_handle_push_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "push_imm8"); }
-void __attribute__((weak)) ir_handle_imul_r32_rm32_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "imul_r32_rm32_imm8"); }
-void __attribute__((weak)) ir_handle_jo_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "jo_rel8"); }
-void __attribute__((weak)) ir_handle_jno_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "jno_rel8"); }
-void __attribute__((weak)) ir_handle_jc_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "jc_rel8"); }
-void __attribute__((weak)) ir_handle_jnc_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "jnc_rel8"); }
-void __attribute__((weak)) ir_handle_jz_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "jz_rel8"); }
-void __attribute__((weak)) ir_handle_jnz_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "jnz_rel8"); }
-void __attribute__((weak)) ir_handle_jbe_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "jbe_rel8"); }
-void __attribute__((weak)) ir_handle_ja_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "ja_rel8"); }
-void __attribute__((weak)) ir_handle_js_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "js_rel8"); }
-void __attribute__((weak)) ir_handle_jns_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "jns_rel8"); }
-void __attribute__((weak)) ir_handle_jp_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "jp_rel8"); }
-void __attribute__((weak)) ir_handle_jnp_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "jnp_rel8"); }
-void __attribute__((weak)) ir_handle_jl_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "jl_rel8"); }
-void __attribute__((weak)) ir_handle_jge_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "jge_rel8"); }
-void __attribute__((weak)) ir_handle_jle_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "jle_rel8"); }
-void __attribute__((weak)) ir_handle_jg_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "jg_rel8"); }
-void __attribute__((weak)) ir_handle_group1_rm8_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "group1_rm8_imm8"); }
-void __attribute__((weak)) ir_handle_group1_rm32_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "group1_rm32_imm32"); }
-void __attribute__((weak)) ir_handle_group1_rm32_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "group1_rm32_imm8"); }
-void __attribute__((weak)) ir_handle_test_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "test_rm8_r8"); }
-void __attribute__((weak)) ir_handle_test_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "test_rm32_r32"); }
-void __attribute__((weak)) ir_handle_xchg_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "xchg_rm8_r8"); }
-void __attribute__((weak)) ir_handle_xchg_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "xchg_rm32_r32"); }
-void __attribute__((weak)) ir_handle_mov_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "mov_rm8_r8"); }
-void __attribute__((weak)) ir_handle_mov_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "mov_rm32_r32"); }
-void __attribute__((weak)) ir_handle_mov_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "mov_r8_rm8"); }
-void __attribute__((weak)) ir_handle_mov_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "mov_r32_rm32"); }
-void __attribute__((weak)) ir_handle_mov_from_sreg(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "mov_from_sreg"); }
-void __attribute__((weak)) ir_handle_lea(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "lea"); }
-void __attribute__((weak)) ir_handle_mov_to_sreg(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "mov_to_sreg"); }
-void __attribute__((weak)) ir_handle_pop_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "pop_rm32"); }
-void __attribute__((weak)) ir_handle_xchg_reg(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "ir_handle_xchg_reg"); }
-void __attribute__((weak)) ir_handle_cwde(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "cwde"); }
-void __attribute__((weak)) ir_handle_cdq(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "cdq"); }
-void __attribute__((weak)) ir_handle_push_flags(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "push_flags"); }
-void __attribute__((weak)) ir_handle_pop_flags(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "pop_flags"); }
-void __attribute__((weak)) ir_handle_sahf(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "sahf"); }
-void __attribute__((weak)) ir_handle_lahf(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "lahf"); }
-void __attribute__((weak)) ir_handle_mov_al_moffs8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "mov_al_moffs8"); }
-void __attribute__((weak)) ir_handle_mov_eax_moffs32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "mov_eax_moffs32"); }
-void __attribute__((weak)) ir_handle_mov_moffs8_al(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "mov_moffs8_al"); }
-void __attribute__((weak)) ir_handle_mov_moffs32_eax(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "mov_moffs32_eax"); }
-void __attribute__((weak)) ir_handle_movsb(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "movsb"); }
-void __attribute__((weak)) ir_handle_movsd(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "movsd"); }
-void __attribute__((weak)) ir_handle_cmpsb(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "cmpsb"); }
-void __attribute__((weak)) ir_handle_cmpsd(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "cmpsd"); }
-void __attribute__((weak)) ir_handle_test_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "test_al_imm8"); }
-void __attribute__((weak)) ir_handle_test_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "test_eax_imm32"); }
-void __attribute__((weak)) ir_handle_stosb(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "stosb"); }
-void __attribute__((weak)) ir_handle_stosd(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "stosd"); }
-void __attribute__((weak)) ir_handle_lodsb(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "lodsb"); }
-void __attribute__((weak)) ir_handle_lodsd(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "lodsd"); }
-void __attribute__((weak)) ir_handle_scasb(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "scasb"); }
-void __attribute__((weak)) ir_handle_scasd(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "scasd"); }
-void __attribute__((weak)) ir_handle_mov_r8_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "mov_r8_imm8"); }
-void __attribute__((weak)) ir_handle_mov_r32_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "mov_r32_imm32"); }
-void __attribute__((weak)) ir_handle_group2_rm8_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "group2_rm8_imm8"); }
-void __attribute__((weak)) ir_handle_group2_rm32_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "group2_rm32_imm8"); }
-void __attribute__((weak)) ir_handle_ret_imm16(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "ret_imm16"); }
-void __attribute__((weak)) ir_handle_ret(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "ret"); }
-void __attribute__((weak)) ir_handle_mov_rm8_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "mov_rm8_imm8"); }
-void __attribute__((weak)) ir_handle_mov_rm32_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "mov_rm32_imm32"); }
-void __attribute__((weak)) ir_handle_enter(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "enter"); }
-void __attribute__((weak)) ir_handle_leave(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "leave"); }
-void __attribute__((weak)) ir_handle_group2_rm8_1(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "group2_rm8_1"); }
-void __attribute__((weak)) ir_handle_group2_rm32_1(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "group2_rm32_1"); }
-void __attribute__((weak)) ir_handle_group2_rm8_cl(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "group2_rm8_cl"); }
-void __attribute__((weak)) ir_handle_group2_rm32_cl(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "group2_rm32_cl"); }
-void __attribute__((weak)) ir_handle_loopnz_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "loopnz_rel8"); }
-void __attribute__((weak)) ir_handle_loopz_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "loopz_rel8"); }
-void __attribute__((weak)) ir_handle_loop_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "loop_rel8"); }
-void __attribute__((weak)) ir_handle_jecxz_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "jecxz_rel8"); }
-void __attribute__((weak)) ir_handle_call_rel32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "call_rel32"); }
-void __attribute__((weak)) ir_handle_jmp_rel32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "jmp_rel32"); }
-void __attribute__((weak)) ir_handle_jmp_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "jmp_rel8"); }
-void __attribute__((weak)) ir_handle_hlt(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "hlt"); }
-void __attribute__((weak)) ir_handle_group3_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "group3_rm8"); }
-void __attribute__((weak)) ir_handle_group3_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "group3_rm32"); }
-void __attribute__((weak)) ir_handle_clc(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "clc"); }
-void __attribute__((weak)) ir_handle_stc(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "stc"); }
-void __attribute__((weak)) ir_handle_cld(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "cld"); }
-void __attribute__((weak)) ir_handle_std(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "std"); }
-void __attribute__((weak)) ir_handle_inc_dec_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "inc_dec_rm8"); }
-void __attribute__((weak)) ir_handle_group4(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s", "group4"); }
+void __attribute__((weak)) ir_handle_add_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "add_rm8_r8", inst->opcode); }
+void __attribute__((weak)) ir_handle_add_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "add_rm32_r32", inst->opcode); }
+void __attribute__((weak)) ir_handle_add_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "add_r8_rm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_add_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "add_r32_rm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_add_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "add_al_imm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_add_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "add_eax_imm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_or_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "or_rm8_r8", inst->opcode); }
+void __attribute__((weak)) ir_handle_or_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "or_rm32_r32", inst->opcode); }
+void __attribute__((weak)) ir_handle_or_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "or_r8_rm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_or_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "or_r32_rm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_or_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "or_al_imm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_or_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "or_eax_imm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_secondary_table(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "secondary_table", inst->opcode); }
+void __attribute__((weak)) ir_handle_adc_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "adc_rm8_r8", inst->opcode); }
+void __attribute__((weak)) ir_handle_adc_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "adc_rm32_r32", inst->opcode); }
+void __attribute__((weak)) ir_handle_adc_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "adc_r8_rm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_adc_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "adc_r32_rm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_adc_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "adc_al_imm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_adc_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "adc_eax_imm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_sbb_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "sbb_rm8_r8", inst->opcode); }
+void __attribute__((weak)) ir_handle_sbb_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "sbb_rm32_r32", inst->opcode); }
+void __attribute__((weak)) ir_handle_sbb_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "sbb_r8_rm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_sbb_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "sbb_r32_rm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_sbb_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "sbb_al_imm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_sbb_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "sbb_eax_imm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_and_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "and_rm8_r8", inst->opcode); }
+void __attribute__((weak)) ir_handle_and_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "and_rm32_r32", inst->opcode); }
+void __attribute__((weak)) ir_handle_and_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "and_r8_rm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_and_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "and_r32_rm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_and_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "and_al_imm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_and_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "and_eax_imm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_sub_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "sub_rm8_r8", inst->opcode); }
+void __attribute__((weak)) ir_handle_sub_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "sub_rm32_r32", inst->opcode); }
+void __attribute__((weak)) ir_handle_sub_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "sub_r8_rm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_sub_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "sub_r32_rm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_sub_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "sub_al_imm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_sub_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "sub_eax_imm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_xor_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "xor_rm8_r8", inst->opcode); }
+void __attribute__((weak)) ir_handle_xor_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "xor_rm32_r32", inst->opcode); }
+void __attribute__((weak)) ir_handle_xor_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "xor_r8_rm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_xor_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "xor_r32_rm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_xor_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "xor_al_imm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_xor_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "xor_eax_imm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_cmp_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "cmp_rm8_r8", inst->opcode); }
+void __attribute__((weak)) ir_handle_cmp_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "cmp_rm32_r32", inst->opcode); }
+void __attribute__((weak)) ir_handle_cmp_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "cmp_r8_rm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_cmp_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "cmp_r32_rm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_cmp_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "cmp_al_imm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_cmp_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "cmp_eax_imm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_push_r64(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "push_r64", inst->opcode); }
+void __attribute__((weak)) ir_handle_pop_r64(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "pop_r64", inst->opcode); }
+void __attribute__((weak)) ir_handle_movsxd(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "movsxd", inst->opcode); }
+void __attribute__((weak)) ir_handle_push_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "push_imm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_imul_r32_rm32_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "imul_r32_rm32_imm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_push_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "push_imm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_imul_r32_rm32_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "imul_r32_rm32_imm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_jo_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "jo_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_jno_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "jno_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_jc_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "jc_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_jnc_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "jnc_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_jz_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "jz_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_jnz_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "jnz_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_jbe_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "jbe_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_ja_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "ja_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_js_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "js_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_jns_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "jns_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_jp_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "jp_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_jnp_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "jnp_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_jl_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "jl_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_jge_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "jge_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_jle_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "jle_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_jg_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "jg_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_group1_rm8_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "group1_rm8_imm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_group1_rm32_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "group1_rm32_imm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_group1_rm32_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "group1_rm32_imm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_test_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "test_rm8_r8", inst->opcode); }
+void __attribute__((weak)) ir_handle_test_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "test_rm32_r32", inst->opcode); }
+void __attribute__((weak)) ir_handle_xchg_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "xchg_rm8_r8", inst->opcode); }
+void __attribute__((weak)) ir_handle_xchg_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "xchg_rm32_r32", inst->opcode); }
+void __attribute__((weak)) ir_handle_mov_rm8_r8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "mov_rm8_r8", inst->opcode); }
+void __attribute__((weak)) ir_handle_mov_rm32_r32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "mov_rm32_r32", inst->opcode); }
+void __attribute__((weak)) ir_handle_mov_r8_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "mov_r8_rm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_mov_r32_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "mov_r32_rm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_mov_from_sreg(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "mov_from_sreg", inst->opcode); }
+void __attribute__((weak)) ir_handle_lea(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "lea", inst->opcode); }
+void __attribute__((weak)) ir_handle_mov_to_sreg(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "mov_to_sreg", inst->opcode); }
+void __attribute__((weak)) ir_handle_pop_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "pop_rm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_xchg_reg(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "ir_handle_xchg_reg", inst->opcode); }
+void __attribute__((weak)) ir_handle_cwde(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "cwde", inst->opcode); }
+void __attribute__((weak)) ir_handle_cdq(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "cdq", inst->opcode); }
+void __attribute__((weak)) ir_handle_push_flags(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "push_flags", inst->opcode); }
+void __attribute__((weak)) ir_handle_pop_flags(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "pop_flags", inst->opcode); }
+void __attribute__((weak)) ir_handle_sahf(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "sahf", inst->opcode); }
+void __attribute__((weak)) ir_handle_lahf(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "lahf", inst->opcode); }
+void __attribute__((weak)) ir_handle_mov_al_moffs8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "mov_al_moffs8", inst->opcode); }
+void __attribute__((weak)) ir_handle_mov_eax_moffs32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "mov_eax_moffs32", inst->opcode); }
+void __attribute__((weak)) ir_handle_mov_moffs8_al(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "mov_moffs8_al", inst->opcode); }
+void __attribute__((weak)) ir_handle_mov_moffs32_eax(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "mov_moffs32_eax", inst->opcode); }
+void __attribute__((weak)) ir_handle_movsb(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "movsb", inst->opcode); }
+void __attribute__((weak)) ir_handle_movsd(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "movsd", inst->opcode); }
+void __attribute__((weak)) ir_handle_cmpsb(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "cmpsb", inst->opcode); }
+void __attribute__((weak)) ir_handle_cmpsd(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "cmpsd", inst->opcode); }
+void __attribute__((weak)) ir_handle_test_al_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "test_al_imm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_test_eax_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "test_eax_imm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_stosb(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "stosb", inst->opcode); }
+void __attribute__((weak)) ir_handle_stosd(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "stosd", inst->opcode); }
+void __attribute__((weak)) ir_handle_lodsb(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "lodsb", inst->opcode); }
+void __attribute__((weak)) ir_handle_lodsd(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "lodsd", inst->opcode); }
+void __attribute__((weak)) ir_handle_scasb(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "scasb", inst->opcode); }
+void __attribute__((weak)) ir_handle_scasd(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "scasd", inst->opcode); }
+void __attribute__((weak)) ir_handle_mov_r8_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "mov_r8_imm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_mov_r32_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "mov_r32_imm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_group2_rm8_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "group2_rm8_imm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_group2_rm32_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "group2_rm32_imm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_ret_imm16(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "ret_imm16", inst->opcode); }
+void __attribute__((weak)) ir_handle_ret(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "ret", inst->opcode); }
+void __attribute__((weak)) ir_handle_mov_rm8_imm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "mov_rm8_imm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_mov_rm32_imm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "mov_rm32_imm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_enter(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "enter", inst->opcode); }
+void __attribute__((weak)) ir_handle_leave(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "leave", inst->opcode); }
+void __attribute__((weak)) ir_handle_group2_rm8_1(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "group2_rm8_1", inst->opcode); }
+void __attribute__((weak)) ir_handle_group2_rm32_1(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "group2_rm32_1", inst->opcode); }
+void __attribute__((weak)) ir_handle_group2_rm8_cl(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "group2_rm8_cl", inst->opcode); }
+void __attribute__((weak)) ir_handle_group2_rm32_cl(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "group2_rm32_cl", inst->opcode); }
+void __attribute__((weak)) ir_handle_loopnz_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "loopnz_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_loopz_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "loopz_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_loop_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "loop_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_jecxz_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "jecxz_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_call_rel32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "call_rel32", inst->opcode); }
+void __attribute__((weak)) ir_handle_jmp_rel32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "jmp_rel32", inst->opcode); }
+void __attribute__((weak)) ir_handle_jmp_rel8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "jmp_rel8", inst->opcode); }
+void __attribute__((weak)) ir_handle_hlt(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "hlt", inst->opcode); }
+void __attribute__((weak)) ir_handle_group3_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "group3_rm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_group3_rm32(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "group3_rm32", inst->opcode); }
+void __attribute__((weak)) ir_handle_clc(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "clc", inst->opcode); }
+void __attribute__((weak)) ir_handle_stc(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "stc", inst->opcode); }
+void __attribute__((weak)) ir_handle_cld(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "cld", inst->opcode); }
+void __attribute__((weak)) ir_handle_std(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "std", inst->opcode); }
+void __attribute__((weak)) ir_handle_inc_dec_rm8(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "inc_dec_rm8", inst->opcode); }
+void __attribute__((weak)) ir_handle_group4(ir_emitter_state_t* state, x86_instruction_t* inst) { ERROR("STUB: Unimplemented ir handler: %s (%x)", "group4", inst->opcode); }

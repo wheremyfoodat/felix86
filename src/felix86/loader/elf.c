@@ -1,6 +1,7 @@
 #include "felix86/loader/elf.h"
 #include "felix86/common/log.h"
 #include "felix86/common/file.h"
+#include <elf.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,76 +16,6 @@
 #define PAGE_START(x) ((x) & ~(uintptr_t)(4095))
 #define PAGE_OFFSET(x) ((x) & 4095)
 #define PAGE_ALIGN(x) (((x) + 4095) & ~(uintptr_t)(4095))
-
-#define ELFCLASS64 2
-#define ELFDATA2LSB 1
-
-#define ET_EXEC 2
-#define ET_DYN 3
-
-#define EM_X86_64 62 // makes you wish this was 64
-
-#define EI_NIDENT 16
-
-#define PN_XNUM 0xffff
-
-#define PT_LOAD 1
-#define PT_INTERP 3
-#define PT_GNU_STACK 0x6474e551
-
-#define PF_X 1
-#define PF_W 2
-#define PF_R 4
-
-#define SHT_PROGBITS 1
-#define SHF_EXECINSTR 4
-
-typedef u16 Elf64_Half;
-typedef u32 Elf64_Word;
-typedef u64 Elf64_Off;
-typedef u64 Elf64_Addr;
-typedef u64 Elf64_Xword;
-
-typedef struct {
-    unsigned char e_ident[EI_NIDENT];
-    Elf64_Half e_type;
-    Elf64_Half e_machine;
-    Elf64_Word e_version;
-    Elf64_Addr e_entry;
-    Elf64_Off e_phoff;
-    Elf64_Off e_shoff;
-    Elf64_Word e_flags;
-    Elf64_Half e_ehsize;
-    Elf64_Half e_phentsize;
-    Elf64_Half e_phnum;
-    Elf64_Half e_shentsize;
-    Elf64_Half e_shnum;
-    Elf64_Half e_shstrndx;
-} Elf64_Ehdr;
-
-typedef struct {
-  Elf64_Word p_type;    // Type of segment
-  Elf64_Word p_flags;   // Segment flags
-  Elf64_Off p_offset;   // File offset where segment is located, in bytes
-  Elf64_Addr p_vaddr;   // Virtual address of beginning of segment
-  Elf64_Addr p_paddr;   // Physical addr of beginning of segment (OS-specific)
-  Elf64_Xword p_filesz; // Num. of bytes in file image of segment (may be zero)
-  Elf64_Xword p_memsz;  // Num. of bytes in mem image of segment (may be zero)
-  Elf64_Xword p_align;  // Segment alignment constraint
-} Elf64_Phdr;
-
-typedef struct {
-  Elf64_Word sh_name;       // Section name (index into the section header string table)
-  Elf64_Word sh_type;       // Section type
-  Elf64_Xword sh_flags;     // Section flags
-  Elf64_Addr sh_addr;       // Address where section is to be loaded
-  Elf64_Off sh_offset;      // File offset of section data, in bytes
-  Elf64_Xword sh_size;      // Size of section, in bytes
-  Elf64_Word sh_link;       // Section type-specific header table index link
-  Elf64_Word sh_info;       // Section type-specific extra information
-  Elf64_Xword sh_addralign; // Section address alignment
-  Elf64_Xword sh_entsize;   // Size of records contained within the section
-} Elf64_Shdr;
 
 elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
     // No, I am not a K&R enthusiast, I just want to make sure they are null before they are
@@ -262,6 +193,8 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
         goto cleanup;
     }
     LOG("Allocated stack at %p", elf.stackBase);
+    elf.stackPointer += stack_size;
+    LOG("Stack pointer at %p", elf.stackPointer);
 
     elf.program = mmap(NULL, highest_vaddr, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (elf.program == MAP_FAILED) {
