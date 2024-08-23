@@ -179,6 +179,11 @@ IR_HANDLE(mov_rm32_r32) { // mov rm16/32/64, r16/32/64 - 0x89
     ir_emit_set_rm(state, &inst->prefixes, &inst->operand_rm, reg);
 }
 
+IR_HANDLE(mov_r32_rm32) { // mov r16/32/64, rm16/32/64 - 0x8b
+    ir_instruction_t* rm = ir_emit_get_rm(state, &inst->prefixes, &inst->operand_rm);
+    ir_emit_set_reg(state, &inst->operand_reg, rm);
+}
+
 IR_HANDLE(lea) { // lea r32/64, m - 0x8d
     x86_operand_t* rm_operand = &inst->operand_rm;
     x86_prefixes_t* prefixes = &inst->prefixes;

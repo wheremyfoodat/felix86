@@ -144,22 +144,27 @@ void felix86_set_guest(felix86_recompiler_t* recompiler, x86_ref_e ref, u64 valu
 
 felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler, u64 cycles) {
     // TODO: check for backend block? needs asm dispatcher
-    ir_block_t* block = ir_block_metadata_get_block(recompiler->block_metadata, recompiler->state.rip);
+    while (true) {
+        ir_block_t* block = ir_block_metadata_get_block(recompiler->block_metadata, recompiler->state.rip);
 
-    ir_emitter_state_t state = {0};
-    state.block = block;
-    state.current_address = recompiler->state.rip;
-    state.exit = false;
-    state.testing = recompiler->testing;
-    frontend_compile_block(&state);
+        if (!block->compiled) {
+            ir_emitter_state_t state = {0};
+            state.block = block;
+            state.current_address = recompiler->state.rip;
+            state.exit = false;
+            state.testing = recompiler->testing;
+            frontend_compile_block(&state);
 
-    ir_local_common_subexpression_elimination_pass(block);
-    ir_copy_propagation_pass(block);
-    ir_dead_store_elimination_pass(block);
-    ir_dead_code_elimination_pass(block);
-    ir_naming_pass(block);
-    // ir_print_block(block);
-    ir_interpret_block(block, &recompiler->state);
+            ir_local_common_subexpression_elimination_pass(block);
+            ir_copy_propagation_pass(block);
+            ir_dead_store_elimination_pass(block);
+            ir_dead_code_elimination_pass(block);
+            ir_naming_pass(block);
+            // ir_print_block(block);
+        }
+
+        ir_interpret_block(block, &recompiler->state);
+    }
 
     return OutOfCycles;
 }

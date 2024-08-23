@@ -48,19 +48,19 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
                     break;
                 }
                 case X86_REF_RIP: {
-                    state->rip = temps[instruction->name];
+                    state->rip = temps[instruction->set_guest.source->name];
                     break;
                 }
                 case X86_REF_FLAGS: {
-                    state->flags = temps[instruction->name];
+                    state->flags = temps[instruction->set_guest.source->name];
                     break;
                 }
                 case X86_REF_FS: {
-                    state->fs = temps[instruction->name];
+                    state->fs = temps[instruction->set_guest.source->name];
                     break;
                 }
                 case X86_REF_GS: {
-                    state->gs = temps[instruction->name];
+                    state->gs = temps[instruction->set_guest.source->name];
                     break;
                 }
                 default: {

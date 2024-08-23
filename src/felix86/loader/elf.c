@@ -2,7 +2,6 @@
 #include "felix86/common/log.h"
 #include "felix86/common/file.h"
 #include <elf.h>
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -112,10 +111,6 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
             "this member has the value PN_XNUM (0xffff). The actual number of program header "
             "table entries is contained in the sh_info field of the section header at index 0");
         goto cleanup;
-    }
-
-    if (ehdr.e_shstrndx == 0) {
-        WARN("File %s has no section header string table", path);
     }
 
     elf.entry = ehdr.e_entry;

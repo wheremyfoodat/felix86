@@ -315,4 +315,6 @@ void frontend_compile_block(ir_emitter_state_t* state)
     while (!state->exit) {
         frontend_compile_instruction(state);
     }
+
+    state->block->compiled = true;
 }
