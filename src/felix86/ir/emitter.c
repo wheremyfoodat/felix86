@@ -208,6 +208,12 @@ ir_instruction_t* ir_emit_get_flag(ir_emitter_state_t* state, x86_flag_e flag) {
     return instruction;
 }
 
+ir_instruction_t* ir_emit_get_flag_not(ir_emitter_state_t* state, x86_flag_e flag) {
+    ir_instruction_t* instruction = ir_emit_get_flag(state, flag);
+    ir_instruction_t* one = ir_emit_immediate(state, 1);
+    return ir_emit_xor(state, instruction, one);
+}
+
 ir_instruction_t* ir_emit_set_flag(ir_emitter_state_t* state, x86_flag_e flag, ir_instruction_t* source) {
     ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
     instruction->opcode = IR_SET_FLAG;
@@ -631,7 +637,7 @@ ir_instruction_t* ir_emit_debug_info_compile_time(ir_emitter_state_t* state, con
     return instruction;
 }
 
-ir_instruction_t* ir_emit_group1_imm(ir_emitter_state_t* state, x86_instruction_t* inst) {
+void ir_emit_group1_imm(ir_emitter_state_t* state, x86_instruction_t* inst) {
     x86_group1_e opcode = inst->operand_reg.reg.ref - X86_REF_RAX;
 
     ir_instruction_t* rm = ir_emit_get_rm(state, &inst->prefixes, &inst->operand_rm);
@@ -705,4 +711,14 @@ ir_instruction_t* ir_emit_group1_imm(ir_emitter_state_t* state, x86_instruction_
     if (opcode != X86_GROUP1_CMP) {
         ir_emit_set_rm(state, &inst->prefixes, &inst->operand_rm, result);
     }
+}
+
+void ir_emit_jcc(ir_emitter_state_t* state, u8 inst_length, ir_instruction_t* imm, ir_instruction_t* condition) {
+    ir_instruction_t* jump_address_false = ir_emit_immediate(state, state->current_address + inst_length);
+    ir_instruction_t* jump_address_true = ir_emit_add(state, jump_address_false, imm);
+    ir_instruction_t* c = ir_emit_get_flag(state, X86_FLAG_CF);
+    ir_instruction_t* jump = ir_emit_ternary(state, c, jump_address_true, jump_address_false);
+    ir_emit_set_guest(state, X86_REF_RIP, jump);
+
+    state->exit = true;
 }

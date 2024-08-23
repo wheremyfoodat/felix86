@@ -15,6 +15,7 @@ struct felix86_recompiler_s {
     bool testing;
     bool optimize;
     bool print_block;
+    u64 base_address;
 };
 
 felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* config) {
@@ -23,6 +24,7 @@ felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* con
     recompiler->testing = config->testing;
     recompiler->optimize = config->optimize;
     recompiler->print_block = config->print_block;
+    recompiler->base_address = config->base_address;
 
     return recompiler;
 }

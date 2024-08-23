@@ -98,7 +98,7 @@ IR_HANDLE(push_r64) { // push r16/64 - 0x50-0x57
     rsp_reg.reg.ref = X86_REF_RSP;
     rsp_reg.reg.size = X86_REG_SIZE_QWORD;
     ir_instruction_t* rsp = ir_emit_get_reg(state, &rsp_reg);
-    ir_instruction_t* size = ir_emit_immediate(state, inst->operand_reg.reg.size);
+    ir_instruction_t* size = ir_emit_immediate(state, inst->operand_reg.reg.size == X86_REG_SIZE_WORD ? 2 : 8);
     ir_instruction_t* rsp_sub = ir_emit_sub(state, rsp, size);
     ir_instruction_t* reg = ir_emit_get_reg(state, &inst->operand_reg);
     ir_emit_write_memory(state, &inst->prefixes, rsp_sub, reg);
@@ -112,7 +112,7 @@ IR_HANDLE(pop_r64) { // pop r16/64 - 0x58-0x5f
     rsp_reg.reg.size = X86_REG_SIZE_QWORD;
     ir_instruction_t* rsp = ir_emit_get_reg(state, &rsp_reg);
     ir_instruction_t* reg = ir_emit_read_memory(state, &inst->prefixes, rsp);
-    ir_instruction_t* size = ir_emit_immediate(state, inst->operand_reg.reg.size);
+    ir_instruction_t* size = ir_emit_immediate(state, inst->operand_reg.reg.size == X86_REG_SIZE_WORD ? 2 : 8);
     ir_instruction_t* rsp_add = ir_emit_add(state, rsp, size);
     ir_emit_set_reg(state, &inst->operand_reg, reg);
     ir_emit_set_reg(state, &rsp_reg, rsp_add);
@@ -132,25 +132,16 @@ IR_HANDLE(movsxd) { // movsxd r32/64, rm32/64 - 0x63
 }
 
 IR_HANDLE(jnc_rel8) { // jnc rel8 - 0x73
-    ir_instruction_t* imm = ir_emit_immediate_sext(state, &inst->operand_imm);
-    ir_instruction_t* jumpAddressFalse = ir_emit_immediate(state, state->current_address + inst->length);
-    ir_instruction_t* jumpAddressTrue = ir_emit_add(state, jumpAddressFalse, imm);
-    ir_instruction_t* c = ir_emit_get_flag(state, X86_FLAG_CF);
-    ir_instruction_t* jump = ir_emit_ternary(state, c, jumpAddressFalse, jumpAddressTrue);
-    ir_emit_set_guest(state, X86_REF_RIP, jump);
-
-    state->exit = true;
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), ir_emit_get_flag_not(state, X86_FLAG_CF));
 }
 
 IR_HANDLE(jnz_rel8) { // jnz rel8 - 0x75
-    ir_instruction_t* imm = ir_emit_immediate_sext(state, &inst->operand_imm);
-    ir_instruction_t* jumpAddressFalse = ir_emit_immediate(state, state->current_address + inst->length);
-    ir_instruction_t* jumpAddressTrue = ir_emit_add(state, jumpAddressFalse, imm);
-    ir_instruction_t* z = ir_emit_get_flag(state, X86_FLAG_ZF);
-    ir_instruction_t* jump = ir_emit_ternary(state, z, jumpAddressFalse, jumpAddressTrue);
-    ir_emit_set_guest(state, X86_REF_RIP, jump);
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), ir_emit_get_flag(state, X86_FLAG_ZF));
+}
 
-    state->exit = true;
+IR_HANDLE(ja_rel8) { // ja rel8 - 0x77
+    ir_instruction_t* condition = ir_emit_and(state, ir_emit_get_flag_not(state, X86_FLAG_CF), ir_emit_get_flag_not(state, X86_FLAG_ZF));
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), condition);
 }
 
 IR_HANDLE(group1_rm32_imm32) { // add/or/adc/sbb/and/sub/xor/cmp rm16/32/64, imm16/32/64 - 0x81
@@ -159,6 +150,19 @@ IR_HANDLE(group1_rm32_imm32) { // add/or/adc/sbb/and/sub/xor/cmp rm16/32/64, imm
 
 IR_HANDLE(group1_rm32_imm8) { // add/or/adc/sbb/and/sub/xor/cmp rm16/32/64, imm8 - 0x83
     ir_emit_group1_imm(state, inst);
+}
+
+IR_HANDLE(test_rm32_r32) { // test rm16/32/64 r/m16/32/64 - 0x85
+    ir_instruction_t* rm = ir_emit_get_rm(state, &inst->prefixes, &inst->operand_rm);
+    ir_instruction_t* reg = ir_emit_get_reg(state, &inst->operand_reg);
+    ir_instruction_t* result = ir_emit_and(state, rm, reg);
+
+    ir_instruction_t* zero = ir_emit_immediate(state, 0);
+    ir_instruction_t* p = ir_emit_get_parity(state, result);
+    ir_instruction_t* z = ir_emit_get_zero(state, result);
+    ir_instruction_t* s = ir_emit_get_sign(state, &inst->prefixes, result);
+
+    ir_emit_set_cpazso(state, zero, p, NULL, z, s, zero);
 }
 
 IR_HANDLE(mov_rm32_r32) { // mov rm16/32/64, r16/32/64 - 0x89
@@ -189,6 +193,64 @@ IR_HANDLE(xchg_reg_eax) {
     ir_instruction_t* eax = ir_emit_get_reg(state, &eax_reg);
     ir_emit_set_reg(state, &inst->operand_reg, eax);
     ir_emit_set_reg(state, &eax_reg, reg);
+}
+
+IR_HANDLE(stosd) {
+    x86_register_size_e size;
+    int length;
+    if (inst->prefixes.rex_w) {
+        size = X86_REG_SIZE_QWORD;
+        length = 8;
+    } else if (inst->prefixes.operand_override) {
+        size = X86_REG_SIZE_WORD;
+        length = 2;
+    } else {
+        size = X86_REG_SIZE_DWORD;
+        length = 4;
+    }
+
+    x86_operand_t rdi_reg;
+    rdi_reg.type = X86_OP_TYPE_REGISTER;
+    rdi_reg.reg.ref = X86_REF_RDI;
+    rdi_reg.reg.size = inst->prefixes.address_override ? X86_REG_SIZE_DWORD : X86_REG_SIZE_QWORD;
+
+    x86_operand_t rax_reg;
+    rax_reg.type = X86_OP_TYPE_REGISTER;
+    rax_reg.reg.ref = X86_REF_RAX;
+    rax_reg.reg.size = size;
+
+    ir_instruction_t* rdi = ir_emit_get_reg(state, &rdi_reg);
+    ir_instruction_t* rax = ir_emit_get_reg(state, &rax_reg);
+    
+    ir_emit_write_memory(state, &inst->prefixes, rdi, rax);
+    
+    // Assume DF is 0 for now
+    ir_instruction_t* rdi_add = ir_emit_add(state, rdi, ir_emit_immediate(state, length));
+    ir_emit_set_reg(state, &rdi_reg, rdi_add);
+    
+    if (inst->prefixes.rep == REP_Z) {
+        x86_operand_t rcx_reg;
+        rcx_reg.type = X86_OP_TYPE_REGISTER;
+        rcx_reg.reg.ref = X86_REF_RCX;
+        rcx_reg.reg.size = size;
+
+        ir_instruction_t* rcx = ir_emit_get_reg(state, &rcx_reg);
+        ir_instruction_t* zero = ir_emit_immediate(state, 0);
+        ir_instruction_t* condition = ir_emit_equal(state, rcx, zero);
+        ir_instruction_t* jump_address_false = ir_emit_immediate(state, state->current_address); // jump to start of instruction
+        ir_instruction_t* jump_address_true = ir_emit_add(state, jump_address_false, ir_emit_immediate(state, inst->length)); // jump to next instruction
+        ir_instruction_t* jump = ir_emit_ternary(state, condition, jump_address_true, jump_address_false);
+
+        ir_instruction_t* one = ir_emit_immediate(state, 1);
+        ir_instruction_t* rcx_sub = ir_emit_sub(state, rcx, ir_emit_xor(state, condition, one)); // sub one if condition is false
+        ir_emit_set_reg(state, &rcx_reg, rcx_sub);
+
+        ir_emit_set_guest(state, X86_REF_RIP, jump);
+
+        state->exit = true;
+    } else {
+        ERROR("Unimplemented REP mode for STOSD");
+    }
 }
 
 IR_HANDLE(mov_r8_imm8) { // mov r8, imm8 - 0xb0-0xb7
@@ -224,9 +286,9 @@ IR_HANDLE(mov_rm32_imm32) { // mov rm16/32/64, imm16/32/64 - 0xc7
 
 IR_HANDLE(call_rel32) { // call rel32 - 0xe8
     u64 displacement = (i64)(i32)inst->operand_imm.immediate.data;
-    u64 jumpAddress = state->current_address + inst->length + displacement;
+    u64 jump_address = state->current_address + inst->length + displacement;
     u64 returnAddress = state->current_address + inst->length;
-    ir_instruction_t* rip = ir_emit_immediate(state, jumpAddress);
+    ir_instruction_t* rip = ir_emit_immediate(state, jump_address);
     ir_instruction_t* returnRip = ir_emit_immediate(state, returnAddress);
     ir_instruction_t* rsp = ir_emit_get_guest(state, X86_REF_RSP);
     ir_instruction_t* size = ir_emit_immediate(state, 8);
@@ -240,8 +302,8 @@ IR_HANDLE(call_rel32) { // call rel32 - 0xe8
 
 IR_HANDLE(jmp_rel32) { // jmp rel32 - 0xe9
     u64 displacement = (i64)(i32)inst->operand_imm.immediate.data;
-    u64 jumpAddress = state->current_address + inst->length + displacement;
-    ir_instruction_t* rip = ir_emit_immediate(state, jumpAddress);
+    u64 jump_address = state->current_address + inst->length + displacement;
+    ir_instruction_t* rip = ir_emit_immediate(state, jump_address);
     ir_emit_set_guest(state, X86_REF_RIP, rip);
 
     state->exit = true;
@@ -293,4 +355,74 @@ IR_HANDLE(inc_dec_rm8) {
 
 IR_HANDLE(syscall) { // syscall - 0x0f 0x05
     ir_emit_syscall(state);
+}
+
+IR_HANDLE(jo_rel32) { // jo rel32 - 0x0f 0x80
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), ir_emit_get_flag(state, X86_FLAG_OF));
+}
+
+IR_HANDLE(jno_rel32) { // jno rel32 - 0x0f 0x81
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), ir_emit_get_flag_not(state, X86_FLAG_OF));
+}
+
+IR_HANDLE(jc_rel32) { // jc rel32 - 0x0f 0x82
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), ir_emit_get_flag(state, X86_FLAG_CF));
+}
+
+IR_HANDLE(jnc_rel32) { // jnc rel32 - 0x0f 0x83
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), ir_emit_get_flag_not(state, X86_FLAG_CF));
+}
+
+IR_HANDLE(jz_rel32) { // jz rel32 - 0x0f 0x84
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), ir_emit_get_flag(state, X86_FLAG_ZF));
+}
+
+IR_HANDLE(jnz_rel32) { // jnz rel32 - 0x0f 0x85
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), ir_emit_get_flag_not(state, X86_FLAG_ZF));
+}
+
+IR_HANDLE(jbe_rel32) { // jbe rel32 - 0x0f 0x86
+    ir_instruction_t* condition = ir_emit_or(state, ir_emit_get_flag(state, X86_FLAG_CF), ir_emit_get_flag(state, X86_FLAG_ZF));
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), condition);
+}
+
+IR_HANDLE(ja_rel32) { // ja rel32 - 0x0f 0x87
+    ir_instruction_t* condition = ir_emit_and(state, ir_emit_get_flag_not(state, X86_FLAG_CF), ir_emit_get_flag_not(state, X86_FLAG_ZF));
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), condition);
+}
+
+IR_HANDLE(js_rel32) { // js rel32 - 0x0f 0x88
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), ir_emit_get_flag(state, X86_FLAG_SF));
+}
+
+IR_HANDLE(jns_rel32) { // jns rel32 - 0x0f 0x89
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), ir_emit_get_flag_not(state, X86_FLAG_SF));
+}
+
+IR_HANDLE(jp_rel32) { // jp rel32 - 0x0f 0x8a
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), ir_emit_get_flag(state, X86_FLAG_PF));
+}
+
+IR_HANDLE(jnp_rel32) { // jnp rel32 - 0x0f 0x8b
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), ir_emit_get_flag_not(state, X86_FLAG_PF));
+}
+
+IR_HANDLE(jl_rel32) { // jl rel32 - 0x0f 0x8c
+    ir_instruction_t* condition = ir_emit_not_equal(state, ir_emit_get_flag(state, X86_FLAG_SF), ir_emit_get_flag(state, X86_FLAG_OF));
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), condition);
+}
+
+IR_HANDLE(jge_rel32) { // jge rel32 - 0x0f 0x8d
+    ir_instruction_t* condition = ir_emit_equal(state, ir_emit_get_flag(state, X86_FLAG_SF), ir_emit_get_flag(state, X86_FLAG_OF));
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), condition);
+}
+
+IR_HANDLE(jle_rel32) { // jle rel32 - 0x0f 0x8e
+    ir_instruction_t* condition = ir_emit_or(state, ir_emit_get_flag(state, X86_FLAG_ZF), ir_emit_not_equal(state, ir_emit_get_flag(state, X86_FLAG_SF), ir_emit_get_flag(state, X86_FLAG_OF)));
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), condition);
+}
+
+IR_HANDLE(jg_rel32) { // jg rel32 - 0x0f 0x8f
+    ir_instruction_t* condition = ir_emit_and(state, ir_emit_get_flag_not(state, X86_FLAG_ZF), ir_emit_equal(state, ir_emit_get_flag(state, X86_FLAG_SF), ir_emit_get_flag(state, X86_FLAG_OF)));
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), condition);
 }

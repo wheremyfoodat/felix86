@@ -10,6 +10,7 @@ typedef struct {
     bool testing;
     bool optimize;
     bool print_block;
+    u64 base_address;
 } felix86_recompiler_config_t;
 
 typedef enum : u8 {

@@ -14,6 +14,7 @@ static struct argp_option options[] = {
   { "verbose", 'v', 0, 0, "Produce verbose output" },
   { "quiet", 'q', 0, 0, "Don't produce any output" },
   { "host-envs", 0, 0, 0, "Pass host environment variables to the guest" },
+  { "print-blocks", 'p', 0, 0, "Print basic blocks" },
   { 0 }
 };
 
@@ -39,6 +40,10 @@ static error_t parse_opt (int key, char* arg, struct argp_state* state)
         }
         case 'q': {
             disable_logging();
+            break;
+        }
+        case 'p': {
+            config->print_blocks = true;
             break;
         }
         case ARGP_KEY_END: {

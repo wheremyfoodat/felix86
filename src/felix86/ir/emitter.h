@@ -44,6 +44,7 @@ ir_instruction_t* ir_emit_get_guest(ir_emitter_state_t* state, x86_ref_e ref);
 ir_instruction_t* ir_emit_set_guest(ir_emitter_state_t* state, x86_ref_e ref, ir_instruction_t* source);
 ir_instruction_t* ir_emit_get_flag(ir_emitter_state_t* state, x86_flag_e flag);
 ir_instruction_t* ir_emit_set_flag(ir_emitter_state_t* state, x86_flag_e flag, ir_instruction_t* source);
+ir_instruction_t* ir_emit_get_flag_not(ir_emitter_state_t* state, x86_flag_e flag);
 
 ir_instruction_t* ir_emit_read_byte(ir_emitter_state_t* state, ir_instruction_t* address);
 ir_instruction_t* ir_emit_read_word(ir_emitter_state_t* state, ir_instruction_t* address);
@@ -93,7 +94,8 @@ ir_instruction_t* ir_emit_set_cpazso(ir_emitter_state_t* state, ir_instruction_t
 
 ir_instruction_t* ir_emit_debug_info_compile_time(ir_emitter_state_t* state, const char* format, ...);
 
-ir_instruction_t* ir_emit_group1_imm(ir_emitter_state_t* state, x86_instruction_t* inst);
+void ir_emit_group1_imm(ir_emitter_state_t* state, x86_instruction_t* inst);
+void ir_emit_jcc(ir_emitter_state_t* state, u8 inst_length, ir_instruction_t* imm, ir_instruction_t* condition);
 
 #ifdef __cplusplus
 }

@@ -11,6 +11,7 @@ typedef struct {
     int argc;
     int envc;
     bool use_host_envs;
+    bool print_blocks;
 } loader_config_t;
 
 void loader_run_elf(loader_config_t* config);

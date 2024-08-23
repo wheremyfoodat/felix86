@@ -31,6 +31,7 @@ typedef enum : u8 {
     WORD_IMMEDIATE = 2,
     UP_TO_DWORD_IMMEDIATE = 4,
     UP_TO_QWORD_IMMEDIATE = 8,
+    MUST_DWORD_IMMEDIATE,
 } immediate_size_e;
 
 typedef enum : u8 {
@@ -60,55 +61,121 @@ instruction_metadata_t secondary_table[] = {
 #undef X
 };
 
-bool needs_sib(modrm_t modrm) {
-    return modrm.mod != 0b11 && modrm.rm == 0b100;
-}
-
 u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, x86_prefixes_t prefixes, modrm_t modrm, sib_t sib) {
-    u8 displacement_size = 0;
+    // u8 displacement_size = 0;
+
+    // operand_reg->type = X86_OP_TYPE_REGISTER;
+    // operand_rm->type = (modrm.mod == 0b11) ? X86_OP_TYPE_REGISTER : X86_OP_TYPE_MEMORY;
+
+    // operand_reg->reg.ref = X86_REF_RAX + (modrm.reg | (prefixes.rex_r << 3));
+        
+    // operand_rm->memory.base = X86_REF_COUNT;
+    // operand_rm->memory.index = X86_REF_COUNT;
+
+    // if (operand_rm->type == X86_OP_TYPE_REGISTER) {
+    //     operand_rm->reg.ref = X86_REF_RAX + (modrm.rm | (prefixes.rex_b << 3));
+    // } else if (operand_rm->type == X86_OP_TYPE_MEMORY) {
+    //     bool has_sib = needs_sib(modrm);
+    //     if (has_sib) {
+    //         operand_rm->memory.base = X86_REF_RAX + (sib.base | (prefixes.rex_b << 3));
+
+    //         u8 index = sib.index | (prefixes.rex_x << 3);
+    //         if (index != 4) {
+    //             operand_rm->memory.index = X86_REF_RAX + index;
+    //             operand_rm->memory.scale = 1 << sib.scale;
+    //         }
+
+    //         if (sib.base == 5) {
+    //             // No base register
+    //             operand_rm->memory.base = X86_REF_COUNT;
+    //             displacement_size = 4;
+    //         }
+    //     } else {
+    //         operand_rm->memory.base = X86_REF_RAX + (modrm.rm | (prefixes.rex_b << 3));
+    //     }
+
+    //     if (modrm.mod == 0b00 && modrm.rm == 0b101) {
+    //         // RIP-relative addressing
+    //         operand_rm->memory.base = X86_REF_RIP;
+    //         displacement_size = 4;
+    //     } else if (modrm.mod == 0b01) {
+    //         displacement_size = 1;
+    //     } else if (modrm.mod == 0b10) {
+    //         displacement_size = 4;
+    //     }
+    // }
+
+    // return displacement_size;
 
     operand_reg->type = X86_OP_TYPE_REGISTER;
-    operand_rm->type = (modrm.mod == 0b11) ? X86_OP_TYPE_REGISTER : X86_OP_TYPE_MEMORY;
-
     operand_reg->reg.ref = X86_REF_RAX + (modrm.reg | (prefixes.rex_r << 3));
-        
-    operand_rm->memory.base = X86_REF_COUNT;
-    operand_rm->memory.index = X86_REF_COUNT;
 
-    if (operand_rm->type == X86_OP_TYPE_REGISTER) {
-        operand_rm->reg.ref = X86_REF_RAX + (modrm.rm | (prefixes.rex_b << 3));
-    } else if (operand_rm->type == X86_OP_TYPE_MEMORY) {
-        bool has_sib = needs_sib(modrm);
-        if (has_sib) {
-            operand_rm->memory.base = X86_REF_RAX + (sib.base | (prefixes.rex_b << 3));
-
-            u8 index = sib.index | (prefixes.rex_x << 3);
-            if (index != 4) {
-                operand_rm->memory.index = X86_REF_RAX + index;
-                operand_rm->memory.scale = 1 << sib.scale;
-            }
-
-            if (sib.base == 5) {
-                // No base register
-                operand_rm->memory.base = X86_REF_COUNT;
-                displacement_size = 4;
-            }
-        } else {
-            operand_rm->memory.base = X86_REF_RAX + (modrm.rm | (prefixes.rex_b << 3));
-        }
-
-        if (modrm.mod == 0b00 && modrm.rm == 0b101) {
-            // RIP-relative addressing
-            operand_rm->memory.base = X86_REF_RIP;
-            displacement_size = 4;
-        } else if (modrm.mod == 0b01) {
-            displacement_size = 1;
-        } else if (modrm.mod == 0b10) {
-            displacement_size = 4;
-        }
+    if (modrm.mod != 0b11) {
+        operand_rm->type = X86_OP_TYPE_MEMORY;
+        operand_rm->memory.base = X86_REF_COUNT;
+        operand_rm->memory.index = X86_REF_COUNT;
     }
 
-    return displacement_size;
+    // https://wiki.osdev.org/X86-64_Instruction_Encoding
+    switch (modrm.mod) {
+        case 0b00: {
+            if (modrm.rm == 0b100) {
+                u8 xindex = sib.index | (prefixes.rex_x << 3);
+                if (xindex != 0b100) {
+                    operand_rm->memory.index = X86_REF_RAX + xindex;
+                    operand_rm->memory.scale = 1 << sib.scale;
+                }
+
+                if (sib.base != 0b101) {
+                    operand_rm->memory.base = X86_REF_RAX + (sib.base | (prefixes.rex_b << 3));
+                } else {
+                    return 4;
+                }
+
+                return 0;
+            } else if (modrm.rm == 0b101) {
+                operand_rm->memory.base = X86_REF_RIP;
+                return 4;
+            } else {
+                operand_rm->memory.base = X86_REF_RAX + modrm.rm | (prefixes.rex_b << 3);
+                return 0;
+            }
+        }
+
+        case 0b01: {
+            if (modrm.rm == 0b100) {
+                operand_rm->memory.base = X86_REF_RAX + (sib.base | (prefixes.rex_b << 3));
+                u8 xindex = sib.index | (prefixes.rex_x << 3);
+                if (xindex != 0b100) {
+                    operand_rm->memory.index = X86_REF_RAX + xindex;
+                    operand_rm->memory.scale = 1 << sib.scale;
+                }
+            } else {
+                operand_rm->memory.base = X86_REF_RAX + modrm.rm | (prefixes.rex_b << 3);
+            }
+            return 1;
+        }
+
+        case 0b10: {
+            if (modrm.rm == 0b100) {
+                operand_rm->memory.base = X86_REF_RAX + (sib.base | (prefixes.rex_b << 3));
+                u8 xindex = sib.index | (prefixes.rex_x << 3);
+                if (xindex != 0b100) {
+                    operand_rm->memory.index = X86_REF_RAX + xindex;
+                    operand_rm->memory.scale = 1 << sib.scale;
+                }
+            } else {
+                operand_rm->memory.base = X86_REF_RAX + modrm.rm | (prefixes.rex_b << 3);
+            }
+            return 4;
+        }
+
+        case 0b11: {
+            operand_rm->type = X86_OP_TYPE_REGISTER;
+            operand_rm->reg.ref = X86_REF_RAX + (modrm.rm | (prefixes.rex_b << 3));
+            return 0;
+        }
+    }
 }
 
 void frontend_compile_instruction(ir_emitter_state_t* state)
@@ -217,7 +284,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         modrm.raw = data[index++];
 
         sib_t sib;
-        if (needs_sib(modrm)) {
+        if (modrm.rm == 0b100 && modrm.mod != 0b11) {
             sib.raw = data[index++];
         }
 
@@ -285,6 +352,13 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
                 inst.operand_imm.immediate.size = 4;
                 index += 4;
             }
+            break;
+        }
+
+        case MUST_DWORD_IMMEDIATE: {
+            inst.operand_imm.immediate.data = *(u32*)&data[index];
+            inst.operand_imm.immediate.size = 4;
+            index += 4;
             break;
         }
 

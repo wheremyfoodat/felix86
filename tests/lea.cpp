@@ -24,8 +24,8 @@ FELIX86_TEST(lea_index_not_used) {
 FELIX86_TEST(lea_sign_extend) {
     xor_(eax, eax);
 
-    lea(rbx, ptr[eax - 0x12345678]); // uses 4 byte displacement
-    lea(rax, ptr[eax - 5]); // uses 1 byte displacement
+    lea(rbx, ptr[rax - 0x12345678]); // uses 4 byte displacement
+    lea(rax, ptr[rax - 5]); // uses 1 byte displacement
 
     verify(X86_REF_RAX, -5ull);
     verify(X86_REF_RBX, -0x12345678ull);
@@ -70,4 +70,17 @@ FELIX86_TEST(lea_rsp_r12) {
     verify(X86_REF_RAX, 0x12345678);
     verify(X86_REF_RBX, 0x87654321);
     verify(X86_REF_RCX, 0x12345678 + 0x87654321);
+}
+
+FELIX86_TEST(lea_rbp_full) {
+    mov(rbp, 0x1234);
+    mov(rax, 0x1337);
+    lea(rbx, ptr[rbp + rax * 8 - 0x1A0]);
+
+    verify(X86_REF_RBX, 0x1234 + 0x1337 * 8 - 0x1A0);
+}
+
+FELIX86_TEST(lea_only_disp32) { // weird case where sib is used, mod == 00, x.index == rsp, b.base == rbp or r13
+    lea(rax, ptr[(void*)0xffffffff90909090]);
+    verify(X86_REF_RAX, 0xffffffff90909090);
 }
