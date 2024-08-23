@@ -3,6 +3,7 @@
 #include "felix86/ir/handlers.h"
 #include "felix86/ir/emitter.h"
 #include "felix86/common/log.h"
+#include <Zydis/Zydis.h>
 
 typedef union {
     struct {
@@ -80,8 +81,18 @@ u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, x86_prefi
         bool has_sib = needs_sib(modrm);
         if (has_sib) {
             operand_rm->memory.base = X86_REF_RAX + (sib.base | (prefixes.rex_b << 3));
-            operand_rm->memory.index = X86_REF_RAX + (sib.index | (prefixes.rex_x << 3));
-            operand_rm->memory.scale = sib.scale;
+
+            u8 index = sib.index | (prefixes.rex_x << 3);
+            if (index != 4) {
+                operand_rm->memory.index = X86_REF_RAX + index;
+                operand_rm->memory.scale = 1 << sib.scale;
+            }
+
+            if (sib.base == 5) {
+                // No base register
+                operand_rm->memory.base = X86_REF_COUNT;
+                displacement_size = 4;
+            }
         } else {
             operand_rm->memory.base = X86_REF_RAX + (modrm.rm | (prefixes.rex_b << 3));
         }
@@ -213,7 +224,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         u8 displacement_size = decode_modrm(&inst.operand_rm, &inst.operand_reg, prefixes, modrm, sib);
         switch (displacement_size) {
             case 1: {
-                inst.operand_rm.memory.displacement = data[index];
+                inst.operand_rm.memory.displacement = (i32)(i8)data[index];
                 index += 1;
                 break;
             }
@@ -306,6 +317,20 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
 
     inst.length = index;
     state->current_instruction_length = inst.length;
+
+    if (state->debug_info) {
+        ZydisDisassembledInstruction instruction;
+        if (ZYAN_SUCCESS(ZydisDisassembleIntel(
+        /* machine_mode:    */ ZYDIS_MACHINE_MODE_LONG_64,
+        /* runtime_address: */ state->current_address,
+        /* buffer:          */ data,
+        /* length:          */ inst.length,
+        /* instruction:     */ &instruction
+        )))
+        {
+            ir_emit_debug_info_compile_time(state, "0x%016llx: %s", state->current_address, instruction.text);
+        }
+    }
 
     primary.fn(state, &inst);
 

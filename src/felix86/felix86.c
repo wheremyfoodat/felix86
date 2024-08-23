@@ -13,12 +13,16 @@ struct felix86_recompiler_s {
     ir_block_metadata_t* block_metadata;
     x86_state_t state;
     bool testing;
+    bool optimize;
+    bool print_block;
 };
 
 felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* config) {
     felix86_recompiler_t* recompiler = calloc(1, sizeof(felix86_recompiler_t));
     recompiler->block_metadata = ir_block_metadata_create();
     recompiler->testing = config->testing;
+    recompiler->optimize = config->optimize;
+    recompiler->print_block = config->print_block;
 
     return recompiler;
 }
@@ -153,14 +157,21 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler, u
             state.current_address = recompiler->state.rip;
             state.exit = false;
             state.testing = recompiler->testing;
+            state.debug_info = recompiler->print_block;
             frontend_compile_block(&state);
 
-            ir_local_common_subexpression_elimination_pass(block);
-            ir_copy_propagation_pass(block);
-            ir_dead_store_elimination_pass(block);
-            ir_dead_code_elimination_pass(block);
+            if (recompiler->optimize) {
+                ir_local_common_subexpression_elimination_pass(block);
+                ir_copy_propagation_pass(block);
+                ir_dead_store_elimination_pass(block);
+                ir_dead_code_elimination_pass(block);
+            }
+            
             ir_naming_pass(block);
-            // ir_print_block(block);
+            
+            if (recompiler->print_block) {
+                ir_print_block(block);
+            }
         }
 
         ir_interpret_block(block, &recompiler->state);

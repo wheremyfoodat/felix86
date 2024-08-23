@@ -2,6 +2,7 @@
 #include "felix86/frontend/instruction.h"
 #include "felix86/ir/emitter.h"
 #include "felix86/ir/instruction.h"
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
 
@@ -621,3 +622,18 @@ ir_instruction_t* ir_emit_set_cpazso(ir_emitter_state_t* state, ir_instruction_t
     return NULL;
 }
 
+ir_instruction_t* ir_emit_debug_info_compile_time(ir_emitter_state_t* state, const char* format, ...)
+{
+    char* final = malloc(140);
+    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    instruction->opcode = IR_DEBUG_COMPILETIME;
+    instruction->type = IR_TYPE_DEBUG;
+    instruction->debug.text = final;
+
+    va_list args;
+    va_start(args, format);
+    int off = vsnprintf(final, 140, format, args);
+    va_end(args);
+
+    return instruction;
+}

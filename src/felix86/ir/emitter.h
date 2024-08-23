@@ -15,6 +15,7 @@ typedef struct {
     u8 current_instruction_length;
     bool exit;
     bool testing;
+    bool debug_info;
 } ir_emitter_state_t;
 
 ir_instruction_t* ir_emit_add(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
@@ -89,6 +90,8 @@ ir_instruction_t* ir_emit_get_aux_add(ir_emitter_state_t* state, ir_instruction_
 ir_instruction_t* ir_emit_get_aux_sub(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 
 ir_instruction_t* ir_emit_set_cpazso(ir_emitter_state_t* state, ir_instruction_t* c, ir_instruction_t* p, ir_instruction_t* a, ir_instruction_t* z, ir_instruction_t* s, ir_instruction_t* o);
+
+ir_instruction_t* ir_emit_debug_info_compile_time(ir_emitter_state_t* state, const char* format, ...);
 
 #ifdef __cplusplus
 }

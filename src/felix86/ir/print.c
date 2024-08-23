@@ -1,4 +1,5 @@
 #include "felix86/ir/print.h"
+#include "felix86/common/log.h"
 
 #include <stdio.h>
 
@@ -213,6 +214,17 @@ void ir_print_instruction(ir_instruction_t* instruction) {
         }
         case IR_START_OF_BLOCK: {
             printf("start_of_block");
+            break;
+        }
+        case IR_TERNARY: {
+            printf("t%d = t%d ? t%d : t%d", instruction->name, instruction->ternary.condition->name, instruction->ternary.true_value->name, instruction->ternary.false_value->name);
+            break;
+        }
+        case IR_DEBUG_RUNTIME: {
+            break;
+        }
+        case IR_DEBUG_COMPILETIME: {
+            printf("## %s", instruction->debug.text);
             break;
         }
         default: {

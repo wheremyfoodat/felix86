@@ -153,19 +153,19 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             break;
         }
         case IR_WRITE_BYTE: {
-            *(u8*)(temps[instruction->one_operand.source->name]) = temps[instruction->one_operand.source->name];
+            *(u8*)(temps[instruction->two_operand.source1->name]) = temps[instruction->two_operand.source2->name];
             break;
         }
         case IR_WRITE_WORD: {
-            *(u16*)(temps[instruction->one_operand.source->name]) = temps[instruction->one_operand.source->name];
+            *(u16*)(temps[instruction->two_operand.source1->name]) = temps[instruction->two_operand.source2->name];
             break;
         }
         case IR_WRITE_DWORD: {
-            *(u32*)(temps[instruction->one_operand.source->name]) = temps[instruction->one_operand.source->name];
+            *(u32*)(temps[instruction->two_operand.source1->name]) = temps[instruction->two_operand.source2->name];
             break;
         }
         case IR_WRITE_QWORD: {
-            *(u64*)(temps[instruction->one_operand.source->name]) = temps[instruction->one_operand.source->name];
+            *(u64*)(temps[instruction->two_operand.source1->name]) = temps[instruction->two_operand.source2->name];
             break;
         }
         case IR_START_OF_BLOCK: {
@@ -231,12 +231,18 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             temps[instruction->name] = condition ? temps[instruction->ternary.true_value->name] : temps[instruction->ternary.false_value->name];
             break;
         }
+        case IR_DEBUG_RUNTIME: {
+            LOG("Debug message: %s", instruction->debug.text);
+            break;
+        }
+        case IR_DEBUG_COMPILETIME: {
+            break;
+        }
         default: {
             ERROR("Invalid opcode");
             break;
         }
     }
-    // printf("t%d = %016lx\n", instruction->name, temps[instruction->name]);
 }
 
 void ir_interpret_block(ir_block_t* block, x86_state_t* state)

@@ -12,6 +12,8 @@ typedef enum : u8 {
     IR_NULL,
 
     IR_START_OF_BLOCK,
+    IR_DEBUG_RUNTIME,
+    IR_DEBUG_COMPILETIME,
 
     IR_MOV,
     IR_IMMEDIATE,
@@ -65,6 +67,7 @@ typedef enum : u8 {
     IR_TYPE_SET_FLAG,
     IR_TYPE_SYSCALL,
     IR_TYPE_TERNARY,
+    IR_TYPE_DEBUG,
 } ir_type_e;
 
 typedef struct ir_instruction_s {
@@ -112,6 +115,10 @@ typedef struct ir_instruction_s {
             struct ir_instruction_s* true_value;
             struct ir_instruction_s* false_value;
         } ternary;
+
+        struct {
+            const char* text;
+        } debug;
     };
 
     ir_type_e type;

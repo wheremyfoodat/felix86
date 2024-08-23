@@ -198,7 +198,6 @@ IR_HANDLE(group1_rm32_imm8) { // add/or/adc/sbb/and/sub/xor/cmp rm16/32/64, imm8
     ir_instruction_t* z = ir_emit_get_zero(state, result);
     ir_instruction_t* s = ir_emit_get_sign(state, &inst->prefixes, result);
 
-
     ir_emit_set_cpazso(state, c, p, a, z, s, o);
 
     if (opcode != X86_GROUP1_CMP) {
@@ -223,6 +222,18 @@ IR_HANDLE(lea) { // lea r32/64, m - 0x8d
 }
 
 IR_HANDLE(nop) {} // nop - 0x90
+
+IR_HANDLE(xchg_reg_eax) {
+    x86_operand_t eax_reg;
+    eax_reg.type = X86_OP_TYPE_REGISTER;
+    eax_reg.reg.ref = X86_REF_RAX;
+    eax_reg.reg.size = inst->operand_reg.reg.size;
+
+    ir_instruction_t* reg = ir_emit_get_reg(state, &inst->operand_reg);
+    ir_instruction_t* eax = ir_emit_get_reg(state, &eax_reg);
+    ir_emit_set_reg(state, &inst->operand_reg, eax);
+    ir_emit_set_reg(state, &eax_reg, reg);
+}
 
 IR_HANDLE(mov_r8_imm8) { // mov r8, imm8 - 0xb0-0xb7
     ir_instruction_t* imm = ir_emit_immediate(state, inst->operand_imm.immediate.data);
@@ -277,6 +288,36 @@ IR_HANDLE(hlt) { // hlt - 0xf4
     } else {
         state->exit = true;
     }
+}
+
+IR_HANDLE(inc_dec_rm8) {
+    u8 opcode = inst->operand_reg.reg.ref - X86_REF_RAX;
+
+    ir_instruction_t* rm = ir_emit_get_rm(state, &inst->prefixes, &inst->operand_rm);
+    ir_instruction_t* one = ir_emit_immediate(state, 1);
+    ir_instruction_t* result = NULL;
+    ir_instruction_t* c = NULL;
+    ir_instruction_t* o = NULL;
+    ir_instruction_t* a = NULL;
+
+    if (opcode == 0) {
+        result = ir_emit_add(state, rm, one);
+        o = ir_emit_get_overflow_add(state, &inst->prefixes, rm, one, result);
+        a = ir_emit_get_aux_add(state, rm, one);
+    } else if (opcode == 1) {
+        result = ir_emit_sub(state, rm, one);
+        o = ir_emit_get_overflow_sub(state, &inst->prefixes, rm, one, result);
+        a = ir_emit_get_aux_sub(state, rm, one);
+    } else {
+        ERROR("Unknown opcode for inc_dec_rm8: %02x", opcode);
+    }
+
+    ir_instruction_t* p = ir_emit_get_parity(state, result);
+    ir_instruction_t* z = ir_emit_get_zero(state, result);
+    ir_instruction_t* s = ir_emit_get_sign(state, &inst->prefixes, result);
+
+    ir_emit_set_cpazso(state, c, p, a, z, s, o);
+    ir_emit_set_rm(state, &inst->prefixes, &inst->operand_rm, result);
 }
 
 // ███████ ███████  ██████  ██████  ███    ██ ██████   █████  ██████  ██    ██ 

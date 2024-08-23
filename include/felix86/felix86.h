@@ -8,6 +8,8 @@ extern "C" {
 
 typedef struct {
     bool testing;
+    bool optimize;
+    bool print_block;
 } felix86_recompiler_config_t;
 
 typedef enum : u8 {
