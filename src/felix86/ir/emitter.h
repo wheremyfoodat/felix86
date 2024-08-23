@@ -93,6 +93,8 @@ ir_instruction_t* ir_emit_set_cpazso(ir_emitter_state_t* state, ir_instruction_t
 
 ir_instruction_t* ir_emit_debug_info_compile_time(ir_emitter_state_t* state, const char* format, ...);
 
+ir_instruction_t* ir_emit_group1_imm(ir_emitter_state_t* state, x86_instruction_t* inst);
+
 #ifdef __cplusplus
 }
 #endif

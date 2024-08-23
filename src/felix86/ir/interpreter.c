@@ -236,6 +236,7 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             break;
         }
         case IR_DEBUG_COMPILETIME: {
+            LOG("Debug message: %s", instruction->debug.text);
             break;
         }
         default: {

@@ -124,7 +124,14 @@ ir_instruction_t* ir_emit_lea(ir_emitter_state_t* state, x86_prefixes_t* prefixe
         base->uses++;
     if (index)
         index->uses++;
-    return address;
+
+    ir_instruction_t* final_address = address;
+    if (prefixes->address_override) {
+        ir_instruction_t* mask = ir_emit_immediate(state, 0xFFFFFFFF);
+        final_address = ir_emit_and(state, address, mask);
+    }
+
+    return final_address;
 }
 
 ir_instruction_t* ir_emit_popcount(ir_emitter_state_t* state, ir_instruction_t* source)
@@ -299,14 +306,7 @@ ir_instruction_t* ir_emit_get_rm(ir_emitter_state_t* state, x86_prefixes_t* pref
         return ir_emit_get_reg(state, rm_operand);
     } else {
         ir_instruction_t* address = ir_emit_lea(state, prefixes, rm_operand);
-
-        ir_instruction_t* final_address = address;
-        if (prefixes->address_override) {
-            ir_instruction_t* mask = ir_emit_immediate(state, 0xFFFFFFFF);
-            final_address = ir_emit_and(state, address, mask);
-        }
-
-        return ir_emit_read_memory(state, prefixes, final_address);
+        return ir_emit_read_memory(state, prefixes, address);
     }
 }
 
@@ -327,14 +327,7 @@ ir_instruction_t* ir_emit_set_rm(ir_emitter_state_t* state, x86_prefixes_t* pref
         return ir_emit_set_reg(state, rm_operand, source);
     } else {
         ir_instruction_t* address = ir_emit_lea(state, prefixes, rm_operand);
-        ir_instruction_t* final_address = address;
-
-        if (prefixes->address_override) {
-            ir_instruction_t* mask = ir_emit_immediate(state, 0xFFFFFFFF);
-            final_address = ir_emit_and(state, address, mask);
-        }
-
-        return ir_emit_write_memory(state, prefixes, final_address, source);
+        return ir_emit_write_memory(state, prefixes, address, source);
     }
 }
 
@@ -636,4 +629,80 @@ ir_instruction_t* ir_emit_debug_info_compile_time(ir_emitter_state_t* state, con
     va_end(args);
 
     return instruction;
+}
+
+ir_instruction_t* ir_emit_group1_imm(ir_emitter_state_t* state, x86_instruction_t* inst) {
+    x86_group1_e opcode = inst->operand_reg.reg.ref - X86_REF_RAX;
+
+    ir_instruction_t* rm = ir_emit_get_rm(state, &inst->prefixes, &inst->operand_rm);
+    ir_instruction_t* imm = ir_emit_immediate_sext(state, &inst->operand_imm);
+    ir_instruction_t* result = NULL;
+    ir_instruction_t* zero = ir_emit_immediate(state, 0);
+    ir_instruction_t* c = zero;
+    ir_instruction_t* o = zero;
+    ir_instruction_t* a = NULL;
+
+    switch (opcode) {
+        case X86_GROUP1_ADD: {
+            result = ir_emit_add(state, rm, imm);
+            c = ir_emit_get_carry_add(state, &inst->prefixes, rm, imm, result);
+            o = ir_emit_get_overflow_add(state, &inst->prefixes, rm, imm, result);
+            a = ir_emit_get_aux_add(state, rm, imm);
+            break;
+        }
+        case X86_GROUP1_ADC: {
+            ir_instruction_t* carry_in = ir_emit_get_flag(state, X86_FLAG_CF);
+            ir_instruction_t* imm_carry = ir_emit_add(state, imm, carry_in);
+            result = ir_emit_add(state, rm, imm_carry);
+            c = ir_emit_get_carry_adc(state, &inst->prefixes, rm, imm_carry);
+            o = ir_emit_get_overflow_add(state, &inst->prefixes, rm, imm_carry, result);
+            a = ir_emit_get_aux_add(state, rm, imm_carry);
+            break;
+        }
+        case X86_GROUP1_SBB: {
+            ir_instruction_t* carry_in = ir_emit_get_flag(state, X86_FLAG_CF);
+            ir_instruction_t* imm_carry = ir_emit_add(state, imm, carry_in);
+            result = ir_emit_sub(state, rm, imm_carry);
+            c = ir_emit_get_carry_sbb(state, &inst->prefixes, rm, imm_carry);
+            o = ir_emit_get_overflow_sub(state, &inst->prefixes, rm, imm_carry, result);
+            a = ir_emit_get_aux_sub(state, rm, imm_carry);
+            break;
+        }
+        case X86_GROUP1_OR: {
+            result = ir_emit_or(state, rm, imm);
+            break;
+        }
+        case X86_GROUP1_AND: {
+            result = ir_emit_and(state, rm, imm);
+            break;
+        }
+        case X86_GROUP1_SUB: {
+            result = ir_emit_sub(state, rm, imm);
+            c = ir_emit_get_carry_sub(state, &inst->prefixes, rm, imm, result);
+            o = ir_emit_get_overflow_sub(state, &inst->prefixes, rm, imm, result);
+            a = ir_emit_get_aux_sub(state, rm, imm);
+            break;
+        }
+        case X86_GROUP1_XOR: {
+            result = ir_emit_xor(state, rm, imm);
+            break;
+        }
+        case X86_GROUP1_CMP: {
+            result = ir_emit_sub(state, rm, imm);
+            c = ir_emit_get_carry_sub(state, &inst->prefixes, rm, imm, result);
+            o = ir_emit_get_overflow_sub(state, &inst->prefixes, rm, imm, result);
+            a = ir_emit_get_aux_sub(state, rm, imm);
+            break;
+        }
+    }
+
+    ir_instruction_t* p = ir_emit_get_parity(state, result);
+    ir_instruction_t* z = ir_emit_get_zero(state, result);
+    ir_instruction_t* s = ir_emit_get_sign(state, &inst->prefixes, result);
+
+    ir_emit_set_cpazso(state, c, p, a, z, s, o);
+
+    if (opcode != X86_GROUP1_CMP) {
+        ir_emit_set_rm(state, &inst->prefixes, &inst->operand_rm, result);
+    }
 }

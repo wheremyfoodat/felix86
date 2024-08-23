@@ -9,7 +9,6 @@ extern "C" {
 
 typedef struct {
     u64 start_address;
-    u64 end_address;
     ir_instruction_list_t* instructions;
     bool compiled;
 } ir_block_t;
