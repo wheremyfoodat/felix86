@@ -38,6 +38,7 @@ set(FELIX86_IR_SOURCES
 set(FELIX86_COMMON_SOURCES
     src/felix86/common/allocator.c
     src/felix86/common/file.c
+    src/felix86/common/log.c
 )
 
 set(FELIX86_BACKEND_SOURCES

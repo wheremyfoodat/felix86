@@ -192,16 +192,16 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
         WARN("Failed to allocate stack for ELF file %s", path);
         goto cleanup;
     }
-    LOG("Allocated stack at %p", elf.stackBase);
+    VERBOSE("Allocated stack at %p", elf.stackBase);
     elf.stackPointer += stack_size;
-    LOG("Stack pointer at %p", elf.stackPointer);
+    VERBOSE("Stack pointer at %p", elf.stackPointer);
 
     elf.program = mmap(NULL, highest_vaddr, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (elf.program == MAP_FAILED) {
         WARN("Failed to allocate memory for ELF file %s", path);
         goto cleanup;
     }
-    LOG("Allocated program at %p", elf.program);
+    VERBOSE("Allocated program at %p", elf.program);
 
     for (Elf64_Half i = 0; i < phdrtable_size; i += ehdr.e_phentsize) {
         Elf64_Phdr* phdr = (Elf64_Phdr*)(phdrtable + i);
@@ -233,7 +233,7 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
                     WARN("Failed to allocate memory for segment in file %s", path);
                     goto cleanup;
                 } else {
-                    LOG("Mapping segment with vaddr %p to %p-%p", (void*)phdr->p_vaddr, addr, addr + segment_size);
+                    VERBOSE("Mapping segment with vaddr %p to %p-%p", (void*)phdr->p_vaddr, addr, addr + segment_size);
                 }
 
                 if (phdr->p_filesz > 0) {
@@ -272,6 +272,10 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
             }
         }
     }
+
+    elf.phdr = elf.program + ehdr.e_phoff;
+    elf.phnum = ehdr.e_phnum;
+    elf.phent = ehdr.e_phentsize;
 
     // Allocate it last so we don't have to free it if we fail
     elf_t* pelf = malloc(sizeof(elf_t));

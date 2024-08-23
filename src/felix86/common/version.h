@@ -1,0 +1,5 @@
+#pragma once
+
+#define FELIX86_VERSION_MAJOR 0
+#define FELIX86_VERSION_MINOR 1
+#define FELIX86_VERSION "0.1"

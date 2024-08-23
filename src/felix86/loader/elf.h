@@ -14,6 +14,10 @@ typedef struct {
     void* stackBase;
     void* stackPointer;
     bool executableStack;
+
+    void* phdr;
+    u64 phnum;
+    u64 phent;
 } elf_t;
 
 /// Load an ELF file from the given path
