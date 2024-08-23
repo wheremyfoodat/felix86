@@ -164,6 +164,10 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler, u
         }
 
         ir_interpret_block(block, &recompiler->state);
+
+        if(recompiler->testing) {
+            return OutOfCycles;
+        }
     }
 
     return OutOfCycles;

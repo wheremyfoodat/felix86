@@ -95,25 +95,35 @@ ir_instruction_t* ir_emit_less_than_unsigned(ir_emitter_state_t* state, ir_instr
     return ir_emit_two_operand(state, IR_LESS_THAN_UNSIGNED, source1, source2);
 }
 
-ir_instruction_t* ir_emit_lea(ir_emitter_state_t* state, ir_instruction_t* base, ir_instruction_t* index, u8 scale, u32 displacement)
+ir_instruction_t* ir_emit_lea(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* rm_operand)
 {
-    if (!base && !index) {
+    u8 scale = rm_operand->memory.scale;
+    ir_instruction_t* (*get_guest)(ir_emitter_state_t* state, x86_ref_e reg) = prefixes->address_override ? ir_emit_get_gpr32 : ir_emit_get_gpr64;
+
+    ir_instruction_t* base;
+    if (rm_operand->memory.base == X86_REF_RIP) {
         ir_instruction_t* rip = ir_emit_get_guest(state, X86_REF_RIP);
-        base = rip;
+        u64 offsetWithinBlock = (state->current_address - state->block->start_address) + state->current_instruction_length;
+        ir_instruction_t* offset = ir_emit_immediate(state, offsetWithinBlock);
+        ir_instruction_t* currentRip = ir_emit_add(state, rip, offset);
+        base = currentRip;
+    } else {
+        base = rm_operand->memory.base != X86_REF_COUNT ? get_guest(state, rm_operand->memory.base) : NULL;
     }
 
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
-    instruction->opcode = IR_LEA;
-    instruction->type = IR_TYPE_LEA;
-    instruction->lea.base = base;
-    instruction->lea.index = index;
-    instruction->lea.scale = scale;
-    instruction->lea.displacement = displacement;
+    ir_instruction_t* index = rm_operand->memory.index != X86_REF_COUNT ? get_guest(state, rm_operand->memory.index) : NULL;
+    ir_instruction_t* address = ir_ilist_push_back(state->block->instructions);
+    address->opcode = IR_LEA;
+    address->type = IR_TYPE_LEA;
+    address->lea.base = base;
+    address->lea.index = index;
+    address->lea.scale = scale;
+    address->lea.displacement = rm_operand->memory.displacement;
     if (base)
         base->uses++;
     if (index)
         index->uses++;
-    return instruction;
+    return address;
 }
 
 ir_instruction_t* ir_emit_popcount(ir_emitter_state_t* state, ir_instruction_t* source)
@@ -134,6 +144,28 @@ ir_instruction_t* ir_emit_sext16(ir_emitter_state_t* state, ir_instruction_t* so
 ir_instruction_t* ir_emit_sext32(ir_emitter_state_t* state, ir_instruction_t* source)
 {
     return ir_emit_one_operand(state, IR_SEXT32, source);
+}
+
+ir_instruction_t* ir_emit_syscall(ir_emitter_state_t* state)
+{
+    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    instruction->opcode = IR_SYSCALL;
+    instruction->type = IR_TYPE_SYSCALL;
+    return instruction;
+}
+
+ir_instruction_t* ir_emit_ternary(ir_emitter_state_t* state, ir_instruction_t* condition, ir_instruction_t* true_value, ir_instruction_t* false_value)
+{
+    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    instruction->opcode = IR_TERNARY;
+    instruction->type = IR_TYPE_TERNARY;
+    instruction->ternary.condition = condition;
+    instruction->ternary.true_value = true_value;
+    instruction->ternary.false_value = false_value;
+    condition->uses++;
+    true_value->uses++;
+    false_value->uses++;
+    return instruction;
 }
 
 ir_instruction_t* ir_emit_get_guest(ir_emitter_state_t* state, x86_ref_e ref)
@@ -265,12 +297,9 @@ ir_instruction_t* ir_emit_get_rm(ir_emitter_state_t* state, x86_prefixes_t* pref
     if (rm_operand->type == X86_OP_TYPE_REGISTER) {
         return ir_emit_get_reg(state, rm_operand);
     } else {
-        ir_instruction_t* (*get_guest)(ir_emitter_state_t* state, x86_ref_e reg) = prefixes->address_override ? ir_emit_get_gpr32 : ir_emit_get_gpr64;
-        ir_instruction_t* base = rm_operand->memory.base != X86_REF_COUNT ? get_guest(state, rm_operand->memory.base) : NULL;
-        ir_instruction_t* index = rm_operand->memory.index != X86_REF_COUNT ? get_guest(state, rm_operand->memory.index) : NULL;
-        ir_instruction_t* address = ir_emit_lea(state, base, index, rm_operand->memory.scale, rm_operand->memory.displacement);
-        ir_instruction_t* final_address = address;
+        ir_instruction_t* address = ir_emit_lea(state, prefixes, rm_operand);
 
+        ir_instruction_t* final_address = address;
         if (prefixes->address_override) {
             ir_instruction_t* mask = ir_emit_immediate(state, 0xFFFFFFFF);
             final_address = ir_emit_and(state, address, mask);
@@ -296,10 +325,7 @@ ir_instruction_t* ir_emit_set_rm(ir_emitter_state_t* state, x86_prefixes_t* pref
     if (rm_operand->type == X86_OP_TYPE_REGISTER) {
         return ir_emit_set_reg(state, rm_operand, source);
     } else {
-        ir_instruction_t* (*get_guest)(ir_emitter_state_t* state, x86_ref_e reg) = prefixes->address_override ? ir_emit_get_gpr32 : ir_emit_get_gpr64;
-        ir_instruction_t* base = rm_operand->memory.base != X86_REF_COUNT ? get_guest(state, rm_operand->memory.base) : NULL;
-        ir_instruction_t* index = rm_operand->memory.index != X86_REF_COUNT ? get_guest(state, rm_operand->memory.index) : NULL;
-        ir_instruction_t* address = ir_emit_lea(state, base, index, rm_operand->memory.scale, rm_operand->memory.displacement);
+        ir_instruction_t* address = ir_emit_lea(state, prefixes, rm_operand);
         ir_instruction_t* final_address = address;
 
         if (prefixes->address_override) {

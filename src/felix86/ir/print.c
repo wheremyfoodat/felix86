@@ -148,7 +148,7 @@ void ir_print_instruction(ir_instruction_t* instruction) {
             }
 
             if (instruction->lea.displacement != 0) {
-                printf("0x%x", instruction->lea.displacement);
+                printf("%lld", (long long)(i64)(i32)instruction->lea.displacement);
             }
             
             printf("]");

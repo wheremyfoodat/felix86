@@ -117,6 +117,21 @@ extern "C" void ir_copy_propagation_pass(ir_block_t* block) {
                     }
                     break;
                 }
+                case IR_TYPE_TERNARY: {
+                    if (copies.find(instruction->ternary.condition) != copies.end()) {
+                        instruction->ternary.condition = copies[instruction->ternary.condition];
+                        instruction->ternary.condition->uses++;
+                    }
+                    if (copies.find(instruction->ternary.true_value) != copies.end()) {
+                        instruction->ternary.true_value = copies[instruction->ternary.true_value];
+                        instruction->ternary.true_value->uses++;
+                    }
+                    if (copies.find(instruction->ternary.false_value) != copies.end()) {
+                        instruction->ternary.false_value = copies[instruction->ternary.false_value];
+                        instruction->ternary.false_value->uses++;
+                    }
+                    break;
+                }
                 default: {
                     break;
                 }

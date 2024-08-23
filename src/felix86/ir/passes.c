@@ -106,6 +106,16 @@ void ir_dead_code_elimination_pass(ir_block_t* block) {
                 }
                 break;
             }
+            case IR_TYPE_TERNARY: {
+                if (instruction->uses == 0) {
+                    instruction->ternary.condition->uses--;
+                    instruction->ternary.true_value->uses--;
+                    instruction->ternary.false_value->uses--;
+                    ir_ilist_remove(last);
+                    ir_ilist_free(last);
+                }
+                break;
+            }
             case IR_TYPE_GET_GUEST: {
                 if (instruction->uses == 0) {
                     ir_ilist_remove(last);

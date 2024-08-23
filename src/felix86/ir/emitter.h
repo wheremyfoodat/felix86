@@ -12,6 +12,7 @@ extern "C" {
 typedef struct {
     ir_block_t* block;
     u64 current_address;
+    u8 current_instruction_length;
     bool exit;
     bool testing;
 } ir_emitter_state_t;
@@ -31,10 +32,12 @@ ir_instruction_t* ir_emit_greater_than_signed(ir_emitter_state_t* state, ir_inst
 ir_instruction_t* ir_emit_less_than_signed(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_greater_than_unsigned(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_less_than_unsigned(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
-ir_instruction_t* ir_emit_lea(ir_emitter_state_t* state, ir_instruction_t* base, ir_instruction_t* index, u8 scale, u32 displacement);
+ir_instruction_t* ir_emit_lea(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* rm_operand);
 ir_instruction_t* ir_emit_sext8(ir_emitter_state_t* state, ir_instruction_t* source);
 ir_instruction_t* ir_emit_sext16(ir_emitter_state_t* state, ir_instruction_t* source);
 ir_instruction_t* ir_emit_sext32(ir_emitter_state_t* state, ir_instruction_t* source);
+ir_instruction_t* ir_emit_syscall(ir_emitter_state_t* state);
+ir_instruction_t* ir_emit_ternary(ir_emitter_state_t* state, ir_instruction_t* condition, ir_instruction_t* true_value, ir_instruction_t* false_value);
 
 ir_instruction_t* ir_emit_get_guest(ir_emitter_state_t* state, x86_ref_e ref);
 ir_instruction_t* ir_emit_set_guest(ir_emitter_state_t* state, x86_ref_e ref, ir_instruction_t* source);

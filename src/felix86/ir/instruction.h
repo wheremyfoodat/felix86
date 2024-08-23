@@ -19,6 +19,8 @@ typedef enum : u8 {
     IR_SEXT8,
     IR_SEXT16,
     IR_SEXT32,
+    IR_SYSCALL,
+    IR_TERNARY,
 
     IR_GET_GUEST,
     IR_SET_GUEST,
@@ -61,6 +63,8 @@ typedef enum : u8 {
     IR_TYPE_SET_GUEST,
     IR_TYPE_GET_FLAG,
     IR_TYPE_SET_FLAG,
+    IR_TYPE_SYSCALL,
+    IR_TYPE_TERNARY,
 } ir_type_e;
 
 typedef struct ir_instruction_s {
@@ -102,6 +106,12 @@ typedef struct ir_instruction_s {
             x86_flag_e flag;
             struct ir_instruction_s* source;
         } set_flag;
+
+        struct {
+            struct ir_instruction_s* condition;
+            struct ir_instruction_s* true_value;
+            struct ir_instruction_s* false_value;
+        } ternary;
     };
 
     ir_type_e type;

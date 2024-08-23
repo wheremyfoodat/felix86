@@ -305,6 +305,8 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     }
 
     inst.length = index;
+    state->current_instruction_length = inst.length;
+
     primary.fn(state, &inst);
 
     state->current_address += inst.length;

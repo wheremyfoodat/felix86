@@ -2,6 +2,8 @@
 #include "felix86/common/log.h"
 #include "felix86/common/utility.h"
 #include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 static u64 temps[4096] = {0};
 
@@ -130,7 +132,7 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             u64 base = instruction->lea.base ? temps[instruction->lea.base->name] : 0;
             u64 index = instruction->lea.index ? temps[instruction->lea.index->name] : 0;
             u64 scale = instruction->lea.scale;
-            u64 displacement = instruction->lea.displacement;
+            u64 displacement = (i64)(i32)instruction->lea.displacement;
             temps[instruction->name] = base + index * scale + displacement;
             break;
         }
@@ -204,6 +206,29 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
 
             state->flags &= ~(1 << instruction->set_flag.flag);
             state->flags |= temps[instruction->set_flag.source->name] << instruction->set_flag.flag;
+            break;
+        }
+        case IR_SYSCALL: {
+            u64 opcode = state->gprs[0];
+            u64 arg1 = state->gprs[X86_REF_RDI - X86_REF_RAX];
+            u64 arg2 = state->gprs[X86_REF_RSI - X86_REF_RAX];
+            u64 arg3 = state->gprs[X86_REF_RDX - X86_REF_RAX];
+            u64 arg4 = state->gprs[X86_REF_R10 - X86_REF_RAX];
+            u64 arg5 = state->gprs[X86_REF_R8 - X86_REF_RAX];
+            u64 arg6 = state->gprs[X86_REF_R9 - X86_REF_RAX];
+            VERBOSE("Syscall number: %016lx", opcode);
+            VERBOSE("Syscall argument 1: %016lx", arg1);
+            VERBOSE("Syscall argument 2: %016lx", arg2);
+            VERBOSE("Syscall argument 3: %016lx", arg3);
+            VERBOSE("Syscall argument 4: %016lx", arg4);
+            VERBOSE("Syscall argument 5: %016lx", arg5);
+            VERBOSE("Syscall argument 6: %016lx", arg6);
+            syscall(opcode, arg1, arg2, arg3, arg4, arg5, arg6);
+            break;
+        }
+        case IR_TERNARY: {
+            bool condition = temps[instruction->ternary.condition->name];
+            temps[instruction->name] = condition ? temps[instruction->ternary.true_value->name] : temps[instruction->ternary.false_value->name];
             break;
         }
         default: {
