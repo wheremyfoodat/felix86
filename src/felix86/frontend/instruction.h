@@ -58,6 +58,38 @@ typedef enum : u8 {
     X86_REF_R13,
     X86_REF_R14,
     X86_REF_R15,
+    X86_REF_MM0,
+    X86_REF_MM1,
+    X86_REF_MM2,
+    X86_REF_MM3,
+    X86_REF_MM4,
+    X86_REF_MM5,
+    X86_REF_MM6,
+    X86_REF_MM7,
+    X86_REF_MM8,
+    X86_REF_MM9,
+    X86_REF_MM10,
+    X86_REF_MM11,
+    X86_REF_MM12,
+    X86_REF_MM13,
+    X86_REF_MM14,
+    X86_REF_MM15,
+    X86_REF_MM16,
+    X86_REF_MM17,
+    X86_REF_MM18,
+    X86_REF_MM19,
+    X86_REF_MM20,
+    X86_REF_MM21,
+    X86_REF_MM22,
+    X86_REF_MM23,
+    X86_REF_MM24,
+    X86_REF_MM25,
+    X86_REF_MM26,
+    X86_REF_MM27,
+    X86_REF_MM28,
+    X86_REF_MM29,
+    X86_REF_MM30,
+    X86_REF_MM31,
     X86_REF_RIP,
     X86_REF_FLAGS,
     X86_REF_GS,
@@ -75,7 +107,6 @@ typedef enum : u8 {
     X86_FLAG_OF = 11,
 } x86_flag_e;
 
-
 typedef enum : u8 {
     X86_OP_TYPE_NONE,
     X86_OP_TYPE_MEMORY,
@@ -85,10 +116,13 @@ typedef enum : u8 {
 
 typedef enum : u8 {
     X86_REG_SIZE_BYTE_LOW,
+    X86_REG_SIZE_BYTE_HIGH,
     X86_REG_SIZE_WORD,
     X86_REG_SIZE_DWORD,
     X86_REG_SIZE_QWORD,
-    X86_REG_SIZE_BYTE_HIGH,
+    X86_REG_SIZE_XMM,
+    X86_REG_SIZE_YMM,
+    X86_REG_SIZE_ZMM,
 } x86_register_size_e;
 
 typedef union {

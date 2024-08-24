@@ -303,6 +303,7 @@ ir_instruction_t* ir_emit_get_reg(ir_emitter_state_t* state, x86_operand_t* reg_
         case X86_REG_SIZE_WORD: return ir_emit_get_gpr16(state, reg_operand->reg.ref);
         case X86_REG_SIZE_DWORD: return ir_emit_get_gpr32(state, reg_operand->reg.ref);
         case X86_REG_SIZE_QWORD: return ir_emit_get_gpr64(state, reg_operand->reg.ref);
+        default: ERROR("Invalid register size"); return NULL;
     }
 }
 
@@ -324,6 +325,7 @@ ir_instruction_t* ir_emit_set_reg(ir_emitter_state_t* state, x86_operand_t* reg_
         case X86_REG_SIZE_WORD: return ir_emit_set_gpr16(state, reg_operand->reg.ref, source);
         case X86_REG_SIZE_DWORD: return ir_emit_set_gpr32(state, reg_operand->reg.ref, source);
         case X86_REG_SIZE_QWORD: return ir_emit_set_gpr64(state, reg_operand->reg.ref, source);
+        default: ERROR("Invalid register size"); return NULL;
     }
 }
 

@@ -492,6 +492,11 @@ IR_HANDLE(syscall) { // syscall - 0x0f 0x05
     ir_emit_syscall(state);
 }
 
+IR_HANDLE(movq_xmm_rm32) {
+    ir_instruction_t* rm = ir_emit_get_rm(state, &inst->prefixes, &inst->operand_rm);
+    ir_emit_set_gpr64(state, inst->operand_reg.reg.ref, rm);
+}
+
 IR_HANDLE(jo_rel32) { // jo rel32 - 0x0f 0x80
     ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), ir_emit_get_flag(state, X86_FLAG_OF));
 }

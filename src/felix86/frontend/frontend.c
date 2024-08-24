@@ -34,7 +34,7 @@ typedef enum : u8 {
     MUST_DWORD_IMMEDIATE,
 } immediate_size_e;
 
-typedef enum : u8 {
+typedef enum : u16 {
     NO_FLAG,
     MODRM_FLAG = 1,
     OPCODE_FLAG = 2, // register encoded in the opcode itself
@@ -42,6 +42,9 @@ typedef enum : u8 {
     EAX_OVERRIDE_FLAG = 8,
     RM_ALWAYS_BYTE_FLAG = 16,
     RM_ALWAYS_WORD_FLAG = 32,
+    RM_AT_LEAST_DWORD_FLAG = 64,
+    REG_MM_FLAG = 128, // reg is an mm register
+    RM_MM_FLAG = 256, // rm is an mm register
 } decoding_flags_e;
 
 typedef struct {
@@ -64,51 +67,6 @@ instruction_metadata_t secondary_table[] = {
 };
 
 u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, x86_prefixes_t prefixes, modrm_t modrm, sib_t sib) {
-    // u8 displacement_size = 0;
-
-    // operand_reg->type = X86_OP_TYPE_REGISTER;
-    // operand_rm->type = (modrm.mod == 0b11) ? X86_OP_TYPE_REGISTER : X86_OP_TYPE_MEMORY;
-
-    // operand_reg->reg.ref = X86_REF_RAX + (modrm.reg | (prefixes.rex_r << 3));
-        
-    // operand_rm->memory.base = X86_REF_COUNT;
-    // operand_rm->memory.index = X86_REF_COUNT;
-
-    // if (operand_rm->type == X86_OP_TYPE_REGISTER) {
-    //     operand_rm->reg.ref = X86_REF_RAX + (modrm.rm | (prefixes.rex_b << 3));
-    // } else if (operand_rm->type == X86_OP_TYPE_MEMORY) {
-    //     bool has_sib = needs_sib(modrm);
-    //     if (has_sib) {
-    //         operand_rm->memory.base = X86_REF_RAX + (sib.base | (prefixes.rex_b << 3));
-
-    //         u8 index = sib.index | (prefixes.rex_x << 3);
-    //         if (index != 4) {
-    //             operand_rm->memory.index = X86_REF_RAX + index;
-    //             operand_rm->memory.scale = 1 << sib.scale;
-    //         }
-
-    //         if (sib.base == 5) {
-    //             // No base register
-    //             operand_rm->memory.base = X86_REF_COUNT;
-    //             displacement_size = 4;
-    //         }
-    //     } else {
-    //         operand_rm->memory.base = X86_REF_RAX + (modrm.rm | (prefixes.rex_b << 3));
-    //     }
-
-    //     if (modrm.mod == 0b00 && modrm.rm == 0b101) {
-    //         // RIP-relative addressing
-    //         operand_rm->memory.base = X86_REF_RIP;
-    //         displacement_size = 4;
-    //     } else if (modrm.mod == 0b01) {
-    //         displacement_size = 1;
-    //     } else if (modrm.mod == 0b10) {
-    //         displacement_size = 4;
-    //     }
-    // }
-
-    // return displacement_size;
-
     operand_reg->type = X86_OP_TYPE_REGISTER;
     operand_reg->reg.ref = X86_REF_RAX + (modrm.reg | (prefixes.rex_r << 3));
 
@@ -178,6 +136,8 @@ u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, x86_prefi
             return 0;
         }
     }
+
+    ERROR("Unreachable");
 }
 
 void frontend_compile_instruction(ir_emitter_state_t* state)
@@ -199,6 +159,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
             }
 
             case 0x64: {
+                ERROR("FS segment override not supported\n");
                 prefixes.segment_override = SEGMENT_FS;
                 prefix = true;
                 index += 1;
@@ -206,6 +167,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
             }
 
             case 0x65: {
+                ERROR("GS segment override not supported\n");
                 prefixes.segment_override = SEGMENT_GS;
                 prefix = true;
                 index += 1;
@@ -255,7 +217,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     } while (prefix);
 
     if (prefixes.operand_override && prefixes.rex_w) {
-        ERROR("Both operand override and REX.W are set, which is sus");
+        ERROR("Both operand override and REX.W are set during address: 0x%016llx\n", (unsigned long long)state->current_address);
     }
 
     u8 opcode = data[index++];
@@ -288,6 +250,28 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         size_rm = X86_REG_SIZE_BYTE_LOW;
     } else if (primary.decoding_flags & RM_ALWAYS_WORD_FLAG) {
         size_rm = X86_REG_SIZE_WORD;
+    } else if (primary.decoding_flags & RM_AT_LEAST_DWORD_FLAG && size_rm < X86_REG_SIZE_DWORD) {
+        size_rm = X86_REG_SIZE_DWORD;
+    }
+
+    if (primary.decoding_flags & RM_MM_FLAG) {
+        u8 reg = inst.operand_rm.reg.ref - X86_REF_RAX;
+        inst.operand_rm.reg.ref = X86_REF_MM0 + reg;
+
+        if (prefixes.operand_override) {
+            size_rm = X86_REG_SIZE_XMM;
+        } else {
+            size_rm = X86_REG_SIZE_QWORD;
+        }
+    } else if (primary.decoding_flags & REG_MM_FLAG) {
+        u8 reg = inst.operand_reg.reg.ref - X86_REF_RAX;
+        inst.operand_reg.reg.ref = X86_REF_MM0 + reg;
+
+        if (prefixes.operand_override) {
+            size_reg = X86_REG_SIZE_XMM;
+        } else {
+            size_reg = X86_REG_SIZE_QWORD;
+        }
     }
 
     if (primary.decoding_flags & MODRM_FLAG) {

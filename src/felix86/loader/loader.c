@@ -49,13 +49,16 @@ void loader_run_elf(loader_config_t* config) {
         return;
     }
 
+    u64 entry;
+    elf_t* interpreter = NULL;
     if (elf->interpreter) {
-        ERROR("Interpreter not implemented\n");
+        interpreter = elf_load(elf->interpreter, NULL);
+        entry = (u64)interpreter->program + interpreter->entry;
     } else {
-        VERBOSE("Entrypoint: %p", (void*)elf->entry);
+        entry = (u64)elf->program + elf->entry;
     }
 
-    u64 entry = (u64)elf->program + elf->entry;
+    VERBOSE("Entrypoint: %p", (void*)elf->entry);
 
     // Initial process stack according to System V AMD64 ABI
     u64 rsp = (u64)elf->stackPointer;
