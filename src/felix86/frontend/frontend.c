@@ -40,6 +40,8 @@ typedef enum : u8 {
     OPCODE_FLAG = 2, // register encoded in the opcode itself
     BYTE_OVERRIDE_FLAG = 4,
     EAX_OVERRIDE_FLAG = 8,
+    RM_ALWAYS_BYTE_FLAG = 16,
+    RM_ALWAYS_WORD_FLAG = 32,
 } decoding_flags_e;
 
 typedef struct {
@@ -252,12 +254,26 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         }
     } while (prefix);
 
+    if (prefixes.operand_override && prefixes.rex_w) {
+        ERROR("Both operand override and REX.W are set, which is sus");
+    }
+
     u8 opcode = data[index++];
     instruction_metadata_t primary = primary_table[opcode];
 
+    x86_instruction_t inst = {0};
+    inst.opcode = opcode;
+    inst.prefixes = prefixes;
+
+    if (opcode == 0x0F) {
+        opcode = data[index++];
+        inst.opcode = opcode;
+        primary = secondary_table[opcode];
+    }
+
     u8 size = X86_REG_SIZE_DWORD;
     if (primary.decoding_flags & BYTE_OVERRIDE_FLAG) {
-        prefixes.byte_override = true;
+        inst.prefixes.byte_override = true;
         size = X86_REG_SIZE_BYTE_LOW;
     } else if (prefixes.operand_override) {
         size = X86_REG_SIZE_WORD;
@@ -265,18 +281,13 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         size = X86_REG_SIZE_QWORD;
     }
 
-    x86_instruction_t inst = {0};
-    inst.opcode = opcode;
-    inst.prefixes = prefixes;
+    u8 size_rm = size;
+    u8 size_reg = size;
 
-    if (prefixes.operand_override && prefixes.rex_w) {
-        ERROR("Both operand override and REX.W are set, which is sus");
-    }
-    
-    if (opcode == 0x0F) {
-        opcode = data[index++];
-        inst.opcode = opcode;
-        primary = secondary_table[opcode];
+    if (primary.decoding_flags & RM_ALWAYS_BYTE_FLAG) {
+        size_rm = X86_REG_SIZE_BYTE_LOW;
+    } else if (primary.decoding_flags & RM_ALWAYS_WORD_FLAG) {
+        size_rm = X86_REG_SIZE_WORD;
     }
 
     if (primary.decoding_flags & MODRM_FLAG) {
@@ -368,7 +379,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     }
 
     if (inst.operand_reg.type == X86_OP_TYPE_REGISTER) {
-        inst.operand_reg.reg.size = size;
+        inst.operand_reg.reg.size = size_reg;
 
         if (!prefixes.rex && inst.operand_reg.reg.size == X86_REG_SIZE_BYTE_LOW) {
             int reg_index = (inst.operand_reg.reg.ref - X86_REF_RAX) & 0x7;
@@ -379,7 +390,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     }
 
     if (inst.operand_rm.type == X86_OP_TYPE_REGISTER) {
-        inst.operand_rm.reg.size = size;
+        inst.operand_rm.reg.size = size_rm;
 
         if (!prefixes.rex && inst.operand_rm.reg.size == X86_REG_SIZE_BYTE_LOW) {
             int reg_index = (inst.operand_rm.reg.ref - X86_REF_RAX) & 0x7;

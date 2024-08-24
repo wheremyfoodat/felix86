@@ -143,7 +143,7 @@ void loader_run_elf(loader_config_t* config) {
 
     free(argv_addresses);
 
-    felix86_recompiler_config_t fconfig = { .testing = false, .optimize = true, .print_block = config->print_blocks, .base_address = (u64)elf->program };
+    felix86_recompiler_config_t fconfig = { .testing = false, .optimize = true, .print_blocks = config->print_blocks, .base_address = (u64)elf->program };
     felix86_recompiler_t* recompiler = felix86_recompiler_create(&fconfig);
     felix86_set_guest(recompiler, X86_REF_RIP, entry);
     felix86_set_guest(recompiler, X86_REF_RSP, rsp);

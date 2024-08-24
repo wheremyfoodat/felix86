@@ -118,3 +118,23 @@ FELIX86_TEST(mov_immediate) {
     verify(X86_REF_R10, 0x12345678);
     verify(X86_REF_R11, 0x123456789ABCDEF0);
 }
+
+FELIX86_TEST(movzx_r8) {
+    u32 value = 0x12345678;
+    mov(eax, value);
+    movzx(eax, ah);
+
+    mov(ebx, value);
+    movzx(ebx, bl);
+
+    verify(X86_REF_RAX, 0x56);
+    verify(X86_REF_RBX, 0x78);
+}
+
+FELIX86_TEST(movzx_r16) {
+    u32 value = 0x12345678;
+    mov(eax, value);
+    movzx(eax, ax);
+
+    verify(X86_REF_RAX, 0x5678);
+}

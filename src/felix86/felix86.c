@@ -14,7 +14,7 @@ struct felix86_recompiler_s {
     x86_state_t state;
     bool testing;
     bool optimize;
-    bool print_block;
+    bool print_blocks;
     u64 base_address;
 };
 
@@ -23,7 +23,7 @@ felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* con
     recompiler->block_metadata = ir_block_metadata_create();
     recompiler->testing = config->testing;
     recompiler->optimize = config->optimize;
-    recompiler->print_block = config->print_block;
+    recompiler->print_blocks = config->print_blocks;
     recompiler->base_address = config->base_address;
 
     return recompiler;
@@ -159,7 +159,7 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler, u
             state.current_address = recompiler->state.rip;
             state.exit = false;
             state.testing = recompiler->testing;
-            state.debug_info = recompiler->print_block;
+            state.debug_info = recompiler->print_blocks;
             frontend_compile_block(&state);
 
             if (recompiler->optimize) {
@@ -171,7 +171,7 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler, u
             
             ir_naming_pass(block);
             
-            if (recompiler->print_block) {
+            if (recompiler->print_blocks) {
                 ir_print_block(block);
             }
         }
