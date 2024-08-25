@@ -9,9 +9,9 @@ extern "C" {
 struct ir_instruction_list_s;
 
 typedef struct ir_instruction_list_s {
-    ir_instruction_t instruction;
-    struct ir_instruction_list_s* previous;
-    struct ir_instruction_list_s* next;
+	ir_instruction_t instruction;
+	struct ir_instruction_list_s* previous;
+	struct ir_instruction_list_s* next;
 } ir_instruction_list_t;
 
 ir_instruction_list_t* ir_ilist_create();

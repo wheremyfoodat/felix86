@@ -4,20 +4,20 @@
 extern "C" {
 #endif
 
-#include "felix86/common/utility.h"
 #include "felix86/common/callbacks.h"
+#include "felix86/common/utility.h"
 
 typedef struct {
-    void* program;
-    u64 entry;
-    char* interpreter;
-    void* stackBase;
-    void* stackPointer;
-    bool executableStack;
+	void* program;
+	u64 entry;
+	char* interpreter;
+	void* stackBase;
+	void* stackPointer;
+	bool executableStack;
 
-    void* phdr;
-    u64 phnum;
-    u64 phent;
+	void* phdr;
+	u64 phnum;
+	u64 phent;
 } elf_t;
 
 /// Load an ELF file from the given path
