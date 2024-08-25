@@ -11,6 +11,7 @@ extern "C" {
 
 typedef struct {
 	ir_block_t* block;
+	u64 base_address;
 	u64 current_address;
 	u8 current_instruction_length;
 	bool exit;
@@ -60,6 +61,8 @@ ir_instruction_t* ir_emit_write_byte(ir_emitter_state_t* state, ir_instruction_t
 ir_instruction_t* ir_emit_write_word(ir_emitter_state_t* state, ir_instruction_t* address, ir_instruction_t* source);
 ir_instruction_t* ir_emit_write_dword(ir_emitter_state_t* state, ir_instruction_t* address, ir_instruction_t* source);
 ir_instruction_t* ir_emit_write_qword(ir_emitter_state_t* state, ir_instruction_t* address, ir_instruction_t* source);
+
+ir_instruction_t* ir_emit_cpuid(ir_emitter_state_t* state);
 
 // Helpers
 ir_instruction_t* ir_emit_immediate(ir_emitter_state_t* state, u64 value);

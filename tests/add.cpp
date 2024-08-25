@@ -28,3 +28,19 @@ FELIX86_TEST(add_sign_extend) {
 
     verify(X86_REF_RBX, (uint32_t)-1ull);
 }
+
+FELIX86_TEST(add_eax_imm32) {
+    mov(eax, 0x12345678);
+    add(eax, 0x87654321);
+
+    verify(X86_REF_RAX, 0x12345678 + 0x87654321);
+}
+
+FELIX86_TEST(add_dead_store_load) {
+    mov(bl, 0x5);
+    xor_(rax, rax);
+    add(al, bl);
+    add(al, bl);
+
+    verify(X86_REF_RAX, 0x5 + 0x5);
+}

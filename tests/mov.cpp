@@ -139,6 +139,17 @@ FELIX86_TEST(movzx_r16) {
     verify(X86_REF_RAX, 0x5678);
 }
 
+FELIX86_TEST(mov_dead_store) {
+    mov(rax, 1);
+    mov(rax, 2);
+
+    mov(rbx, 0x8000'0000);
+    mov(bx, 0x1234);
+
+    verify(X86_REF_RAX, 2);
+    verify(X86_REF_RBX, 0x8000'1234);
+}
+
 FELIX86_TEST(movq) {
     // uint64_t stuff[2] = {0x123456789ABCDEF0, 0x1337C0DEDEADBEEF};
     // mov(rax, (u64)&stuff[0]);

@@ -22,6 +22,7 @@ typedef enum : u8 {
 	IR_SEXT_GPR16,
 	IR_SEXT_GPR32,
 	IR_SYSCALL,
+	IR_CPUID,
 	IR_TERNARY,
 
 	IR_VECTOR_MASK_ELEMENTS,
@@ -69,7 +70,7 @@ typedef enum : u8 {
 	IR_TYPE_SET_GUEST,
 	IR_TYPE_GET_FLAG,
 	IR_TYPE_SET_FLAG,
-	IR_TYPE_SYSCALL,
+	IR_TYPE_NO_OPERANDS,
 	IR_TYPE_TERNARY,
 	IR_TYPE_DEBUG,
 } ir_type_e;
@@ -128,7 +129,7 @@ typedef struct ir_instruction_s {
 	ir_type_e type;
 	ir_opcode_e opcode;
 	u16 uses;
-	u32 name;
+	u16 name;
 } ir_instruction_t;
 
 #ifdef __cplusplus

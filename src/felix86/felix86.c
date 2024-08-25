@@ -173,15 +173,21 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler, u
             ir_emitter_state_t state = {0};
             state.block = block;
             state.current_address = recompiler->state.rip;
+            state.base_address = recompiler->base_address;
             state.exit = false;
             state.testing = recompiler->testing;
             state.debug_info = recompiler->print_blocks;
             frontend_compile_block(&state);
 
             if (recompiler->optimize) {
+                ir_dead_store_elimination_pass(block);
+                
                 ir_local_common_subexpression_elimination_pass(block);
                 ir_copy_propagation_pass(block);
-                ir_dead_store_elimination_pass(block);
+                ir_dead_code_elimination_pass(block);
+
+                ir_local_common_subexpression_elimination_pass(block);
+                ir_copy_propagation_pass(block);
                 ir_dead_code_elimination_pass(block);
             }
             

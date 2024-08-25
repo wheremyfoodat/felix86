@@ -39,12 +39,13 @@ typedef enum : u16 {
     MODRM_FLAG = 1,
     OPCODE_FLAG = 2, // register encoded in the opcode itself
     BYTE_OVERRIDE_FLAG = 4,
-    EAX_OVERRIDE_FLAG = 8,
+    RM_EAX_OVERRIDE_FLAG = 8,
     RM_ALWAYS_BYTE_FLAG = 16,
     RM_ALWAYS_WORD_FLAG = 32,
     RM_AT_LEAST_DWORD_FLAG = 64,
     REG_MM_FLAG = 128, // reg is an mm register
     RM_MM_FLAG = 256, // rm is an mm register
+    REG_EAX_OVERRIDE_FLAG = 512,
 } decoding_flags_e;
 
 typedef struct {
@@ -154,7 +155,6 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     instruction_metadata_t* primary_map = primary_table;
     x86_prefixes_t prefixes;
     prefixes.raw = 0;
-    printf("now parsing: %x\n", data[index]);
     do {
         switch (data[index]) {
             case 0x40 ... 0x4F: {
@@ -318,6 +318,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
 
     u8 size = X86_REG_SIZE_DWORD;
     if (primary.decoding_flags & BYTE_OVERRIDE_FLAG) {
+        printf("Byte override\n");
         inst.prefixes.byte_override = true;
         size = X86_REG_SIZE_BYTE_LOW;
     } else if (prefixes.operand_override) {
@@ -330,6 +331,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     u8 size_reg = size;
 
     if (primary.decoding_flags & RM_ALWAYS_BYTE_FLAG) {
+        inst.prefixes.byte_override = true;
         size_rm = X86_REG_SIZE_BYTE_LOW;
     } else if (primary.decoding_flags & RM_ALWAYS_WORD_FLAG) {
         size_rm = X86_REG_SIZE_WORD;
@@ -383,9 +385,14 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     } else if (primary.decoding_flags & OPCODE_FLAG) {
         inst.operand_reg.type = X86_OP_TYPE_REGISTER;
         inst.operand_reg.reg.ref = (X86_REF_RAX + (opcode & 0x07)) | (rex_b << 3);
-    } else if (primary.decoding_flags & EAX_OVERRIDE_FLAG) {
+    }
+    
+    if (primary.decoding_flags & RM_EAX_OVERRIDE_FLAG) {
         inst.operand_rm.type = X86_OP_TYPE_REGISTER;
         inst.operand_rm.reg.ref = X86_REF_RAX;
+    } else if (primary.decoding_flags & REG_EAX_OVERRIDE_FLAG) {
+        inst.operand_reg.type = X86_OP_TYPE_REGISTER;
+        inst.operand_reg.reg.ref = X86_REF_RAX;
     }
 
     switch (primary.immediate_size) {
@@ -480,7 +487,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         /* instruction:     */ &instruction
         )))
         {
-            ir_emit_debug_info_compile_time(state, "0x%016llx: %s", state->current_address, instruction.text);
+            ir_emit_debug_info_compile_time(state, "0x%016llx: %s", state->current_address - state->base_address, instruction.text);
         }
     }
 

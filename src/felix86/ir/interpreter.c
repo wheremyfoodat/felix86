@@ -327,6 +327,13 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             syscall(opcode, arg1, arg2, arg3, arg4, arg5, arg6);
             break;
         }
+        case IR_CPUID: {
+            u64 eax = state->gprs[X86_REF_RAX];
+            switch (eax) {
+                default: ERROR("Invalid CPUID opcode"); break;
+            }
+            break;
+        }
         case IR_TERNARY: {
             bool condition = temps[instruction->ternary.condition->name];
             temps[instruction->name] = condition ? temps[instruction->ternary.true_value->name] : temps[instruction->ternary.false_value->name];

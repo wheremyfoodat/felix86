@@ -158,7 +158,7 @@ ir_instruction_t* ir_emit_syscall(ir_emitter_state_t* state)
 {
     ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
     instruction->opcode = IR_SYSCALL;
-    instruction->type = IR_TYPE_SYSCALL;
+    instruction->type = IR_TYPE_NO_OPERANDS;
     return instruction;
 }
 
@@ -288,6 +288,14 @@ ir_instruction_t* ir_emit_write_dword(ir_emitter_state_t* state, ir_instruction_
 ir_instruction_t* ir_emit_write_qword(ir_emitter_state_t* state, ir_instruction_t* address, ir_instruction_t* source)
 {
     return ir_emit_two_operand(state, IR_WRITE_QWORD, address, source);
+}
+
+ir_instruction_t* ir_emit_cpuid(ir_emitter_state_t* state)
+{
+    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    instruction->opcode = IR_CPUID;
+    instruction->type = IR_TYPE_NO_OPERANDS;
+    return instruction;
 }
 
 ir_instruction_t* ir_emit_immediate(ir_emitter_state_t* state, u64 value)
@@ -784,8 +792,7 @@ void ir_emit_group1_imm(ir_emitter_state_t* state, x86_instruction_t* inst) {
 void ir_emit_jcc(ir_emitter_state_t* state, u8 inst_length, ir_instruction_t* imm, ir_instruction_t* condition) {
     ir_instruction_t* jump_address_false = ir_emit_immediate(state, state->current_address + inst_length);
     ir_instruction_t* jump_address_true = ir_emit_add(state, jump_address_false, imm);
-    ir_instruction_t* c = ir_emit_get_flag(state, X86_FLAG_CF);
-    ir_instruction_t* jump = ir_emit_ternary(state, c, jump_address_true, jump_address_false);
+    ir_instruction_t* jump = ir_emit_ternary(state, condition, jump_address_true, jump_address_false);
     ir_emit_set_guest(state, X86_REF_RIP, jump);
 
     state->exit = true;

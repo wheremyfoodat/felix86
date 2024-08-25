@@ -10,6 +10,23 @@ bool operator<(const ir_instruction_t& a1, const ir_instruction_t& a2) {
 	return res < 0;
 }
 
+bool dont_subexpression_eliminate(ir_instruction_t* instruction) {
+	switch (instruction->opcode) {
+		// These instructions directly modify the guest state
+		case IR_GET_GUEST:
+		case IR_GET_FLAG:
+		case IR_SET_GUEST:
+		case IR_SET_FLAG:
+		case IR_CPUID: {
+			return true;
+		}
+
+		default: {
+			return false;
+		}
+	}
+}
+
 extern "C" void ir_local_common_subexpression_elimination_pass(ir_block_t* block) {
 	std::map<ir_instruction_t, ir_instruction_t*> expressions;
 
@@ -18,35 +35,13 @@ extern "C" void ir_local_common_subexpression_elimination_pass(ir_block_t* block
 		ir_instruction_t instruction = current->instruction;
 		instruction.name = 0;
 		instruction.uses = 0;
-		if (instruction.type != IR_TYPE_SET_GUEST && instruction.type != IR_TYPE_SET_FLAG) {
+		if (!dont_subexpression_eliminate(&instruction)) {
 			if (expressions.find(instruction) != expressions.end()) {
 				current->instruction.type = IR_TYPE_ONE_OPERAND;
 				current->instruction.opcode = IR_MOV;
 				current->instruction.one_operand.source = expressions[instruction];
 			} else {
 				expressions[instruction] = &current->instruction;
-			}
-		} else if (instruction.type == IR_TYPE_SET_FLAG) {
-			// Since it's been modified we need to remove any previous get flag instructions from
-			// the expressions map
-			ir_instruction_t get_instruction = {0};
-			get_instruction.type = IR_TYPE_GET_FLAG;
-			get_instruction.opcode = IR_GET_FLAG;
-			get_instruction.get_flag.flag = instruction.set_flag.flag;
-
-			if (expressions.find(get_instruction) != expressions.end()) {
-				expressions.erase(get_instruction);
-			}
-		} else if (instruction.type == IR_TYPE_SET_GUEST) {
-			// Since it's been modified we need to remove any previous get guest instructions from
-			// the expressions map
-			ir_instruction_t get_instruction = {0};
-			get_instruction.type = IR_TYPE_GET_GUEST;
-			get_instruction.opcode = IR_GET_GUEST;
-			get_instruction.get_guest.ref = instruction.set_guest.ref;
-
-			if (expressions.find(get_instruction) != expressions.end()) {
-				expressions.erase(get_instruction);
 			}
 		}
 

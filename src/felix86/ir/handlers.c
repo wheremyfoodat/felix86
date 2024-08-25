@@ -186,7 +186,7 @@ IR_HANDLE(jz_rel8) { // jz rel8 - 0x74
 }
 
 IR_HANDLE(jnz_rel8) { // jnz rel8 - 0x75
-    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), ir_emit_get_flag(state, X86_FLAG_ZF));
+    ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), ir_emit_get_flag_not(state, X86_FLAG_ZF));
 }
 
 IR_HANDLE(jbe_rel8) { // jbe rel8 - 0x76
@@ -567,6 +567,10 @@ IR_HANDLE(jle_rel32) { // jle rel32 - 0x0f 0x8e
 IR_HANDLE(jg_rel32) { // jg rel32 - 0x0f 0x8f
     ir_instruction_t* condition = ir_emit_and(state, ir_emit_get_flag_not(state, X86_FLAG_ZF), ir_emit_equal(state, ir_emit_get_flag(state, X86_FLAG_SF), ir_emit_get_flag(state, X86_FLAG_OF)));
     ir_emit_jcc(state, inst->length, ir_emit_immediate_sext(state, &inst->operand_imm), condition);
+}
+
+IR_HANDLE(cpuid) { // cpuid - 0x0f 0xa2
+    ir_emit_cpuid(state);
 }
 
 IR_HANDLE(movzx_r32_rm8) { // movzx r32/64, rm8 - 0x0f 0xb6
