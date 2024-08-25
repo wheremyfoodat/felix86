@@ -18,14 +18,18 @@ typedef enum : u8 {
     IR_MOV,
     IR_IMMEDIATE,
     IR_POPCOUNT,
-    IR_SEXT8,
-    IR_SEXT16,
-    IR_SEXT32,
+    IR_SEXT_GPR8,
+    IR_SEXT_GPR16,
+    IR_SEXT_GPR32,
     IR_SYSCALL,
     IR_TERNARY,
 
+    IR_VECTOR_MASK_ELEMENTS,
+
     IR_GET_GUEST,
     IR_SET_GUEST,
+    IR_INSERT_INTEGER_TO_VECTOR,
+    IR_EXTRACT_INTEGER_FROM_VECTOR,
     IR_GET_FLAG,
     IR_SET_FLAG,
 
@@ -60,7 +64,7 @@ typedef enum : u8 {
     IR_TYPE_TWO_OPERAND,
     IR_TYPE_LOAD_IMMEDIATE,
     IR_TYPE_ONE_OPERAND,
-    IR_TYPE_LEA,
+    IR_TYPE_TWO_OPERAND_IMMEDIATES,
     IR_TYPE_GET_GUEST,
     IR_TYPE_SET_GUEST,
     IR_TYPE_GET_FLAG,
@@ -86,11 +90,11 @@ typedef struct ir_instruction_s {
         } one_operand;
 
         struct {
-            struct ir_instruction_s* base;
-            struct ir_instruction_s* index;
-            u32 displacement;
-            u8 scale;
-        } lea;
+            struct ir_instruction_s* source1;
+            struct ir_instruction_s* source2;
+            u32 imm32_1;
+            u32 imm32_2;
+        } two_operand_immediates;
 
         struct {
             x86_ref_e ref;

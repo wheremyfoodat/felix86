@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 static u64 temps[4096] = {0};
+static xmm_reg_t xmm_temps[256] = {0};
 
 void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
 {
@@ -18,6 +19,10 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             switch (instruction->get_guest.ref) {
                 case X86_REF_RAX ... X86_REF_R15: {
                     temps[instruction->name] = state->gprs[instruction->get_guest.ref - X86_REF_RAX];
+                    break;
+                }
+                case X86_REF_XMM0 ... X86_REF_XMM31: {
+                    xmm_temps[instruction->name] = state->xmm[instruction->get_guest.ref - X86_REF_XMM0];
                     break;
                 }
                 case X86_REF_RIP: {
@@ -49,6 +54,10 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
                     state->gprs[instruction->set_guest.ref - X86_REF_RAX] = temps[instruction->set_guest.source->name];
                     break;
                 }
+                case X86_REF_XMM0 ... X86_REF_XMM31: {
+                    state->xmm[instruction->set_guest.ref - X86_REF_XMM0] = xmm_temps[instruction->set_guest.source->name];
+                    break;
+                }
                 case X86_REF_RIP: {
                     state->rip = temps[instruction->set_guest.source->name];
                     break;
@@ -69,6 +78,98 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
                     ERROR("Invalid GPR reference");
                     break;
                 }
+            }
+            break;
+        }
+        case IR_INSERT_INTEGER_TO_VECTOR: {
+            xmm_reg_t xmm = xmm_temps[instruction->two_operand_immediates.source1->name];
+            u32 index = instruction->two_operand_immediates.imm32_1;
+            switch (instruction->two_operand_immediates.imm32_2) {
+                case X86_REG_SIZE_BYTE_LOW: {
+                    if (index > 63) {
+                        ERROR("Invalid index");
+                    }
+
+                    u8* data = (u8*)&xmm.data[index];
+                    *data = (u8)temps[instruction->two_operand_immediates.source2->name];
+                    xmm_temps[instruction->name] = xmm;
+                    break;
+                }
+                case X86_REG_SIZE_WORD: {
+                    if (index > 31) {
+                        ERROR("Invalid index");
+                    }
+
+                    u16* data = (u16*)&xmm.data[index];
+                    *data = (u16)temps[instruction->two_operand_immediates.source2->name];
+                    xmm_temps[instruction->name] = xmm;
+                    break;
+                }
+                case X86_REG_SIZE_DWORD: {
+                    if (index > 15) {
+                        ERROR("Invalid index");
+                    }
+
+                    u32* data = (u32*)&xmm.data[index];
+                    *data = (u32)temps[instruction->two_operand_immediates.source2->name];
+                    xmm_temps[instruction->name] = xmm;
+                    break;
+                }
+                case X86_REG_SIZE_QWORD: {
+                    if (index > 7) {
+                        ERROR("Invalid index");
+                    }
+
+                    u64* data = (u64*)&xmm.data[index];
+                    *data = temps[instruction->two_operand_immediates.source2->name];
+                    xmm_temps[instruction->name] = xmm;
+                    break;
+                }
+                default: ERROR("Invalid size"); break;
+            }
+            break;
+        }
+        case IR_EXTRACT_INTEGER_FROM_VECTOR: {
+            xmm_reg_t xmm = xmm_temps[instruction->two_operand_immediates.source1->name];
+            u32 index = instruction->two_operand_immediates.imm32_1;
+            switch (instruction->two_operand_immediates.imm32_2) {
+                case X86_REG_SIZE_BYTE_LOW: {
+                    if (index > 63) {
+                        ERROR("Invalid index");
+                    }
+
+                    u8* data = (u8*)&xmm.data[index];
+                    temps[instruction->name] = *data;
+                    break;
+                }
+                case X86_REG_SIZE_WORD: {
+                    if (index > 31) {
+                        ERROR("Invalid index");
+                    }
+
+                    u16* data = (u16*)&xmm.data[index];
+                    temps[instruction->name] = *data;
+                    break;
+                }
+                case X86_REG_SIZE_DWORD: {
+                    if (index > 15) {
+                        ERROR("Invalid index");
+                    }
+
+                    u32* data = (u32*)&xmm.data[index];
+                    temps[instruction->name] = *data;
+                    break;
+                }
+                case X86_REG_SIZE_QWORD: {
+                    if (index > 7) {
+                        ERROR("Invalid index");
+                    }
+
+                    u64* data = (u64*)&xmm.data[index];
+                    temps[instruction->name] = *data;
+                    break;
+                }
+                default: ERROR("Invalid size"); break;
             }
             break;
         }
@@ -129,10 +230,10 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             break;
         }
         case IR_LEA: {
-            u64 base = instruction->lea.base ? temps[instruction->lea.base->name] : 0;
-            u64 index = instruction->lea.index ? temps[instruction->lea.index->name] : 0;
-            u64 scale = instruction->lea.scale;
-            u64 displacement = (i64)(i32)instruction->lea.displacement;
+            u64 base = instruction->two_operand_immediates.source1 ? temps[instruction->two_operand_immediates.source1->name] : 0;
+            u64 index = instruction->two_operand_immediates.source2 ? temps[instruction->two_operand_immediates.source2->name] : 0;
+            u64 displacement = (i64)(i32)instruction->two_operand_immediates.imm32_1;
+            u64 scale = instruction->two_operand_immediates.imm32_2;
             temps[instruction->name] = base + index * scale + displacement;
             break;
         }
@@ -171,15 +272,15 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
         case IR_START_OF_BLOCK: {
             break;
         }
-        case IR_SEXT8: {
+        case IR_SEXT_GPR8: {
             temps[instruction->name] = (i64)(i8)temps[instruction->one_operand.source->name];
             break;
         }
-        case IR_SEXT16: {
+        case IR_SEXT_GPR16: {
             temps[instruction->name] = (i64)(i16)temps[instruction->one_operand.source->name];
             break;
         }
-        case IR_SEXT32: {
+        case IR_SEXT_GPR32: {
             temps[instruction->name] = (i64)(i32)temps[instruction->one_operand.source->name];
             break;
         }

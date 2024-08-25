@@ -56,6 +56,7 @@ static void interrupt(void* context, u8 vector) {}
     Code_##name(); \
     ~Code_##name() { free(data); } \
     void verify(x86_ref_e ref, u64 value) { checks.push_back({ ref, value }); } \
+    void verify_xmm(x86_ref_e ref, xmm_reg_t reg) { xmm_checks.push_back({ ref, reg }); } \
     void verify_c(bool value) { c = value; } \
     void verify_p(bool value) { p = value; } \
     void verify_a(bool value) { a = value; } \
@@ -75,9 +76,17 @@ private: \
         if (z.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_FLAGS) & (1 << X86_FLAG_ZF)) == z.value()); \
         if (s.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_FLAGS) & (1 << X86_FLAG_SF)) == s.value()); \
         if (o.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_FLAGS) & (1 << X86_FLAG_OF)) == o.value()); \
+        for (auto& check : xmm_checks) { \
+            xmm_reg_t has = felix86_get_guest_xmm(recompiler, std::get<0>(check)); \
+            xmm_reg_t expected = std::get<1>(check); \
+            for (int i = 0; i < 8; i++) { \
+                REQUIRE(has.data[i] == expected.data[i]); \
+            } \
+        } \
     } \
     felix86_recompiler_t* recompiler; \
     std::vector<std::pair<x86_ref_e, u64>> checks; \
+    std::vector<std::pair<x86_ref_e, xmm_reg_t>> xmm_checks; \
     std::optional<bool> c,p,a,z,s,o; \
 }; \
 TEST_CASE(#name, "[felix86]") { \

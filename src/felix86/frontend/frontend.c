@@ -144,8 +144,10 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
 {
     u8* data = (u8*)state->current_address;
 
+    x86_instruction_t inst = {0};
     int index = 0;
     bool prefix = false;
+    instruction_metadata_t* primary_map = primary_table;
     x86_prefixes_t prefixes;
     prefixes.raw = 0;
     do {
@@ -158,8 +160,13 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
                 break;
             }
 
+            case 0x62: {
+                ERROR("EVEX prefix not supported\n");
+                break;
+            }
+
             case 0x64: {
-                ERROR("FS segment override not supported\n");
+                ERROR("FS segment override not supported");
                 prefixes.segment_override = SEGMENT_FS;
                 prefix = true;
                 index += 1;
@@ -167,7 +174,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
             }
 
             case 0x65: {
-                ERROR("GS segment override not supported\n");
+                ERROR("GS segment override not supported");
                 prefixes.segment_override = SEGMENT_GS;
                 prefix = true;
                 index += 1;
@@ -188,6 +195,73 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
                 break;
             }
 
+            case 0xC4: {
+                // Three-byte VEX prefix
+                u8 vex1 = data[index + 1];
+                u8 vex2 = data[index + 2];
+                prefixes.rex = true;
+                prefixes.rex_r = ~((vex1 >> 7) & 0x1);
+                prefixes.rex_x = ~((vex1 >> 6) & 0x1);
+                prefixes.rex_b = ~((vex1 >> 5) & 0x1);
+                prefixes.rex_w = (vex2 >> 7) & 0x1;
+                prefixes.vex_l = (vex2 >> 2) & 0x1;
+
+                u8 map_select = vex1 & 0x1F;
+                switch (map_select) {
+                    case 1: { // this means implicit 0F prefix
+                        primary_map = secondary_table;
+                        break;
+                    }
+                    case 2: { // this means implicit 0F 38 prefix
+                        ERROR("VEX map select 2 not supported");
+                        break;
+                    }
+                    case 3: { // this means implicit 0F 3A prefix
+                        ERROR("VEX map select 3 not supported");
+                        break;
+                    }
+                }
+
+                u8 operand_vex = ~((vex2 >> 3) & 0b1111);
+                inst.operand_vex.type = X86_OP_TYPE_REGISTER;
+                inst.operand_vex.reg.ref = X86_REF_XMM0 + operand_vex;
+                inst.operand_vex.reg.size = X86_REG_SIZE_VECTOR;
+
+                // specifies implicit mandatory prefix
+                u8 pp = vex2 & 0b11;
+                switch (pp) {
+                    case 0b01: prefixes.operand_override = 1; break;
+                    case 0b10: prefixes.rep_z_f3 = 1; break;
+                    case 0b11: prefixes.rep_nz_f2 = 1; break;
+                }
+
+                index += 3;
+                break;
+            }
+
+            case 0xC5: {
+                // Two-byte VEX prefix
+                u8 vex = data[index + 1];
+                prefixes.rex_r = ~((vex >> 7) & 0x1);
+                prefixes.vex_l = (vex >> 2) & 0x1;
+
+                u8 operand_vex = ~((vex >> 3) & 0b1111);
+                inst.operand_vex.type = X86_OP_TYPE_REGISTER;
+                inst.operand_vex.reg.ref = X86_REF_XMM0 + operand_vex;
+                inst.operand_vex.reg.size = X86_REG_SIZE_VECTOR;
+
+                // specifies implicit mandatory prefix
+                u8 pp = vex & 0b11;
+                switch (pp) {
+                    case 0b01: prefixes.operand_override = 1; break;
+                    case 0b10: prefixes.rep_z_f3 = 1; break;
+                    case 0b11: prefixes.rep_nz_f2 = 1; break;
+                }
+
+                index += 2;
+                break;
+            }
+
             case 0xF0: {
                 prefixes.lock = true;
                 prefix = true;
@@ -196,14 +270,14 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
             }
 
             case 0xF2: {
-                prefixes.rep = REP_NZ;
+                prefixes.rep_nz_f2 = 1;
                 prefix = true;
                 index += 1;
                 break;
             }
 
             case 0xF3: {
-                prefixes.rep = REP_Z;
+                prefixes.rep_z_f3 = 1;
                 prefix = true;
                 index += 1;
                 break;
@@ -216,18 +290,17 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         }
     } while (prefix);
 
-    if (prefixes.operand_override && prefixes.rex_w) {
-        ERROR("Both operand override and REX.W are set during address: 0x%016llx\n", (unsigned long long)state->current_address);
-    }
-
     u8 opcode = data[index++];
     instruction_metadata_t primary = primary_table[opcode];
 
-    x86_instruction_t inst = {0};
     inst.opcode = opcode;
     inst.prefixes = prefixes;
 
     if (opcode == 0x0F) {
+        if (primary_map != primary_table) {
+            ERROR("Secondary opcode while VEX changed the primary map");
+        }
+
         opcode = data[index++];
         inst.opcode = opcode;
         primary = secondary_table[opcode];
@@ -256,21 +329,21 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
 
     if (primary.decoding_flags & RM_MM_FLAG) {
         u8 reg = inst.operand_rm.reg.ref - X86_REF_RAX;
-        inst.operand_rm.reg.ref = X86_REF_MM0 + reg;
 
         if (prefixes.operand_override) {
-            size_rm = X86_REG_SIZE_XMM;
+            inst.operand_rm.reg.ref = X86_REF_XMM0 + reg;
+            size_rm = X86_REG_SIZE_VECTOR;
         } else {
-            size_rm = X86_REG_SIZE_QWORD;
+            ERROR("Operation using mm register");
         }
     } else if (primary.decoding_flags & REG_MM_FLAG) {
         u8 reg = inst.operand_reg.reg.ref - X86_REF_RAX;
-        inst.operand_reg.reg.ref = X86_REF_MM0 + reg;
 
         if (prefixes.operand_override) {
-            size_reg = X86_REG_SIZE_XMM;
+            inst.operand_reg.reg.ref = X86_REF_XMM0 + reg;
+            size_reg = X86_REG_SIZE_VECTOR;
         } else {
-            size_reg = X86_REG_SIZE_QWORD;
+            ERROR("Operation using mm register");
         }
     }
 

@@ -106,14 +106,14 @@ extern "C" void ir_copy_propagation_pass(ir_block_t* block) {
                     }
                     break;
                 }
-                case IR_TYPE_LEA: {
-                    if (copies.find(instruction->lea.base) != copies.end()) {
-                        instruction->lea.base = copies[instruction->lea.base];
-                        instruction->lea.base->uses++;
+                case IR_TYPE_TWO_OPERAND_IMMEDIATES: {
+                    if (copies.find(instruction->two_operand_immediates.source1) != copies.end()) {
+                        instruction->two_operand_immediates.source1 = copies[instruction->two_operand_immediates.source1];
+                        instruction->two_operand_immediates.source1->uses++;
                     }
-                    if (copies.find(instruction->lea.index) != copies.end()) {
-                        instruction->lea.index = copies[instruction->lea.index];
-                        instruction->lea.index->uses++;
+                    if (copies.find(instruction->two_operand_immediates.source2) != copies.end()) {
+                        instruction->two_operand_immediates.source2 = copies[instruction->two_operand_immediates.source2];
+                        instruction->two_operand_immediates.source2->uses++;
                     }
                     break;
                 }

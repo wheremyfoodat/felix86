@@ -332,7 +332,7 @@ IR_HANDLE(stosd) {
     ir_instruction_t* rdi_add = ir_emit_add(state, rdi, ir_emit_immediate(state, length));
     ir_emit_set_reg(state, &rdi_reg, rdi_add);
     
-    if (inst->prefixes.rep == REP_Z) {
+    if (inst->prefixes.rep_z_f3) {
         x86_operand_t rcx_reg;
         rcx_reg.type = X86_OP_TYPE_REGISTER;
         rcx_reg.reg.ref = X86_REF_RCX;
@@ -494,7 +494,9 @@ IR_HANDLE(syscall) { // syscall - 0x0f 0x05
 
 IR_HANDLE(movq_xmm_rm32) {
     ir_instruction_t* rm = ir_emit_get_rm(state, &inst->prefixes, &inst->operand_rm);
-    ir_emit_set_gpr64(state, inst->operand_reg.reg.ref, rm);
+    ir_instruction_t* reg = ir_emit_get_reg(state, &inst->operand_reg);
+    ir_instruction_t* vector = ir_emit_insert_integer_to_vector(state, reg, rm, inst->prefixes.rex ? X86_REG_SIZE_QWORD : X86_REG_SIZE_DWORD, 0);
+    ir_emit_set_guest(state, inst->operand_reg.reg.ref, vector);
 }
 
 IR_HANDLE(jo_rel32) { // jo rel32 - 0x0f 0x80

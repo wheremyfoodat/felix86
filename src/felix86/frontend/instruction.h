@@ -7,12 +7,6 @@ extern "C" {
 #include "felix86/common/utility.h"
 
 typedef enum : u8 {
-    REP_NONE = 0,
-    REP_Z = 1,
-    REP_NZ = 2,
-} rep_type_e;
-
-typedef enum : u8 {
     SEGMENT_NONE = 0,
     SEGMENT_FS = 1,
     SEGMENT_GS = 2,
@@ -66,30 +60,38 @@ typedef enum : u8 {
     X86_REF_MM5,
     X86_REF_MM6,
     X86_REF_MM7,
-    X86_REF_MM8,
-    X86_REF_MM9,
-    X86_REF_MM10,
-    X86_REF_MM11,
-    X86_REF_MM12,
-    X86_REF_MM13,
-    X86_REF_MM14,
-    X86_REF_MM15,
-    X86_REF_MM16,
-    X86_REF_MM17,
-    X86_REF_MM18,
-    X86_REF_MM19,
-    X86_REF_MM20,
-    X86_REF_MM21,
-    X86_REF_MM22,
-    X86_REF_MM23,
-    X86_REF_MM24,
-    X86_REF_MM25,
-    X86_REF_MM26,
-    X86_REF_MM27,
-    X86_REF_MM28,
-    X86_REF_MM29,
-    X86_REF_MM30,
-    X86_REF_MM31,
+    X86_REF_XMM0,
+    X86_REF_XMM1,
+    X86_REF_XMM2,
+    X86_REF_XMM3,
+    X86_REF_XMM4,
+    X86_REF_XMM5,
+    X86_REF_XMM6,
+    X86_REF_XMM7,
+    X86_REF_XMM8,
+    X86_REF_XMM9,
+    X86_REF_XMM10,
+    X86_REF_XMM11,
+    X86_REF_XMM12,
+    X86_REF_XMM13,
+    X86_REF_XMM14,
+    X86_REF_XMM15,
+    X86_REF_XMM16,
+    X86_REF_XMM17,
+    X86_REF_XMM18,
+    X86_REF_XMM19,
+    X86_REF_XMM20,
+    X86_REF_XMM21,
+    X86_REF_XMM22,
+    X86_REF_XMM23,
+    X86_REF_XMM24,
+    X86_REF_XMM25,
+    X86_REF_XMM26,
+    X86_REF_XMM27,
+    X86_REF_XMM28,
+    X86_REF_XMM29,
+    X86_REF_XMM30,
+    X86_REF_XMM31,
     X86_REF_RIP,
     X86_REF_FLAGS,
     X86_REF_GS,
@@ -120,9 +122,7 @@ typedef enum : u8 {
     X86_REG_SIZE_WORD,
     X86_REG_SIZE_DWORD,
     X86_REG_SIZE_QWORD,
-    X86_REG_SIZE_XMM,
-    X86_REG_SIZE_YMM,
-    X86_REG_SIZE_ZMM,
+    X86_REG_SIZE_VECTOR,
 } x86_register_size_e;
 
 typedef union {
@@ -131,15 +131,18 @@ typedef union {
         u16 rex_x : 1;
         u16 rex_r : 1;
         u16 rex_w : 1;
-        u16 rex : 1;
+        u16 rex : 1; // the presence of rex alone can indicate things for example
+                     // that high 8-bit registers (ah, bh, ch, dh) shouldn't be used
+                     // so we need a separate way to check if rex is present
         u16 address_override : 1;
         u16 operand_override : 1;
         u16 lock : 1;
         u16 prefix_count : 2;
-        u16 rep : 2;
+        u16 rep_nz_f2 : 1;
+        u16 rep_z_f3 : 1;
         u16 segment_override : 2;
         u16 byte_override : 1;
-        u16 : 1;
+        u16 vex_l : 1; // 0 for 128-bit, 1 for 256-bit
     };
 
     u16 raw;
@@ -173,6 +176,7 @@ typedef struct {
     x86_operand_t operand_rm;
     x86_operand_t operand_reg;
     x86_operand_t operand_imm;
+    x86_operand_t operand_vex;
     u8 opcode;
     u8 length;
 } x86_instruction_t;

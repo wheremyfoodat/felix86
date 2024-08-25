@@ -115,11 +115,11 @@ ir_instruction_t* ir_emit_lea(ir_emitter_state_t* state, x86_prefixes_t* prefixe
     ir_instruction_t* index = rm_operand->memory.index != X86_REF_COUNT ? get_guest(state, rm_operand->memory.index) : NULL;
     ir_instruction_t* address = ir_ilist_push_back(state->block->instructions);
     address->opcode = IR_LEA;
-    address->type = IR_TYPE_LEA;
-    address->lea.base = base;
-    address->lea.index = index;
-    address->lea.scale = scale;
-    address->lea.displacement = rm_operand->memory.displacement;
+    address->type = IR_TYPE_TWO_OPERAND_IMMEDIATES;
+    address->two_operand_immediates.source1 = base;
+    address->two_operand_immediates.source2 = index;
+    address->two_operand_immediates.imm32_1 = rm_operand->memory.displacement;
+    address->two_operand_immediates.imm32_2 = scale;
     if (base)
         base->uses++;
     if (index)
@@ -141,17 +141,17 @@ ir_instruction_t* ir_emit_popcount(ir_emitter_state_t* state, ir_instruction_t* 
 
 ir_instruction_t* ir_emit_sext8(ir_emitter_state_t* state, ir_instruction_t* source)
 {
-    return ir_emit_one_operand(state, IR_SEXT8, source);
+    return ir_emit_one_operand(state, IR_SEXT_GPR8, source);
 }
 
 ir_instruction_t* ir_emit_sext16(ir_emitter_state_t* state, ir_instruction_t* source)
 {
-    return ir_emit_one_operand(state, IR_SEXT16, source);
+    return ir_emit_one_operand(state, IR_SEXT_GPR16, source);
 }
 
 ir_instruction_t* ir_emit_sext32(ir_emitter_state_t* state, ir_instruction_t* source)
 {
-    return ir_emit_one_operand(state, IR_SEXT32, source);
+    return ir_emit_one_operand(state, IR_SEXT_GPR32, source);
 }
 
 ir_instruction_t* ir_emit_syscall(ir_emitter_state_t* state)
@@ -173,6 +173,32 @@ ir_instruction_t* ir_emit_ternary(ir_emitter_state_t* state, ir_instruction_t* c
     condition->uses++;
     true_value->uses++;
     false_value->uses++;
+    return instruction;
+}
+
+ir_instruction_t* ir_emit_insert_integer_to_vector(ir_emitter_state_t* state, ir_instruction_t* vector_dest, ir_instruction_t* source, u8 size, u8 index)
+{
+    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    instruction->opcode = IR_INSERT_INTEGER_TO_VECTOR;
+    instruction->type = IR_TYPE_TWO_OPERAND_IMMEDIATES;
+    instruction->two_operand_immediates.source1 = vector_dest;
+    instruction->two_operand_immediates.source2 = source;
+    instruction->two_operand_immediates.imm32_1 = index;
+    instruction->two_operand_immediates.imm32_2 = size;
+    vector_dest->uses++;
+    source->uses++;
+    return instruction;
+}
+
+ir_instruction_t* ir_emit_extract_integer_from_vector(ir_emitter_state_t* state, ir_instruction_t* vector_src, u8 size, u8 index)
+{
+    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    instruction->opcode = IR_EXTRACT_INTEGER_FROM_VECTOR;
+    instruction->type = IR_TYPE_TWO_OPERAND_IMMEDIATES;
+    instruction->two_operand_immediates.source1 = vector_src;
+    instruction->two_operand_immediates.imm32_1 = index;
+    instruction->two_operand_immediates.imm32_2 = size;
+    vector_src->uses++;
     return instruction;
 }
 
@@ -303,6 +329,7 @@ ir_instruction_t* ir_emit_get_reg(ir_emitter_state_t* state, x86_operand_t* reg_
         case X86_REG_SIZE_WORD: return ir_emit_get_gpr16(state, reg_operand->reg.ref);
         case X86_REG_SIZE_DWORD: return ir_emit_get_gpr32(state, reg_operand->reg.ref);
         case X86_REG_SIZE_QWORD: return ir_emit_get_gpr64(state, reg_operand->reg.ref);
+        case X86_REG_SIZE_VECTOR: return ir_emit_get_vector(state, reg_operand->reg.ref);
         default: ERROR("Invalid register size"); return NULL;
     }
 }
@@ -367,6 +394,10 @@ ir_instruction_t* ir_emit_read_memory(ir_emitter_state_t* state, x86_prefixes_t*
 
 ir_instruction_t* ir_emit_get_gpr8_low(ir_emitter_state_t* state, x86_ref_e reg)
 {
+    if (reg < X86_REF_RAX || reg > X86_REF_R15) {
+        ERROR("Invalid register reference");
+    }
+
     ir_instruction_t* full_reg = ir_emit_get_guest(state, reg);
     ir_instruction_t* mask = ir_emit_immediate(state, 0xFF);
     ir_instruction_t* instruction = ir_emit_and(state, full_reg, mask);
@@ -376,6 +407,10 @@ ir_instruction_t* ir_emit_get_gpr8_low(ir_emitter_state_t* state, x86_ref_e reg)
 
 ir_instruction_t* ir_emit_get_gpr8_high(ir_emitter_state_t* state, x86_ref_e reg)
 {
+    if (reg < X86_REF_RAX || reg > X86_REF_R15) {
+        ERROR("Invalid register reference");
+    }
+
     ir_instruction_t* full_reg = ir_emit_get_guest(state, reg);
     ir_instruction_t* shift = ir_emit_immediate(state, 8);
     ir_instruction_t* shifted = ir_emit_right_shift(state, full_reg, shift);
@@ -387,6 +422,10 @@ ir_instruction_t* ir_emit_get_gpr8_high(ir_emitter_state_t* state, x86_ref_e reg
 
 ir_instruction_t* ir_emit_get_gpr16(ir_emitter_state_t* state, x86_ref_e reg)
 {
+    if (reg < X86_REF_RAX || reg > X86_REF_R15) {
+        ERROR("Invalid register reference");
+    }
+
     ir_instruction_t* full_reg = ir_emit_get_guest(state, reg);
     ir_instruction_t* mask = ir_emit_immediate(state, 0xFFFF);
     ir_instruction_t* instruction = ir_emit_and(state, full_reg, mask);
@@ -396,6 +435,10 @@ ir_instruction_t* ir_emit_get_gpr16(ir_emitter_state_t* state, x86_ref_e reg)
 
 ir_instruction_t* ir_emit_get_gpr32(ir_emitter_state_t* state, x86_ref_e reg)
 {
+    if (reg < X86_REF_RAX || reg > X86_REF_R15) {
+        ERROR("Invalid register reference");
+    }
+
     ir_instruction_t* full_reg = ir_emit_get_guest(state, reg);
     ir_instruction_t* mask = ir_emit_immediate(state, 0xFFFFFFFF);
     ir_instruction_t* instruction = ir_emit_and(state, full_reg, mask);
@@ -405,8 +448,21 @@ ir_instruction_t* ir_emit_get_gpr32(ir_emitter_state_t* state, x86_ref_e reg)
 
 ir_instruction_t* ir_emit_get_gpr64(ir_emitter_state_t* state, x86_ref_e reg)
 {
-    ir_instruction_t* instruction = ir_emit_get_guest(state, reg);
+    if (reg < X86_REF_RAX || reg > X86_REF_R15) {
+        ERROR("Invalid register reference");
+    }
 
+    ir_instruction_t* instruction = ir_emit_get_guest(state, reg);
+    return instruction;
+}
+
+ir_instruction_t* ir_emit_get_vector(ir_emitter_state_t* state, x86_ref_e reg)
+{
+    if (reg < X86_REF_XMM0 || reg > X86_REF_XMM31) {
+        ERROR("Invalid register reference");
+    }
+
+    ir_instruction_t* instruction = ir_emit_get_guest(state, reg);
     return instruction;
 }
 
@@ -609,6 +665,16 @@ ir_instruction_t* ir_emit_get_aux_sub(ir_emitter_state_t* state, ir_instruction_
     ir_instruction_t* and2 = ir_emit_and(state, source2, mask);
 
     return ir_emit_less_than_unsigned(state, and1, and2);
+}
+
+ir_instruction_t* ir_emit_vector_mask_elements(ir_emitter_state_t* state, ir_instruction_t* vector, u32 mask)
+{
+    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    instruction->opcode = IR_VECTOR_MASK_ELEMENTS;
+    instruction->type = IR_TYPE_TWO_OPERAND_IMMEDIATES;
+    instruction->two_operand_immediates.source1 = vector;
+    instruction->two_operand_immediates.imm32_1 = mask;
+    return instruction;
 }
 
 ir_instruction_t* ir_emit_set_cpazso(ir_emitter_state_t* state, ir_instruction_t* c, ir_instruction_t* p, ir_instruction_t* a, ir_instruction_t* z, ir_instruction_t* s, ir_instruction_t* o)

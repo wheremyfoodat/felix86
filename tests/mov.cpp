@@ -138,3 +138,15 @@ FELIX86_TEST(movzx_r16) {
 
     verify(X86_REF_RAX, 0x5678);
 }
+
+FELIX86_TEST(movq) {
+    // uint64_t stuff[2] = {0x123456789ABCDEF0, 0x1337C0DEDEADBEEF};
+    // mov(rax, (u64)&stuff[0]);
+    // movaps(xmm0, xword[rax]);
+    // mov(rax, 0xBEEFDEADDEADC0DE);
+    // movq(xmm0, rax);
+
+    // xmm_reg_t xmm = { 0 };
+    // xmm.data[0] = 0xBEEFDEADDEADC0DE;
+    // verify_xmm(X86_REF_XMM0, xmm);
+}

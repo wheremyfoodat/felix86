@@ -148,6 +148,22 @@ void felix86_set_guest(felix86_recompiler_t* recompiler, x86_ref_e ref, u64 valu
     }
 }
 
+xmm_reg_t felix86_get_guest_xmm(felix86_recompiler_t* recompiler, x86_ref_e ref) {
+    if (ref < X86_REF_XMM0 || ref > X86_REF_XMM31) {
+        ERROR("Invalid XMM reference");
+    }
+
+    return recompiler->state.xmm[ref - X86_REF_XMM0];
+}
+
+void felix86_set_guest_xmm(felix86_recompiler_t* recompiler, x86_ref_e ref, xmm_reg_t value) {
+    if (ref < X86_REF_XMM0 || ref > X86_REF_XMM31) {
+        ERROR("Invalid XMM reference");
+    }
+
+    recompiler->state.xmm[ref - X86_REF_XMM0] = value;
+}
+
 felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler, u64 cycles) {
     // TODO: check for backend block? needs asm dispatcher
     while (true) {

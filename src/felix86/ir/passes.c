@@ -93,13 +93,13 @@ void ir_dead_code_elimination_pass(ir_block_t* block) {
                 }
                 break;
             }
-            case IR_TYPE_LEA: {
+            case IR_TYPE_TWO_OPERAND_IMMEDIATES: {
                 if (instruction->uses == 0) {
-                    if (instruction->lea.base) {
-                        instruction->lea.base->uses--;
+                    if (instruction->two_operand_immediates.source1) {
+                        instruction->two_operand_immediates.source1->uses--;
                     }
-                    if (instruction->lea.index) {
-                        instruction->lea.index->uses--;
+                    if (instruction->two_operand_immediates.source2) {
+                        instruction->two_operand_immediates.source2->uses--;
                     }
                     ir_ilist_remove(last);
                     ir_ilist_free(last);

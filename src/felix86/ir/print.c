@@ -118,38 +118,38 @@ void ir_print_instruction(ir_instruction_t* instruction) {
             printf("t%d = t%d", instruction->name, instruction->one_operand.source->name);
             break;
         }
-        case IR_SEXT8: {
+        case IR_SEXT_GPR8: {
             print_one_op(instruction, "sext8");
             break;
         }
-        case IR_SEXT16: {
+        case IR_SEXT_GPR16: {
             print_one_op(instruction, "sext16");
             break;
         }
-        case IR_SEXT32: {
+        case IR_SEXT_GPR32: {
             print_one_op(instruction, "sext32");
             break;
         }
         case IR_LEA: {
             printf("t%d = [", instruction->name);
-            if (instruction->lea.base) {
-                printf("t%d", instruction->lea.base->name);
+            if (instruction->two_operand_immediates.source1) {
+                printf("t%d", instruction->two_operand_immediates.source1->name);
 
-                if (instruction->lea.index || instruction->lea.displacement != 0) {
+                if (instruction->two_operand_immediates.source2 || instruction->two_operand_immediates.imm32_1 != 0) {
                     printf(" + ");
                 }
             }
 
-            if (instruction->lea.index) {
-                printf("t%d * %d", instruction->lea.index->name, instruction->lea.scale);
+            if (instruction->two_operand_immediates.source2) {
+                printf("t%d * %d", instruction->two_operand_immediates.source2->name, instruction->two_operand_immediates.imm32_2);
 
-                if (instruction->lea.displacement != 0) {
+                if (instruction->two_operand_immediates.imm32_1 != 0) {
                     printf(" + ");
                 }
             }
 
-            if (instruction->lea.displacement != 0) {
-                printf("%lld", (long long)(i64)(i32)instruction->lea.displacement);
+            if (instruction->two_operand_immediates.imm32_1 != 0) {
+                printf("%lld", (long long)(i64)(i32)instruction->two_operand_immediates.imm32_1);
             }
             
             printf("]");
