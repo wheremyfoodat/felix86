@@ -94,6 +94,8 @@ ir_instruction_t* ir_emit_get_carry_sbb(ir_emitter_state_t* state, x86_prefixes_
 ir_instruction_t* ir_emit_get_aux_add(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_get_aux_sub(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 
+// masks 16 bit elements in a up to 512-bit vector register
+// the mask has 32 bits, one for each 16-bit element
 ir_instruction_t* ir_emit_vector_mask_elements(ir_emitter_state_t* state, ir_instruction_t* vector, u32 mask);
 
 ir_instruction_t* ir_emit_set_cpazso(ir_emitter_state_t* state, ir_instruction_t* c, ir_instruction_t* p, ir_instruction_t* a, ir_instruction_t* z, ir_instruction_t* s, ir_instruction_t* o);

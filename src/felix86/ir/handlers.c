@@ -495,7 +495,7 @@ IR_HANDLE(syscall) { // syscall - 0x0f 0x05
 IR_HANDLE(movq_xmm_rm32) {
     ir_instruction_t* rm = ir_emit_get_rm(state, &inst->prefixes, &inst->operand_rm);
     ir_instruction_t* reg = ir_emit_get_reg(state, &inst->operand_reg);
-    ir_instruction_t* vector = ir_emit_insert_integer_to_vector(state, reg, rm, inst->prefixes.rex ? X86_REG_SIZE_QWORD : X86_REG_SIZE_DWORD, 0);
+    ir_instruction_t* vector = ir_emit_insert_integer_to_vector(state, reg, rm, inst->prefixes.rex_w ? X86_REG_SIZE_QWORD : X86_REG_SIZE_DWORD, 0);
     ir_emit_set_guest(state, inst->operand_reg.reg.ref, vector);
 }
 

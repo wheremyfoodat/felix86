@@ -66,9 +66,9 @@ instruction_metadata_t secondary_table[] = {
 #undef X
 };
 
-u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, x86_prefixes_t prefixes, modrm_t modrm, sib_t sib) {
+u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, bool rex_b, bool rex_x, bool rex_r, modrm_t modrm, sib_t sib) {
     operand_reg->type = X86_OP_TYPE_REGISTER;
-    operand_reg->reg.ref = X86_REF_RAX + (modrm.reg | (prefixes.rex_r << 3));
+    operand_reg->reg.ref = X86_REF_RAX + (modrm.reg | (rex_r << 3));
 
     if (modrm.mod != 0b11) {
         operand_rm->type = X86_OP_TYPE_MEMORY;
@@ -80,14 +80,14 @@ u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, x86_prefi
     switch (modrm.mod) {
         case 0b00: {
             if (modrm.rm == 0b100) {
-                u8 xindex = sib.index | (prefixes.rex_x << 3);
+                u8 xindex = sib.index | (rex_x << 3);
                 if (xindex != 0b100) {
                     operand_rm->memory.index = X86_REF_RAX + xindex;
                     operand_rm->memory.scale = 1 << sib.scale;
                 }
 
                 if (sib.base != 0b101) {
-                    operand_rm->memory.base = X86_REF_RAX + (sib.base | (prefixes.rex_b << 3));
+                    operand_rm->memory.base = X86_REF_RAX + (sib.base | (rex_b << 3));
                 } else {
                     return 4;
                 }
@@ -97,42 +97,42 @@ u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, x86_prefi
                 operand_rm->memory.base = X86_REF_RIP;
                 return 4;
             } else {
-                operand_rm->memory.base = X86_REF_RAX + modrm.rm | (prefixes.rex_b << 3);
+                operand_rm->memory.base = X86_REF_RAX + modrm.rm | (rex_b << 3);
                 return 0;
             }
         }
 
         case 0b01: {
             if (modrm.rm == 0b100) {
-                operand_rm->memory.base = X86_REF_RAX + (sib.base | (prefixes.rex_b << 3));
-                u8 xindex = sib.index | (prefixes.rex_x << 3);
+                operand_rm->memory.base = X86_REF_RAX + (sib.base | (rex_b << 3));
+                u8 xindex = sib.index | (rex_x << 3);
                 if (xindex != 0b100) {
                     operand_rm->memory.index = X86_REF_RAX + xindex;
                     operand_rm->memory.scale = 1 << sib.scale;
                 }
             } else {
-                operand_rm->memory.base = X86_REF_RAX + modrm.rm | (prefixes.rex_b << 3);
+                operand_rm->memory.base = X86_REF_RAX + modrm.rm | (rex_b << 3);
             }
             return 1;
         }
 
         case 0b10: {
             if (modrm.rm == 0b100) {
-                operand_rm->memory.base = X86_REF_RAX + (sib.base | (prefixes.rex_b << 3));
-                u8 xindex = sib.index | (prefixes.rex_x << 3);
+                operand_rm->memory.base = X86_REF_RAX + (sib.base | (rex_b << 3));
+                u8 xindex = sib.index | (rex_x << 3);
                 if (xindex != 0b100) {
                     operand_rm->memory.index = X86_REF_RAX + xindex;
                     operand_rm->memory.scale = 1 << sib.scale;
                 }
             } else {
-                operand_rm->memory.base = X86_REF_RAX + modrm.rm | (prefixes.rex_b << 3);
+                operand_rm->memory.base = X86_REF_RAX + modrm.rm | (rex_b << 3);
             }
             return 4;
         }
 
         case 0b11: {
             operand_rm->type = X86_OP_TYPE_REGISTER;
-            operand_rm->reg.ref = X86_REF_RAX + (modrm.rm | (prefixes.rex_b << 3));
+            operand_rm->reg.ref = X86_REF_RAX + (modrm.rm | (rex_b << 3));
             return 0;
         }
     }
@@ -147,14 +147,23 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     x86_instruction_t inst = {0};
     int index = 0;
     bool prefix = false;
+    bool rex = false;
+    bool rex_b = false;
+    bool rex_x = false;
+    bool rex_r = false;
     instruction_metadata_t* primary_map = primary_table;
     x86_prefixes_t prefixes;
     prefixes.raw = 0;
+    printf("now parsing: %x\n", data[index]);
     do {
         switch (data[index]) {
             case 0x40 ... 0x4F: {
-                prefixes.rex = true;
-                prefixes.raw |= data[index] & 0x0F;
+                rex = true;
+                u8 opcode = data[index];
+                rex_b = opcode & 0x1;
+                rex_x = (opcode >> 1) & 0x1;
+                rex_r = (opcode >> 2) & 0x1;
+                prefixes.rex_w = (opcode >> 3) & 0x1;
                 prefix = true;
                 index += 1;
                 break;
@@ -199,10 +208,10 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
                 // Three-byte VEX prefix
                 u8 vex1 = data[index + 1];
                 u8 vex2 = data[index + 2];
-                prefixes.rex = true;
-                prefixes.rex_r = ~((vex1 >> 7) & 0x1);
-                prefixes.rex_x = ~((vex1 >> 6) & 0x1);
-                prefixes.rex_b = ~((vex1 >> 5) & 0x1);
+                prefixes.vex = true;
+                rex_r = ~((vex1 >> 7) & 0x1);
+                rex_x = ~((vex1 >> 6) & 0x1);
+                rex_b = ~((vex1 >> 5) & 0x1);
                 prefixes.rex_w = (vex2 >> 7) & 0x1;
                 prefixes.vex_l = (vex2 >> 2) & 0x1;
 
@@ -242,7 +251,8 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
             case 0xC5: {
                 // Two-byte VEX prefix
                 u8 vex = data[index + 1];
-                prefixes.rex_r = ~((vex >> 7) & 0x1);
+                prefixes.vex = true;
+                rex_r = ~((vex >> 7) & 0x1);
                 prefixes.vex_l = (vex >> 2) & 0x1;
 
                 u8 operand_vex = ~((vex >> 3) & 0b1111);
@@ -356,7 +366,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
             sib.raw = data[index++];
         }
 
-        u8 displacement_size = decode_modrm(&inst.operand_rm, &inst.operand_reg, prefixes, modrm, sib);
+        u8 displacement_size = decode_modrm(&inst.operand_rm, &inst.operand_reg, rex_b, rex_x, rex_r, modrm, sib);
         switch (displacement_size) {
             case 1: {
                 inst.operand_rm.memory.displacement = (i32)(i8)data[index];
@@ -372,7 +382,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         }
     } else if (primary.decoding_flags & OPCODE_FLAG) {
         inst.operand_reg.type = X86_OP_TYPE_REGISTER;
-        inst.operand_reg.reg.ref = (X86_REF_RAX + (opcode & 0x07)) | (prefixes.rex_b << 3);
+        inst.operand_reg.reg.ref = (X86_REF_RAX + (opcode & 0x07)) | (rex_b << 3);
     } else if (primary.decoding_flags & EAX_OVERRIDE_FLAG) {
         inst.operand_rm.type = X86_OP_TYPE_REGISTER;
         inst.operand_rm.reg.ref = X86_REF_RAX;
@@ -438,7 +448,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     if (inst.operand_reg.type == X86_OP_TYPE_REGISTER) {
         inst.operand_reg.reg.size = size_reg;
 
-        if (!prefixes.rex && inst.operand_reg.reg.size == X86_REG_SIZE_BYTE_LOW) {
+        if (!rex && inst.operand_reg.reg.size == X86_REG_SIZE_BYTE_LOW) {
             int reg_index = (inst.operand_reg.reg.ref - X86_REF_RAX) & 0x7;
             bool high = reg_index >= 4;
             inst.operand_reg.reg.ref = X86_REF_RAX + (reg_index & 0x3);
@@ -449,7 +459,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     if (inst.operand_rm.type == X86_OP_TYPE_REGISTER) {
         inst.operand_rm.reg.size = size_rm;
 
-        if (!prefixes.rex && inst.operand_rm.reg.size == X86_REG_SIZE_BYTE_LOW) {
+        if (!rex && inst.operand_rm.reg.size == X86_REG_SIZE_BYTE_LOW) {
             int reg_index = (inst.operand_rm.reg.ref - X86_REF_RAX) & 0x7;
             bool high = reg_index >= 4;
             inst.operand_rm.reg.ref = X86_REF_RAX + (reg_index & 0x3);
