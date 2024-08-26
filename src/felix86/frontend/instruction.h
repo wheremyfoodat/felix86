@@ -36,6 +36,17 @@ typedef enum : u8 {
 } x86_group2_e;
 
 typedef enum : u8 {
+	X86_GROUP3_TEST = 0,
+	X86_GROUP3_TEST_ = 1,
+	X86_GROUP3_NOT = 2,
+	X86_GROUP3_NEG = 3,
+	X86_GROUP3_MUL = 4,
+	X86_GROUP3_IMUL = 5,
+	X86_GROUP3_DIV = 6,
+	X86_GROUP3_IDIV = 7,
+} x86_group3_e;
+
+typedef enum : u8 {
 	X86_REF_RAX,
 	X86_REF_RCX,
 	X86_REF_RDX,

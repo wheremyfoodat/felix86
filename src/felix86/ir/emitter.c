@@ -26,6 +26,21 @@ ir_instruction_t* ir_emit_one_operand(ir_emitter_state_t* state, ir_opcode_e opc
     return instruction;
 }
 
+ir_instruction_t* ir_emit_two_operand_immediates(ir_emitter_state_t* state, ir_opcode_e opcode, ir_instruction_t* source1, ir_instruction_t* source2, u32 imm32_1, u32 imm32_2) {
+    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    instruction->opcode = opcode;
+    instruction->type = IR_TYPE_TWO_OPERAND_IMMEDIATES;
+    instruction->two_operand_immediates.source1 = source1;
+    instruction->two_operand_immediates.source2 = source2;
+    instruction->two_operand_immediates.imm32_1 = imm32_1;
+    instruction->two_operand_immediates.imm32_2 = imm32_2;
+    if (source1)
+        source1->uses++;
+    if (source2)
+        source2->uses++;
+    return instruction;
+}
+
 ir_instruction_t* ir_emit_add(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2)
 {
     return ir_emit_two_operand(state, IR_ADD, source1, source2);
@@ -51,6 +66,38 @@ ir_instruction_t* ir_emit_right_shift_arithmetic(ir_emitter_state_t* state, ir_i
     return ir_emit_two_operand(state, IR_RIGHT_SHIFT_ARITHMETIC, source1, source2);
 }
 
+ir_instruction_t* ir_emit_left_rotate(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    u8 size;
+    if (prefixes->byte_override) {
+        size = 8;
+    } else if (prefixes->rex_w) {
+        size = 64;
+    } else if (prefixes->operand_override) {
+        size = 16;
+    } else {
+        size = 32;
+    }
+
+    return ir_emit_two_operand_immediates(state, IR_LEFT_ROTATE, source1, source2, size, 0);
+}
+
+ir_instruction_t* ir_emit_right_rotate(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    u8 size;
+    if (prefixes->byte_override) {
+        size = 8;
+    } else if (prefixes->rex_w) {
+        size = 64;
+    } else if (prefixes->operand_override) {
+        size = 16;
+    } else {
+        size = 32;
+    }
+
+    return ir_emit_two_operand_immediates(state, IR_RIGHT_ROTATE, source1, source2, size, 0);
+}
+
 ir_instruction_t* ir_emit_and(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2)
 {
     return ir_emit_two_operand(state, IR_AND, source1, source2);
@@ -64,6 +111,11 @@ ir_instruction_t* ir_emit_or(ir_emitter_state_t* state, ir_instruction_t* source
 ir_instruction_t* ir_emit_xor(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2)
 {
     return ir_emit_two_operand(state, IR_XOR, source1, source2);
+}
+
+ir_instruction_t* ir_emit_not(ir_emitter_state_t* state, ir_instruction_t* source)
+{
+    return ir_emit_one_operand(state, IR_NOT, source);
 }
 
 ir_instruction_t* ir_emit_equal(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2)
@@ -113,13 +165,7 @@ ir_instruction_t* ir_emit_lea(ir_emitter_state_t* state, x86_prefixes_t* prefixe
     }
 
     ir_instruction_t* index = rm_operand->memory.index != X86_REF_COUNT ? get_guest(state, rm_operand->memory.index) : NULL;
-    ir_instruction_t* address = ir_ilist_push_back(state->block->instructions);
-    address->opcode = IR_LEA;
-    address->type = IR_TYPE_TWO_OPERAND_IMMEDIATES;
-    address->two_operand_immediates.source1 = base;
-    address->two_operand_immediates.source2 = index;
-    address->two_operand_immediates.imm32_1 = rm_operand->memory.displacement;
-    address->two_operand_immediates.imm32_2 = scale;
+    ir_instruction_t* address = ir_emit_two_operand_immediates(state, IR_LEA, base, index, rm_operand->memory.displacement, scale);
     if (base)
         base->uses++;
     if (index)
@@ -551,6 +597,19 @@ ir_instruction_t* ir_emit_get_zero(ir_emitter_state_t* state, ir_instruction_t* 
     return instruction;
 }
 
+ir_instruction_t* ir_emit_get_size(ir_emitter_state_t* state, x86_prefixes_t* prefixes)
+{
+    if (prefixes->byte_override) {
+        return ir_emit_immediate(state, 8);
+    } else if (prefixes->rex_w) {
+        return ir_emit_immediate(state, 64);
+    } else if (prefixes->operand_override) {
+        return ir_emit_immediate(state, 16);
+    } else {
+        return ir_emit_immediate(state, 32);
+    }
+}
+
 ir_instruction_t* ir_emit_get_sign_mask(ir_emitter_state_t* state, x86_prefixes_t* prefixes)
 {
     if (prefixes->byte_override) {
@@ -561,6 +620,24 @@ ir_instruction_t* ir_emit_get_sign_mask(ir_emitter_state_t* state, x86_prefixes_
         return ir_emit_immediate(state, 1ull << 15);
     } else {
         return ir_emit_immediate(state, 1ull << 31);
+    }
+}
+
+ir_instruction_t* ir_emit_get_shift_mask_left(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source)
+{
+    ir_instruction_t* one = ir_emit_immediate(state, 1);
+    if (prefixes->byte_override) {
+        ir_instruction_t* size = ir_emit_immediate(state, 8);
+        return ir_emit_left_shift(state, one, ir_emit_sub(state, size, source));
+    } else if (prefixes->rex_w) {
+        ir_instruction_t* size = ir_emit_immediate(state, 64);
+        return ir_emit_left_shift(state, one, ir_emit_sub(state, size, source));
+    } else if (prefixes->operand_override) {
+        ir_instruction_t* size = ir_emit_immediate(state, 16);
+        return ir_emit_left_shift(state, one, ir_emit_sub(state, size, source));
+    } else {
+        ir_instruction_t* size = ir_emit_immediate(state, 32);
+        return ir_emit_left_shift(state, one, ir_emit_sub(state, size, source));
     }
 }
 
@@ -789,15 +866,185 @@ void ir_emit_group1_imm(ir_emitter_state_t* state, x86_instruction_t* inst) {
     }
 }
 
-void ir_emit_jcc(ir_emitter_state_t* state, u8 inst_length, ir_instruction_t* imm, ir_instruction_t* condition) {
+void ir_emit_group2_imm(ir_emitter_state_t* state, x86_instruction_t* inst) {
+    x86_group2_e opcode = inst->operand_reg.reg.ref - X86_REF_RAX;
+
+    u8 shift_mask = inst->prefixes.rex_w ? 0x3F : 0x1F;
+    u8 shift_amount = inst->operand_imm.immediate.data & shift_mask;
+    u8 size;
+    ir_instruction_t* rm = ir_emit_get_rm(state, &inst->prefixes, &inst->operand_rm);
+    ir_instruction_t* shift_imm = ir_emit_immediate(state, shift_amount);
+    ir_instruction_t* result = NULL;
+    ir_instruction_t* c = NULL;
+    ir_instruction_t* p = NULL;
+    ir_instruction_t* a = NULL;
+    ir_instruction_t* z = NULL;
+    ir_instruction_t* s = NULL;
+    ir_instruction_t* o = NULL;
+
+    bool update_pzs = false;
+
+    switch (opcode) {
+        case X86_GROUP2_ROL: {
+            ir_instruction_t* size = ir_emit_get_size(state, &inst->prefixes);
+            ir_instruction_t* shift_mask = ir_emit_sub(state, size, ir_emit_immediate(state, 1));
+            ir_instruction_t* shift_masked = ir_emit_and(state, shift_imm, shift_mask);
+            result = ir_emit_left_rotate(state, &inst->prefixes, rm, shift_masked);
+            c = ir_emit_and(state, result, ir_emit_immediate(state, 1));
+
+            if (shift_amount == 1) {
+                ir_instruction_t* msb = ir_emit_get_sign(state, &inst->prefixes, result);
+                o = ir_emit_xor(state, c, msb);
+            }
+            break;
+        }
+        case X86_GROUP2_ROR: {
+            ERROR("Unimplemented");
+            break;
+        }
+        case X86_GROUP2_RCL: {
+            ERROR("Why? :(");
+            break;
+        }
+        case X86_GROUP2_RCR: {
+            ERROR("Why? :(");
+            break;
+        }
+        case X86_GROUP2_SAL:
+        case X86_GROUP2_SHL: {
+            ir_instruction_t* msb_mask = ir_emit_get_shift_mask_left(state, &inst->prefixes, shift_imm);
+            result = ir_emit_left_shift(state, rm, shift_imm);
+            c = ir_emit_equal(state, ir_emit_and(state, rm, msb_mask), msb_mask);
+            ir_instruction_t* sign = ir_emit_get_sign(state, &inst->prefixes, result);
+            o = ir_emit_xor(state, c, sign);
+
+            if (shift_amount != 0) {
+                update_pzs = true;
+            }
+            break;
+        }
+        case X86_GROUP2_SHR: {
+            break;
+        }
+        case X86_GROUP2_SAR: {
+            break;
+        }
+    }
+
+    if (update_pzs) {
+        p = ir_emit_get_parity(state, result);
+        z = ir_emit_get_zero(state, result);
+        s = ir_emit_get_sign(state, &inst->prefixes, result);
+    }
+
+    ir_emit_set_cpazso(state, c, p, a, z, s, o);
+
+    ir_emit_set_rm(state, &inst->prefixes, &inst->operand_rm, result);
+}
+
+void ir_emit_group3_imm(ir_emitter_state_t* state, x86_instruction_t* inst) {
+    x86_group3_e opcode = inst->operand_reg.reg.ref - X86_REF_RAX;
+
+    ir_instruction_t* rm = ir_emit_get_rm(state, &inst->prefixes, &inst->operand_rm);
+    ir_instruction_t* result = NULL;
+    ir_instruction_t* c = NULL;
+    ir_instruction_t* p = NULL;
+    ir_instruction_t* a = NULL;
+    ir_instruction_t* z = NULL;
+    ir_instruction_t* s = NULL;
+    ir_instruction_t* o = NULL;
+
+    switch (opcode) {
+        case X86_GROUP3_TEST:
+        case X86_GROUP3_TEST_: {
+            ir_instruction_t* imm;
+            if (inst->prefixes.rex_w) {
+                imm = ir_emit_immediate_sext(state, &inst->operand_imm);
+            } else {
+                imm = ir_emit_immediate(state, inst->operand_imm.immediate.data);
+            }
+
+            result = ir_emit_and(state, rm, imm);
+            s = ir_emit_get_sign(state, &inst->prefixes, result);
+            z = ir_emit_get_zero(state, result);
+            p = ir_emit_get_parity(state, result);
+            break;
+        }
+        case X86_GROUP3_NOT: {
+            result = ir_emit_not(state, rm);
+            break;
+        }
+        case X86_GROUP3_NEG: {
+            ERROR("Unimplemented");
+            break;
+        }
+        case X86_GROUP3_MUL: {
+            ERROR("Unimplemented");
+            break;
+        }
+        case X86_GROUP3_IMUL: {
+            ERROR("Unimplemented");
+            break;
+        }
+        case X86_GROUP3_DIV: {
+            ERROR("Unimplemented");
+            break;
+        }
+        case X86_GROUP3_IDIV: {
+            ERROR("Unimplemented");
+            break;
+        }
+    }
+
+    ir_emit_set_cpazso(state, c, p, a, z, s, o);
+
+    if (opcode != X86_GROUP3_TEST && opcode != X86_GROUP3_TEST_) {
+        ir_emit_set_rm(state, &inst->prefixes, &inst->operand_rm, result);
+    }
+}
+
+ir_instruction_t* ir_emit_get_cc(ir_emitter_state_t* state, u8 opcode) {
+    switch (opcode & 0xF) {
+        case 0: return ir_emit_get_flag(state, X86_FLAG_OF);
+        case 1: return ir_emit_get_flag_not(state, X86_FLAG_OF);
+        case 2: return ir_emit_get_flag(state, X86_FLAG_CF);
+        case 3: return ir_emit_get_flag_not(state, X86_FLAG_CF);
+        case 4: return ir_emit_get_flag(state, X86_FLAG_ZF);
+        case 5: return ir_emit_get_flag_not(state, X86_FLAG_ZF);
+        case 6: return ir_emit_or(state, ir_emit_get_flag(state, X86_FLAG_CF), ir_emit_get_flag(state, X86_FLAG_ZF));
+        case 7: return ir_emit_and(state, ir_emit_get_flag_not(state, X86_FLAG_CF), ir_emit_get_flag_not(state, X86_FLAG_ZF));
+        case 8: return ir_emit_get_flag(state, X86_FLAG_SF);
+        case 9: return ir_emit_get_flag_not(state, X86_FLAG_SF);
+        case 10: return ir_emit_get_flag(state, X86_FLAG_PF);
+        case 11: return ir_emit_get_flag_not(state, X86_FLAG_PF);
+        case 12: return ir_emit_not_equal(state, ir_emit_get_flag(state, X86_FLAG_SF), ir_emit_get_flag(state, X86_FLAG_OF));
+        case 13: return ir_emit_equal(state, ir_emit_get_flag(state, X86_FLAG_SF), ir_emit_get_flag(state, X86_FLAG_OF));
+        case 14: return ir_emit_or(state, ir_emit_equal(state, ir_emit_get_flag(state, X86_FLAG_ZF), ir_emit_immediate(state, 1)), ir_emit_not_equal(state, ir_emit_get_flag(state, X86_FLAG_SF), ir_emit_get_flag(state, X86_FLAG_OF)));
+        case 15: return ir_emit_and(state, ir_emit_equal(state, ir_emit_get_flag(state, X86_FLAG_ZF), ir_emit_immediate(state, 0)), ir_emit_equal(state, ir_emit_get_flag(state, X86_FLAG_SF), ir_emit_get_flag(state, X86_FLAG_OF)));
+    }
+
+    ERROR("Invalid condition code");
+}
+
+ir_instruction_t* ir_emit_jcc(ir_emitter_state_t* state, x86_instruction_t* inst) {
+    u8 inst_length = inst->length;
+    ir_instruction_t* imm = ir_emit_immediate_sext(state, &inst->operand_imm);
+    ir_instruction_t* condition = ir_emit_get_cc(state, inst->opcode);
     ir_instruction_t* jump_address_false = ir_emit_immediate(state, state->current_address + inst_length);
     ir_instruction_t* jump_address_true = ir_emit_add(state, jump_address_false, imm);
     ir_instruction_t* jump = ir_emit_ternary(state, condition, jump_address_true, jump_address_false);
-    ir_emit_set_guest(state, X86_REF_RIP, jump);
-
     state->exit = true;
+    return ir_emit_set_guest(state, X86_REF_RIP, jump);
 }
 
-void ir_emit_setcc(ir_emitter_state_t* state, ir_instruction_t* reg, ir_instruction_t* condition) {
-    
+ir_instruction_t* ir_emit_setcc(ir_emitter_state_t* state, x86_instruction_t* inst) {
+    return ir_emit_set_rm(state, &inst->prefixes, &inst->operand_rm, ir_emit_get_cc(state, inst->opcode));
+}
+
+ir_instruction_t* ir_emit_cmovcc(ir_emitter_state_t* state, x86_instruction_t* inst) {
+    ir_instruction_t* rm = ir_emit_get_rm(state, &inst->prefixes, &inst->operand_rm);
+    ir_instruction_t* reg = ir_emit_get_reg(state, &inst->operand_reg);
+    ir_instruction_t* condition = ir_emit_get_cc(state, inst->opcode);
+    ir_instruction_t* value = ir_emit_ternary(state, condition, rm, reg);
+    return ir_emit_set_reg(state, &inst->operand_reg, value);
 }

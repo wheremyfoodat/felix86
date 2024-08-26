@@ -20,7 +20,8 @@ bool operates_on_temporaries(ir_instruction_t* instruction) {
 		case IR_GET_FLAG:
 		case IR_SET_GUEST:
 		case IR_SET_FLAG:
-		case IR_CPUID: {
+		case IR_CPUID: 
+		case IR_SYSCALL: {
 			return false;
 		}
 
@@ -95,6 +96,16 @@ extern "C" void ir_local_common_subexpression_elimination_pass_v2(ir_block_t* bl
 					registers[X86_REF_RDX] = nullptr;
 					break;
 				}
+				case IR_SYSCALL: {
+					registers[X86_REF_RAX] = nullptr;
+					registers[X86_REF_RDI] = nullptr;
+					registers[X86_REF_RSI] = nullptr;
+					registers[X86_REF_RDX] = nullptr;
+					registers[X86_REF_R10] = nullptr;
+					registers[X86_REF_R8] = nullptr;
+					registers[X86_REF_R9] = nullptr;
+					break;
+				}
 				default: {
 					ERROR("Unreachable");
 					break;
@@ -107,7 +118,6 @@ extern "C" void ir_local_common_subexpression_elimination_pass_v2(ir_block_t* bl
 }
 
 extern "C" void ir_copy_propagation_pass(ir_block_t* block) {
-	ir_print_block(block);
 	std::map<ir_instruction_t*, ir_instruction_t*> copies;
 
 	ir_instruction_list_t* current = block->instructions->next;

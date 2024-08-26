@@ -330,9 +330,11 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
         }
         case IR_CPUID: {
             u64 eax = state->gprs[X86_REF_RAX];
-            // switch (eax) {
-            //     default: ERROR("Invalid CPUID opcode"); break;
-            // }
+            WARN("Interpreting CPUID, unimplemented");
+            break;
+        }
+        case IR_NOT: {
+            temps[instruction->name] = ~temps[instruction->one_operand.source->name];
             break;
         }
         case IR_TERNARY: {

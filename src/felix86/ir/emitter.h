@@ -24,9 +24,12 @@ ir_instruction_t* ir_emit_sub(ir_emitter_state_t* state, ir_instruction_t* sourc
 ir_instruction_t* ir_emit_left_shift(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_right_shift(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_right_shift_arithmetic(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
+ir_instruction_t* ir_emit_left_rotate(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2);
+ir_instruction_t* ir_emit_right_rotate(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_and(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_or(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_xor(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
+ir_instruction_t* ir_emit_not(ir_emitter_state_t* state, ir_instruction_t* source);
 ir_instruction_t* ir_emit_popcount(ir_emitter_state_t* state, ir_instruction_t* source);
 ir_instruction_t* ir_emit_equal(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_not_equal(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
@@ -63,6 +66,10 @@ ir_instruction_t* ir_emit_write_dword(ir_emitter_state_t* state, ir_instruction_
 ir_instruction_t* ir_emit_write_qword(ir_emitter_state_t* state, ir_instruction_t* address, ir_instruction_t* source);
 
 ir_instruction_t* ir_emit_cpuid(ir_emitter_state_t* state);
+
+ir_instruction_t* ir_emit_jcc(ir_emitter_state_t* state, x86_instruction_t* inst);
+ir_instruction_t* ir_emit_setcc(ir_emitter_state_t* state, x86_instruction_t* inst);
+ir_instruction_t* ir_emit_cmovcc(ir_emitter_state_t* state, x86_instruction_t* inst);
 
 // Helpers
 ir_instruction_t* ir_emit_immediate(ir_emitter_state_t* state, u64 value);
@@ -120,9 +127,11 @@ ir_instruction_t* ir_emit_set_cpazso(
 
 ir_instruction_t* ir_emit_debug_info_compile_time(ir_emitter_state_t* state, const char* format, ...);
 
+ir_instruction_t* ir_emit_get_cc(ir_emitter_state_t* state, u8 opcode);
+
 void ir_emit_group1_imm(ir_emitter_state_t* state, x86_instruction_t* inst);
-void ir_emit_jcc(ir_emitter_state_t* state, u8 inst_length, ir_instruction_t* imm, ir_instruction_t* condition);
-void ir_emit_setcc(ir_emitter_state_t* state, ir_instruction_t* reg, ir_instruction_t* condition);
+void ir_emit_group2_imm(ir_emitter_state_t* state, x86_instruction_t* inst);
+void ir_emit_group3_imm(ir_emitter_state_t* state, x86_instruction_t* inst);
 
 #ifdef __cplusplus
 }

@@ -32,6 +32,8 @@ typedef enum : u8 {
     UP_TO_DWORD_IMMEDIATE = 4,
     UP_TO_QWORD_IMMEDIATE = 8,
     MUST_DWORD_IMMEDIATE,
+    BYTE_IMMEDIATE_IF_REG_0_OR_1,
+    UP_TO_DWORD_IMMEDIATE_IF_REG_0_OR_1,
 } immediate_size_e;
 
 typedef enum : u16 {
@@ -443,6 +445,30 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
             inst.operand_imm.immediate.data = *(u32*)&data[index];
             inst.operand_imm.immediate.size = 4;
             index += 4;
+            break;
+        }
+
+        case BYTE_IMMEDIATE_IF_REG_0_OR_1: {
+            if (inst.operand_reg.reg.ref == X86_REF_RAX || inst.operand_reg.reg.ref == X86_REF_RCX) {
+                inst.operand_imm.immediate.data = data[index];
+                inst.operand_imm.immediate.size = 1;
+                index += 1;
+            }
+            break;
+        }
+
+        case UP_TO_DWORD_IMMEDIATE_IF_REG_0_OR_1: {
+            if (inst.operand_reg.reg.ref == X86_REF_RAX || inst.operand_reg.reg.ref == X86_REF_RCX) {
+                if (prefixes.operand_override) {
+                    inst.operand_imm.immediate.data = *(u16*)&data[index];
+                    inst.operand_imm.immediate.size = 2;
+                    index += 2;
+                } else {
+                    inst.operand_imm.immediate.data = *(u32*)&data[index];
+                    inst.operand_imm.immediate.size = 4;
+                    index += 4;
+                }
+            }
             break;
         }
 
