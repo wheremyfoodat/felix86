@@ -227,6 +227,14 @@ void ir_print_instruction(ir_instruction_t* instruction) {
             printf("## %s", instruction->debug.text);
             break;
         }
+        case IR_SYSCALL: {
+            printf("syscall");
+            break;
+        }
+        case IR_CPUID: {
+            printf("cpuid");
+            break;
+        }
         default: {
             printf("Unknown opcode: %d", instruction->opcode);
             break;

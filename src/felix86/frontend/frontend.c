@@ -318,7 +318,6 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
 
     u8 size = X86_REG_SIZE_DWORD;
     if (primary.decoding_flags & BYTE_OVERRIDE_FLAG) {
-        printf("Byte override\n");
         inst.prefixes.byte_override = true;
         size = X86_REG_SIZE_BYTE_LOW;
     } else if (prefixes.operand_override) {

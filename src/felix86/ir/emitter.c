@@ -797,3 +797,7 @@ void ir_emit_jcc(ir_emitter_state_t* state, u8 inst_length, ir_instruction_t* im
 
     state->exit = true;
 }
+
+void ir_emit_setcc(ir_emitter_state_t* state, ir_instruction_t* reg, ir_instruction_t* condition) {
+    
+}

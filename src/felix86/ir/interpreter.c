@@ -293,7 +293,8 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             break;
         }
         case IR_MOV: {
-            ERROR("Interpreting MOV, this should not happen\n");
+            WARN("Interpreting MOV, this should not happen\n");
+            temps[instruction->name] = temps[instruction->one_operand.source->name];
             break;
         }
         case IR_IMMEDIATE: {
@@ -329,9 +330,9 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
         }
         case IR_CPUID: {
             u64 eax = state->gprs[X86_REF_RAX];
-            switch (eax) {
-                default: ERROR("Invalid CPUID opcode"); break;
-            }
+            // switch (eax) {
+            //     default: ERROR("Invalid CPUID opcode"); break;
+            // }
             break;
         }
         case IR_TERNARY: {

@@ -16,8 +16,6 @@ IR_HANDLE(error) {
 // ██      ██   ██ ██ ██      ██ ██   ██ ██   ██    ██    
 
 IR_HANDLE(add_rm8_r8) { // add rm8, r8 - 0x00
-    printf("rm size: %d\n", inst->operand_rm.reg.size);
-    printf("reg size: %d\n", inst->operand_reg.reg.size);
     ir_instruction_t* rm = ir_emit_get_rm(state, &inst->prefixes, &inst->operand_rm);
     ir_instruction_t* reg = ir_emit_get_reg(state, &inst->operand_reg);
     ir_instruction_t* result = ir_emit_add(state, rm, reg);

@@ -122,6 +122,7 @@ ir_instruction_t* ir_emit_debug_info_compile_time(ir_emitter_state_t* state, con
 
 void ir_emit_group1_imm(ir_emitter_state_t* state, x86_instruction_t* inst);
 void ir_emit_jcc(ir_emitter_state_t* state, u8 inst_length, ir_instruction_t* imm, ir_instruction_t* condition);
+void ir_emit_setcc(ir_emitter_state_t* state, ir_instruction_t* reg, ir_instruction_t* condition);
 
 #ifdef __cplusplus
 }

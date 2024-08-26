@@ -1,16 +1,19 @@
 #include "felix86/ir/passes.h"
 
+#include <array>
 #include <cstring>
 #include <map>
 
+#include "felix86/common/log.h"
 #include "felix86/ir/instruction.h"
+#include "felix86/ir/print.h"
 
 bool operator<(const ir_instruction_t& a1, const ir_instruction_t& a2) {
 	int res = memcmp(&a1, &a2, sizeof(ir_instruction_t));
 	return res < 0;
 }
 
-bool dont_subexpression_eliminate(ir_instruction_t* instruction) {
+bool operates_on_temporaries(ir_instruction_t* instruction) {
 	switch (instruction->opcode) {
 		// These instructions directly modify the guest state
 		case IR_GET_GUEST:
@@ -18,30 +21,84 @@ bool dont_subexpression_eliminate(ir_instruction_t* instruction) {
 		case IR_SET_GUEST:
 		case IR_SET_FLAG:
 		case IR_CPUID: {
-			return true;
+			return false;
 		}
 
 		default: {
-			return false;
+			return true;
 		}
 	}
 }
 
-extern "C" void ir_local_common_subexpression_elimination_pass(ir_block_t* block) {
+extern "C" void ir_local_common_subexpression_elimination_pass_v2(ir_block_t* block) {
 	std::map<ir_instruction_t, ir_instruction_t*> expressions;
+	std::array<ir_instruction_t*, X86_REF_COUNT> registers = {};
+	std::array<ir_instruction_t*, 16> flags = {};
 
 	ir_instruction_list_t* current = block->instructions->next;
 	while (current) {
-		ir_instruction_t instruction = current->instruction;
-		instruction.name = 0;
-		instruction.uses = 0;
-		if (!dont_subexpression_eliminate(&instruction)) {
-			if (expressions.find(instruction) != expressions.end()) {
+		ir_instruction_t expression = current->instruction;
+		// we dont wanna hash these in the map
+		expression.name = 0;
+		expression.uses = 0;
+		if (operates_on_temporaries(&current->instruction)) {
+			if (expressions.find(expression) != expressions.end()) {
+				ir_clear_instruction(&current->instruction);
 				current->instruction.type = IR_TYPE_ONE_OPERAND;
 				current->instruction.opcode = IR_MOV;
-				current->instruction.one_operand.source = expressions[instruction];
+				current->instruction.one_operand.source = expressions[expression];
 			} else {
-				expressions[instruction] = &current->instruction;
+				expressions[expression] = &current->instruction;
+			}
+		} else {
+			// These instructions make the temporaries have a lifetime,
+			// meaning a temporary is not available again after its guest register is overwritten
+			switch (current->instruction.opcode) {
+				case IR_SET_GUEST: {
+					registers[current->instruction.set_guest.ref] = current->instruction.set_guest.source;
+					break;
+				}
+				case IR_GET_GUEST: {
+					if (registers[current->instruction.get_guest.ref]) {
+						registers[current->instruction.get_guest.ref]->uses++;
+						ir_instruction_t* new_source = registers[current->instruction.get_guest.ref];
+						ir_clear_instruction(&current->instruction);
+						current->instruction.type = IR_TYPE_ONE_OPERAND;
+						current->instruction.opcode = IR_MOV;
+						current->instruction.one_operand.source = new_source;
+					} else {
+						registers[current->instruction.get_guest.ref] = &current->instruction;
+					}
+					break;
+				}
+				case IR_SET_FLAG: {
+					flags[current->instruction.set_flag.flag] = current->instruction.set_flag.source;
+					break;
+				}
+				case IR_GET_FLAG: {
+					if (flags[current->instruction.get_flag.flag]) {
+						flags[current->instruction.get_flag.flag]->uses++;
+						ir_instruction_t* new_source = flags[current->instruction.get_flag.flag];
+						ir_clear_instruction(&current->instruction);
+						current->instruction.type = IR_TYPE_ONE_OPERAND;
+						current->instruction.opcode = IR_MOV;
+						current->instruction.one_operand.source = new_source;
+					} else {
+						flags[current->instruction.get_flag.flag] = &current->instruction;
+					}
+					break;
+				}
+				case IR_CPUID: {
+					registers[X86_REF_RAX] = nullptr;
+					registers[X86_REF_RBX] = nullptr;
+					registers[X86_REF_RCX] = nullptr;
+					registers[X86_REF_RDX] = nullptr;
+					break;
+				}
+				default: {
+					ERROR("Unreachable");
+					break;
+				}
 			}
 		}
 
@@ -50,6 +107,7 @@ extern "C" void ir_local_common_subexpression_elimination_pass(ir_block_t* block
 }
 
 extern "C" void ir_copy_propagation_pass(ir_block_t* block) {
+	ir_print_block(block);
 	std::map<ir_instruction_t*, ir_instruction_t*> copies;
 
 	ir_instruction_list_t* current = block->instructions->next;
@@ -64,9 +122,7 @@ extern "C" void ir_copy_propagation_pass(ir_block_t* block) {
 
 			ir_instruction_list_t* next = current->next;
 			ir_ilist_remove(current);
-
-			ir_instruction_list_t* tmp = current;
-			ir_ilist_free(tmp);
+			ir_ilist_free(current);
 			current = next;
 		} else {
 			switch (instruction->type) {
@@ -134,5 +190,16 @@ extern "C" void ir_copy_propagation_pass(ir_block_t* block) {
 			}
 			current = current->next;
 		}
+	}
+}
+
+void ir_verifier_pass(ir_block_t* block) {
+	ir_instruction_list_t* current = block->instructions->next;
+	while (current) {
+		if ((i16)current->instruction.uses < 0) {
+			ERROR("Instruction uses is negative");
+		}
+
+		current = current->next;
 	}
 }

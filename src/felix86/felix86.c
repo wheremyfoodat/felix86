@@ -180,15 +180,11 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler, u
             frontend_compile_block(&state);
 
             if (recompiler->optimize) {
-                ir_dead_store_elimination_pass(block);
-                
-                ir_local_common_subexpression_elimination_pass(block);
+                ir_const_propagation_pass(block);
+                ir_local_common_subexpression_elimination_pass_v2(block);
                 ir_copy_propagation_pass(block);
                 ir_dead_code_elimination_pass(block);
-
-                ir_local_common_subexpression_elimination_pass(block);
-                ir_copy_propagation_pass(block);
-                ir_dead_code_elimination_pass(block);
+                ir_verifier_pass(block);
             }
             
             ir_naming_pass(block);

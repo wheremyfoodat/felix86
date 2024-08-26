@@ -124,13 +124,17 @@ typedef struct ir_instruction_s {
 		struct {
 			const char* text;
 		} debug;
+
+		u64 raw_data[3];
 	};
 
-	ir_type_e type;
-	ir_opcode_e opcode;
 	u16 uses;
 	u16 name;
+	ir_type_e type;
+	ir_opcode_e opcode;
 } ir_instruction_t;
+
+void ir_clear_instruction(ir_instruction_t* instruction);
 
 #ifdef __cplusplus
 }

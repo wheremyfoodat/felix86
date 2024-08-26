@@ -84,3 +84,11 @@ FELIX86_TEST(lea_only_disp32) { // weird case where sib is used, mod == 00, x.in
     lea(rax, ptr[(void*)0xffffffff90909090]);
     verify(X86_REF_RAX, 0xffffffff90909090);
 }
+
+FELIX86_TEST(lea_all_immediates) {
+    mov(rax, 0x12345678);
+    mov(rbx, 0x87654321);
+    lea(rax, ptr[rax + rbx * 8 - 0x1A0]);
+
+    verify(X86_REF_RAX, 0x12345678ull + 0x87654321ull * 8 - 0x1A0);
+}
