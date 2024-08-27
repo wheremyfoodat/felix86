@@ -322,43 +322,14 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     if (primary.decoding_flags & BYTE_OVERRIDE_FLAG) {
         inst.prefixes.byte_override = true;
         size = X86_REG_SIZE_BYTE_LOW;
-    } else if (prefixes.operand_override) {
-        size = X86_REG_SIZE_WORD;
     } else if (prefixes.rex_w) {
         size = X86_REG_SIZE_QWORD;
+    } else if (prefixes.operand_override) {
+        size = X86_REG_SIZE_WORD;
     }
 
     u8 size_rm = size;
     u8 size_reg = size;
-
-    if (primary.decoding_flags & RM_ALWAYS_BYTE_FLAG) {
-        inst.prefixes.byte_override = true;
-        size_rm = X86_REG_SIZE_BYTE_LOW;
-    } else if (primary.decoding_flags & RM_ALWAYS_WORD_FLAG) {
-        size_rm = X86_REG_SIZE_WORD;
-    } else if (primary.decoding_flags & RM_AT_LEAST_DWORD_FLAG && size_rm < X86_REG_SIZE_DWORD) {
-        size_rm = X86_REG_SIZE_DWORD;
-    }
-
-    if (primary.decoding_flags & RM_MM_FLAG) {
-        u8 reg = inst.operand_rm.reg.ref - X86_REF_RAX;
-
-        if (prefixes.operand_override) {
-            inst.operand_rm.reg.ref = X86_REF_XMM0 + reg;
-            size_rm = X86_REG_SIZE_VECTOR;
-        } else {
-            ERROR("Operation using mm register");
-        }
-    } else if (primary.decoding_flags & REG_MM_FLAG) {
-        u8 reg = inst.operand_reg.reg.ref - X86_REF_RAX;
-
-        if (prefixes.operand_override) {
-            inst.operand_reg.reg.ref = X86_REF_XMM0 + reg;
-            size_reg = X86_REG_SIZE_VECTOR;
-        } else {
-            ERROR("Operation using mm register");
-        }
-    }
 
     if (primary.decoding_flags & MODRM_FLAG) {
         modrm_t modrm;
@@ -394,6 +365,35 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     } else if (primary.decoding_flags & REG_EAX_OVERRIDE_FLAG) {
         inst.operand_reg.type = X86_OP_TYPE_REGISTER;
         inst.operand_reg.reg.ref = X86_REF_RAX;
+    }
+
+    if (primary.decoding_flags & RM_ALWAYS_BYTE_FLAG) {
+        inst.prefixes.byte_override = true;
+        size_rm = X86_REG_SIZE_BYTE_LOW;
+    } else if (primary.decoding_flags & RM_ALWAYS_WORD_FLAG) {
+        size_rm = X86_REG_SIZE_WORD;
+    } else if (primary.decoding_flags & RM_AT_LEAST_DWORD_FLAG && size_rm < X86_REG_SIZE_DWORD) {
+        size_rm = X86_REG_SIZE_DWORD;
+    }
+
+    if (primary.decoding_flags & RM_MM_FLAG) {
+        u8 reg = inst.operand_rm.reg.ref - X86_REF_RAX;
+
+        if (prefixes.operand_override) {
+            inst.operand_rm.reg.ref = X86_REF_XMM0 + reg;
+            size_rm = X86_REG_SIZE_VECTOR;
+        } else {
+            ERROR("Operation using mm register");
+        }
+    } else if (primary.decoding_flags & REG_MM_FLAG) {
+        u8 reg = inst.operand_reg.reg.ref - X86_REF_RAX;
+
+        if (prefixes.operand_override) {
+            inst.operand_reg.reg.ref = X86_REF_XMM0 + reg;
+            size_reg = X86_REG_SIZE_VECTOR;
+        } else {
+            ERROR("Operation using mm register");
+        }
     }
 
     switch (primary.immediate_size) {
