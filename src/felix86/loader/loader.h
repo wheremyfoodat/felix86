@@ -12,6 +12,8 @@ typedef struct {
 	int envc;
 	bool use_host_envs;
 	bool print_blocks;
+	bool interpreter;
+	bool dont_optimize;
 } loader_config_t;
 
 void loader_run_elf(loader_config_t* config);

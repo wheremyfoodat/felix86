@@ -15,6 +15,7 @@ struct felix86_recompiler_s {
     bool testing;
     bool optimize;
     bool print_blocks;
+    bool use_interpreter;
     u64 base_address;
 };
 
@@ -25,6 +26,7 @@ felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* con
     recompiler->optimize = config->optimize;
     recompiler->print_blocks = config->print_blocks;
     recompiler->base_address = config->base_address;
+    recompiler->use_interpreter = config->use_interpreter;
 
     return recompiler;
 }
@@ -165,6 +167,10 @@ void felix86_set_guest_xmm(felix86_recompiler_t* recompiler, x86_ref_e ref, xmm_
 }
 
 felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler, u64 cycles) {
+    if (!recompiler->use_interpreter) {
+        ERROR("Interpreter not enabled");
+    }
+
     // TODO: check for backend block? needs asm dispatcher
     while (true) {
         ir_block_t* block = ir_block_metadata_get_block(recompiler->block_metadata, recompiler->state.rip);

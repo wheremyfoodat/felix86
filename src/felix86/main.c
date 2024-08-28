@@ -13,8 +13,10 @@ static char args_doc[] = "BINARY [ARGS...]";
 static struct argp_option options[] = {
   { "verbose", 'v', 0, 0, "Produce verbose output" },
   { "quiet", 'q', 0, 0, "Don't produce any output" },
+  { "interpreter", 'i', 0, 0, "Run in interpreter mode" },
   { "host-envs", 0, 0, 0, "Pass host environment variables to the guest" },
-  { "print-blocks", 'p', 0, 0, "Print basic blocks" },
+  { "print-blocks", 'p', 0, 0, "Print basic blocks as they compile" },
+  { "dont-optimize", 'O', 0, 0, "Don't run IR optimizations" },
   { 0 }
 };
 
@@ -44,6 +46,14 @@ static error_t parse_opt (int key, char* arg, struct argp_state* state)
         }
         case 'p': {
             config->print_blocks = true;
+            break;
+        }
+        case 'i': {
+            config->interpreter = true;
+            break;
+        }
+        case 'O': {
+            config->dont_optimize = true;
             break;
         }
         case ARGP_KEY_END: {

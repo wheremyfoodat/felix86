@@ -11,6 +11,7 @@ typedef struct {
 	bool testing;
 	bool optimize;
 	bool print_blocks;
+	bool use_interpreter;
 	u64 base_address;
 } felix86_recompiler_config_t;
 
