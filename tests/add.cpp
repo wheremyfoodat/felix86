@@ -10,6 +10,9 @@
     bool carry = __builtin_add_overflow(ux, uy, &result); \
     verify_c(carry); \
     verify_o(overflow); \
+    int a_1 = ux & 0xF, a_2 = uy & 0xF; \
+    int a = a_1 + a_2; \
+    verify_a(a > 0xF); \
 }
 
 TEST_ADD(1, 5)
@@ -21,6 +24,9 @@ TEST_ADD(255, 0)
 TEST_ADD(0, 255)
 TEST_ADD(127, 0)
 TEST_ADD(0, 127)
+TEST_ADD(0x0F, 0x0F)
+TEST_ADD(0x0F, 0x0E)
+TEST_ADD(0x0E, 0x02)
 
 FELIX86_TEST(add_sign_extend) {
     xor_(ebx, ebx);
@@ -43,4 +49,10 @@ FELIX86_TEST(add_dead_store_load) {
     add(al, bl);
 
     verify(X86_REF_RAX, 0x5 + 0x5);
+}
+
+FELIX86_MULTI_TEST(add_multi) {
+    mov(rbx, 0);
+    add(rbx, 1);
+    verify(X86_REF_RBX, 1);
 }

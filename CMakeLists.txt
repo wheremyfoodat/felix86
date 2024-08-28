@@ -79,6 +79,7 @@ target_link_libraries(felix86 PRIVATE felix86_core)
 
 set(FELIX86_TEST_SOURCES
     tests/add.cpp
+    tests/and.cpp
     tests/sub.cpp
     tests/mov.cpp
     tests/lea.cpp

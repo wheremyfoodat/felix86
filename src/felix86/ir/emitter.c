@@ -801,6 +801,8 @@ void ir_emit_group1_imm(ir_emitter_state_t* state, x86_instruction_t* inst) {
     ir_instruction_t* o = zero;
     ir_instruction_t* a = NULL;
 
+    printf("OPCODE: %d\n", opcode);
+
     switch (opcode) {
         case X86_GROUP1_ADD: {
             result = ir_emit_add(state, rm, imm);

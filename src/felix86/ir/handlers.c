@@ -151,6 +151,21 @@ IR_HANDLE(xor_rm32_r32) { // xor rm16/32/64, r16/32/64 - 0x31
     ir_emit_set_cpazso(state, zero, p, NULL, z, s, zero);
 }
 
+IR_HANDLE(cmp_rm32_r32) { // cmp rm16/32/64, r16/32/64 - 0x39
+    ir_instruction_t* rm = ir_emit_get_rm(state, &inst->prefixes, &inst->operand_rm);
+    ir_instruction_t* reg = ir_emit_get_reg(state, &inst->operand_reg);
+    ir_instruction_t* result = ir_emit_sub(state, rm, reg);
+
+    ir_instruction_t* c = ir_emit_get_carry_sub(state, &inst->prefixes, rm, reg, result);
+    ir_instruction_t* p = ir_emit_get_parity(state, result);
+    ir_instruction_t* a = ir_emit_get_aux_sub(state, rm, reg);
+    ir_instruction_t* z = ir_emit_get_zero(state, result);
+    ir_instruction_t* s = ir_emit_get_sign(state, &inst->prefixes, result);
+    ir_instruction_t* o = ir_emit_get_overflow_sub(state, &inst->prefixes, rm, reg, result);
+
+    ir_emit_set_cpazso(state, c, p, a, z, s, o);
+}
+
 IR_HANDLE(cmp_eax_imm32) { // cmp eax, imm32 - 0x3d
     ir_instruction_t* eax = ir_emit_get_reg(state, &inst->operand_reg);
     ir_instruction_t* imm = ir_emit_immediate_sext(state, &inst->operand_imm);
@@ -207,6 +222,10 @@ IR_HANDLE(movsxd) { // movsxd r32/64, rm32/64 - 0x63
 
 IR_HANDLE(jcc_rel) { // jcc rel8 - 0x70-0x7f
     ir_emit_jcc(state, inst);
+}
+
+IR_HANDLE(group1_rm8_imm8) { // add/or/adc/sbb/and/sub/xor/cmp rm8, imm8 - 0x80
+    ir_emit_group1_imm(state, inst);
 }
 
 IR_HANDLE(group1_rm32_imm32) { // add/or/adc/sbb/and/sub/xor/cmp rm16/32/64, imm16/32/64 - 0x81
