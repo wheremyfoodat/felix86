@@ -49,6 +49,7 @@ typedef enum : u16 {
     RM_MM_FLAG = 256, // rm is an mm register
     REG_EAX_OVERRIDE_FLAG = 512,
     DEFAULT_U64_FLAG = 1024,
+    CAN_USE_REP = 2048,
 } decoding_flags_e;
 
 typedef struct {
@@ -201,7 +202,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
             }
 
             case 0x67: {
-                prefixes.address_override = true;
+                inst.operand_rm.address_override = true;
                 prefix = true;
                 index += 1;
                 break;
@@ -237,7 +238,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
                 u8 operand_vex = ~((vex2 >> 3) & 0b1111);
                 inst.operand_vex.type = X86_OP_TYPE_REGISTER;
                 inst.operand_vex.reg.ref = X86_REF_XMM0 + operand_vex;
-                inst.operand_vex.reg.size = X86_REG_SIZE_VECTOR;
+                inst.operand_vex.size = prefixes.vex_l ? X86_SIZE_YMM : X86_SIZE_XMM;
 
                 // specifies implicit mandatory prefix
                 u8 pp = vex2 & 0b11;
@@ -261,7 +262,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
                 u8 operand_vex = ~((vex >> 3) & 0b1111);
                 inst.operand_vex.type = X86_OP_TYPE_REGISTER;
                 inst.operand_vex.reg.ref = X86_REF_XMM0 + operand_vex;
-                inst.operand_vex.reg.size = X86_REG_SIZE_VECTOR;
+                inst.operand_vex.size = prefixes.vex_l ? X86_SIZE_YMM : X86_SIZE_XMM;
 
                 // specifies implicit mandatory prefix
                 u8 pp = vex & 0b11;
@@ -307,7 +308,6 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     instruction_metadata_t primary = primary_table[opcode];
 
     inst.opcode = opcode;
-    inst.prefixes = prefixes;
 
     if (opcode == 0x0F) {
         if (primary_map != primary_table) {
@@ -319,14 +319,14 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         primary = secondary_table[opcode];
     }
 
-    u8 size = (primary.decoding_flags & DEFAULT_U64_FLAG) ? X86_REG_SIZE_QWORD : X86_REG_SIZE_DWORD;
+    u8 size = (primary.decoding_flags & DEFAULT_U64_FLAG) ? X86_SIZE_QWORD : X86_SIZE_DWORD;
     if (primary.decoding_flags & BYTE_OVERRIDE_FLAG) {
-        inst.prefixes.byte_override = true;
-        size = X86_REG_SIZE_BYTE_LOW;
+        prefixes.byte_override = true;
+        size = X86_SIZE_BYTE;
     } else if (prefixes.rex_w) {
-        size = X86_REG_SIZE_QWORD;
+        size = X86_SIZE_QWORD;
     } else if (prefixes.operand_override) {
-        size = X86_REG_SIZE_WORD;
+        size = X86_SIZE_WORD;
     }
 
     u8 size_rm = size;
@@ -369,12 +369,12 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     }
 
     if (primary.decoding_flags & RM_ALWAYS_BYTE_FLAG) {
-        inst.prefixes.byte_override = true;
-        size_rm = X86_REG_SIZE_BYTE_LOW;
+        prefixes.byte_override = true;
+        size_rm = X86_SIZE_BYTE;
     } else if (primary.decoding_flags & RM_ALWAYS_WORD_FLAG) {
-        size_rm = X86_REG_SIZE_WORD;
-    } else if ((primary.decoding_flags & RM_AT_LEAST_DWORD_FLAG) && size_rm < X86_REG_SIZE_DWORD) {
-        size_rm = X86_REG_SIZE_DWORD;
+        size_rm = X86_SIZE_WORD;
+    } else if ((primary.decoding_flags & RM_AT_LEAST_DWORD_FLAG) && size_rm < X86_SIZE_DWORD) {
+        size_rm = X86_SIZE_DWORD;
     }
 
     if (primary.decoding_flags & RM_MM_FLAG) {
@@ -382,32 +382,40 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
 
         if (prefixes.operand_override) {
             inst.operand_rm.reg.ref = X86_REF_XMM0 + reg;
-            size_rm = X86_REG_SIZE_VECTOR;
+            size_rm = X86_SIZE_XMM;
+        } else if (prefixes.vex_l) {
+            inst.operand_rm.reg.ref = X86_REF_XMM0 + reg;
+            size_rm = X86_SIZE_YMM;
         } else {
-            ERROR("Operation using mm register");
+            inst.operand_rm.reg.ref = X86_REF_MM0 + reg;
+            size_rm = X86_SIZE_MM;
         }
     } else if (primary.decoding_flags & REG_MM_FLAG) {
         u8 reg = inst.operand_reg.reg.ref - X86_REF_RAX;
 
         if (prefixes.operand_override) {
             inst.operand_reg.reg.ref = X86_REF_XMM0 + reg;
-            size_reg = X86_REG_SIZE_VECTOR;
+            size_reg = X86_SIZE_XMM;
+        } else if (prefixes.vex_l) {
+            inst.operand_reg.reg.ref = X86_REF_XMM0 + reg;
+            size_reg = X86_SIZE_YMM;
         } else {
-            ERROR("Operation using mm register");
+            inst.operand_reg.reg.ref = X86_REF_MM0 + reg;
+            size_reg = X86_SIZE_MM;
         }
     }
 
     switch (primary.immediate_size) {
         case BYTE_IMMEDIATE: {
             inst.operand_imm.immediate.data = data[index];
-            inst.operand_imm.immediate.size = 1;
+            inst.operand_imm.size = X86_SIZE_BYTE;
             index += 1;
             break;
         }
 
         case WORD_IMMEDIATE: {
             inst.operand_imm.immediate.data = *(u16*)&data[index];
-            inst.operand_imm.immediate.size = 2;
+            inst.operand_imm.size = X86_SIZE_WORD;
             index += 2;
             break;
         }
@@ -415,11 +423,11 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         case UP_TO_DWORD_IMMEDIATE: {
             if (prefixes.operand_override) {
                 inst.operand_imm.immediate.data = *(u16*)&data[index];
-                inst.operand_imm.immediate.size = 2;
+                inst.operand_imm.size = X86_SIZE_WORD;
                 index += 2;
             } else {
                 inst.operand_imm.immediate.data = *(u32*)&data[index];
-                inst.operand_imm.immediate.size = 4;
+                inst.operand_imm.size = X86_SIZE_DWORD;
                 index += 4;
             }
             break;
@@ -428,15 +436,15 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         case UP_TO_QWORD_IMMEDIATE: {
             if (prefixes.operand_override) {
                 inst.operand_imm.immediate.data = *(u16*)&data[index];
-                inst.operand_imm.immediate.size = 2;
+                inst.operand_imm.size = X86_SIZE_WORD;
                 index += 2;
             } else if (prefixes.rex_w) {
                 inst.operand_imm.immediate.data = *(u64*)&data[index];
-                inst.operand_imm.immediate.size = 8;
+                inst.operand_imm.size = X86_SIZE_QWORD;
                 index += 8;
             } else {
                 inst.operand_imm.immediate.data = *(u32*)&data[index];
-                inst.operand_imm.immediate.size = 4;
+                inst.operand_imm.size = X86_SIZE_DWORD;
                 index += 4;
             }
             break;
@@ -444,7 +452,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
 
         case MUST_DWORD_IMMEDIATE: {
             inst.operand_imm.immediate.data = *(u32*)&data[index];
-            inst.operand_imm.immediate.size = 4;
+            inst.operand_imm.size = X86_SIZE_DWORD;
             index += 4;
             break;
         }
@@ -452,7 +460,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         case BYTE_IMMEDIATE_IF_REG_0_OR_1: {
             if (inst.operand_reg.reg.ref == X86_REF_RAX || inst.operand_reg.reg.ref == X86_REF_RCX) {
                 inst.operand_imm.immediate.data = data[index];
-                inst.operand_imm.immediate.size = 1;
+                inst.operand_imm.size = X86_SIZE_BYTE;
                 index += 1;
             }
             break;
@@ -462,11 +470,11 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
             if (inst.operand_reg.reg.ref == X86_REF_RAX || inst.operand_reg.reg.ref == X86_REF_RCX) {
                 if (prefixes.operand_override) {
                     inst.operand_imm.immediate.data = *(u16*)&data[index];
-                    inst.operand_imm.immediate.size = 2;
+                    inst.operand_imm.size = X86_SIZE_WORD;
                     index += 2;
                 } else {
                     inst.operand_imm.immediate.data = *(u32*)&data[index];
-                    inst.operand_imm.immediate.size = 4;
+                    inst.operand_imm.size = X86_SIZE_DWORD;
                     index += 4;
                 }
             }
@@ -479,24 +487,23 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     }
 
     if (inst.operand_reg.type == X86_OP_TYPE_REGISTER) {
-        inst.operand_reg.reg.size = size_reg;
+        inst.operand_reg.size = size_reg;
 
-        if (!rex && inst.operand_reg.reg.size == X86_REG_SIZE_BYTE_LOW) {
+        if (!rex && inst.operand_reg.size == X86_SIZE_BYTE) {
             int reg_index = (inst.operand_reg.reg.ref - X86_REF_RAX) & 0x7;
             bool high = reg_index >= 4;
             inst.operand_reg.reg.ref = X86_REF_RAX + (reg_index & 0x3);
-            inst.operand_reg.reg.size = high ? X86_REG_SIZE_BYTE_HIGH : X86_REG_SIZE_BYTE_LOW;
+            inst.operand_reg.reg.high8 = high;
         }
     }
 
     if (inst.operand_rm.type == X86_OP_TYPE_REGISTER) {
-        inst.operand_rm.reg.size = size_rm;
-
-        if (!rex && inst.operand_rm.reg.size == X86_REG_SIZE_BYTE_LOW) {
+        inst.operand_rm.size = size_rm;
+        if (!rex && inst.operand_rm.size == X86_SIZE_BYTE) {
             int reg_index = (inst.operand_rm.reg.ref - X86_REF_RAX) & 0x7;
             bool high = reg_index >= 4;
             inst.operand_rm.reg.ref = X86_REF_RAX + (reg_index & 0x3);
-            inst.operand_rm.reg.size = high ? X86_REG_SIZE_BYTE_HIGH : X86_REG_SIZE_BYTE_LOW;
+            inst.operand_rm.reg.high8 = high;
         }
     }
 
@@ -517,7 +524,17 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         }
     }
 
+    bool can_use_rep = (primary.decoding_flags & CAN_USE_REP) && (prefixes.rep_z_f3 || prefixes.rep_nz_f2);
+
+    if (can_use_rep) {
+        ir_emit_rep_start(state, inst.operand_reg.size);
+    }
+
     primary.fn(state, &inst);
+
+    if (can_use_rep) {
+        ir_emit_rep_end(state, prefixes.rep_nz_f2, inst.operand_reg.size);
+    }
 
     state->current_address += inst.length;
 }

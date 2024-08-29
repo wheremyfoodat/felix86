@@ -8,7 +8,7 @@
 static u64 temps[4096] = {0};
 static xmm_reg_t xmm_temps[256] = {0};
 
-void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
+bool ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
 {
     switch (instruction->opcode) {
         case IR_NULL: {
@@ -85,7 +85,7 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             xmm_reg_t xmm = xmm_temps[instruction->two_operand_immediates.source1->name];
             u32 index = instruction->two_operand_immediates.imm32_1;
             switch (instruction->two_operand_immediates.imm32_2) {
-                case X86_REG_SIZE_BYTE_LOW: {
+                case X86_SIZE_BYTE: {
                     if (index > 63) {
                         ERROR("Invalid index");
                     }
@@ -95,7 +95,7 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
                     xmm_temps[instruction->name] = xmm;
                     break;
                 }
-                case X86_REG_SIZE_WORD: {
+                case X86_SIZE_WORD: {
                     if (index > 31) {
                         ERROR("Invalid index");
                     }
@@ -105,7 +105,7 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
                     xmm_temps[instruction->name] = xmm;
                     break;
                 }
-                case X86_REG_SIZE_DWORD: {
+                case X86_SIZE_DWORD: {
                     if (index > 15) {
                         ERROR("Invalid index");
                     }
@@ -115,7 +115,7 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
                     xmm_temps[instruction->name] = xmm;
                     break;
                 }
-                case X86_REG_SIZE_QWORD: {
+                case X86_SIZE_QWORD: {
                     if (index > 7) {
                         ERROR("Invalid index");
                     }
@@ -133,7 +133,7 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             xmm_reg_t xmm = xmm_temps[instruction->two_operand_immediates.source1->name];
             u32 index = instruction->two_operand_immediates.imm32_1;
             switch (instruction->two_operand_immediates.imm32_2) {
-                case X86_REG_SIZE_BYTE_LOW: {
+                case X86_SIZE_BYTE: {
                     if (index > 63) {
                         ERROR("Invalid index");
                     }
@@ -142,7 +142,7 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
                     temps[instruction->name] = *data;
                     break;
                 }
-                case X86_REG_SIZE_WORD: {
+                case X86_SIZE_WORD: {
                     if (index > 31) {
                         ERROR("Invalid index");
                     }
@@ -151,7 +151,7 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
                     temps[instruction->name] = *data;
                     break;
                 }
-                case X86_REG_SIZE_DWORD: {
+                case X86_SIZE_DWORD: {
                     if (index > 15) {
                         ERROR("Invalid index");
                     }
@@ -160,7 +160,7 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
                     temps[instruction->name] = *data;
                     break;
                 }
-                case X86_REG_SIZE_QWORD: {
+                case X86_SIZE_QWORD: {
                     if (index > 7) {
                         ERROR("Invalid index");
                     }
@@ -350,11 +350,23 @@ void ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             LOG("Debug message: %s", instruction->debug.text);
             break;
         }
+        case IR_JUMP: {
+            state->rip = temps[instruction->one_operand.source->name];
+            return true;
+        }
+        case IR_JUMP_IF_TRUE: {
+            if (temps[instruction->two_operand.source1->name]) {
+                state->rip = temps[instruction->two_operand.source2->name];
+                return true;
+            }
+            break;
+        }
         default: {
             ERROR("Invalid opcode");
             break;
         }
     }
+    return false;
 }
 
 void ir_interpret_block(ir_block_t* block, x86_state_t* state)

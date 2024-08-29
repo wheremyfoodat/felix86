@@ -128,23 +128,15 @@ typedef enum : u8 {
 } x86_operand_type_e;
 
 typedef enum : u8 {
-	X86_REG_SIZE_BYTE_LOW,
-	X86_REG_SIZE_BYTE_HIGH,
-	X86_REG_SIZE_WORD,
-	X86_REG_SIZE_DWORD,
-	X86_REG_SIZE_QWORD,
-	X86_REG_SIZE_VECTOR,
-} x86_register_size_e;
-
-typedef enum : u8 {
-	X86_MEMORY_SIZE_BYTE,
-	X86_MEMORY_SIZE_WORD,
-	X86_MEMORY_SIZE_DWORD,
-	X86_MEMORY_SIZE_QWORD,
-	X86_MEMORY_SIZE_128_BIT,
-	X86_MEMORY_SIZE_256_BIT,
-	X86_MEMORY_SIZE_512_BIT,
-} x86_memory_size_e;
+	X86_SIZE_BYTE,
+	X86_SIZE_WORD,
+	X86_SIZE_DWORD,
+	X86_SIZE_QWORD,
+	X86_SIZE_MM,
+	X86_SIZE_XMM,
+	X86_SIZE_YMM,
+	X86_SIZE_ZMM,
+} x86_size_e;
 
 typedef union {
 	struct {
@@ -176,20 +168,20 @@ typedef struct {
 
 		struct {
 			x86_ref_e ref;
-			x86_register_size_e size;
+			bool high8;
 		} reg;
 
 		struct {
 			u64 data;
-			u8 size;
 		} immediate;
 	};
 
+	x86_size_e size;
 	x86_operand_type_e type;
+	bool address_override;
 } x86_operand_t;
 
 typedef struct {
-	x86_prefixes_t prefixes;
 	x86_operand_t operand_rm;
 	x86_operand_t operand_reg;
 	x86_operand_t operand_imm;

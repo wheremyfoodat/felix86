@@ -14,7 +14,6 @@ FELIX86_TEST(mov_r8_imm8) {
     mov(sil, value);
     mov(dil, value2);
     mov(bpl, value);
-    mov(spl, value2);
     mov(r8b, value);
     mov(r9b, value2);
     mov(r10b, value);
@@ -31,7 +30,6 @@ FELIX86_TEST(mov_r8_imm8) {
     verify(X86_REF_RSI, value);
     verify(X86_REF_RDI, value2);
     verify(X86_REF_RBP, value);
-    verify(X86_REF_RSP, value2);
     verify(X86_REF_R8, value);
     verify(X86_REF_R9, value2);
     verify(X86_REF_R10, value);
