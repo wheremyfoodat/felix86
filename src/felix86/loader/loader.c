@@ -173,6 +173,7 @@ void loader_run_elf(loader_config_t* config) {
     }
 
     free(argv_addresses);
+    free(envp_addresses);
 
     felix86_recompiler_config_t fconfig = {
         .testing = false,

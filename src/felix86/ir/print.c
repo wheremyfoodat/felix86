@@ -25,6 +25,7 @@ void print_guest(x86_ref_e guest) {
         case X86_REF_RIP: printf("rip"); break;
         case X86_REF_FS: printf("fs"); break;
         case X86_REF_GS: printf("gs"); break;
+        case X86_REF_XMM0 ... X86_REF_XMM31: printf("xmm%d", guest - X86_REF_XMM0); break;
         default: printf("Unknown guest"); break;
     }
 }
@@ -233,6 +234,10 @@ void ir_print_instruction(ir_instruction_t* instruction) {
         }
         case IR_CPUID: {
             printf("cpuid");
+            break;
+        }
+        case IR_INSERT_INTEGER_TO_VECTOR: {
+            printf("x%d = insert_integer_to_vector(t%d, index=%d, size=%d)", instruction->two_operand_immediates.source1->name, instruction->two_operand_immediates.source2->name, instruction->two_operand_immediates.imm32_1, instruction->two_operand_immediates.imm32_2);
             break;
         }
         default: {
