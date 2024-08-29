@@ -14,7 +14,7 @@ static struct argp_option options[] = {
   { "verbose", 'v', 0, 0, "Produce verbose output" },
   { "quiet", 'q', 0, 0, "Don't produce any output" },
   { "interpreter", 'i', 0, 0, "Run in interpreter mode" },
-  { "host-envs", 0, 0, 0, "Pass host environment variables to the guest" },
+  { "host-envs", 'e', 0, 0, "Pass host environment variables to the guest" },
   { "print-blocks", 'p', 0, 0, "Print basic blocks as they compile" },
   { "dont-optimize", 'O', 0, 0, "Don't run IR optimizations" },
   { 0 }
@@ -44,12 +44,16 @@ static error_t parse_opt (int key, char* arg, struct argp_state* state)
             disable_logging();
             break;
         }
+        case 'e': {
+            config->use_host_envs = true;
+            break;
+        }
         case 'p': {
             config->print_blocks = true;
             break;
         }
         case 'i': {
-            config->interpreter = true;
+            config->use_interpreter = true;
             break;
         }
         case 'O': {
@@ -74,6 +78,7 @@ static struct argp argp = { options, parse_opt, args_doc, doc };
 
 int main(int argc, char* argv[]) {
     loader_config_t config = {0};
+    config.use_interpreter = false;
 
     argp_parse(&argp, argc, argv, 0, 0, &config);
 

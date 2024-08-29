@@ -9,10 +9,11 @@ extern "C" {
 typedef struct {
 	char* argv[256];
 	int argc;
+	char** envp;
 	int envc;
 	bool use_host_envs;
 	bool print_blocks;
-	bool interpreter;
+	bool use_interpreter;
 	bool dont_optimize;
 } loader_config_t;
 

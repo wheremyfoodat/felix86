@@ -6,6 +6,8 @@
 #include <string.h>
 #include <sys/auxv.h>
 
+extern char** environ;
+
 static char x86_64_string[] = "x86_64";
 
 typedef struct
@@ -77,6 +79,30 @@ void loader_run_elf(loader_config_t* config) {
         argv_addresses[i] = rsp;
     }
 
+    int envc = config->envc;
+
+    if (config->use_host_envs) {
+        char** envp = environ;
+        while (*envp) {
+            envc++;
+            envp++;
+        }
+    }
+
+    u64* envp_addresses = malloc(envc * sizeof(u64));
+
+    for (int i = 0; i < envc; i++) {
+        char* env;
+        if (i < config->envc) {
+            env = config->envp[i];
+        } else {
+            env = environ[i - config->envc];
+        }
+        rsp = stack_push_string(rsp, env);
+        envp_addresses[i] = rsp;
+    }
+    
+
     rsp &= ~0xF; // Align to 16 bytes
 
     auxv_t auxv_entries[16] =
@@ -108,7 +134,7 @@ void loader_run_elf(loader_config_t* config) {
     u16 size_needed =
         16 * auxv_count + // aux vector entries
         8 + // null terminator
-        config->envc * 8 + // envp
+        envc * 8 + // envp
         8 + // null terminator
         config->argc * 8 + // argv
         8; // argc
@@ -128,7 +154,9 @@ void loader_run_elf(loader_config_t* config) {
     // End of environment variables
     rsp = stack_push(rsp, 0);
 
-    // TODO: push environment variables
+    for (int i = envc - 1; i >= 0; i--) {
+        rsp = stack_push(rsp, envp_addresses[i]);
+    }
 
     // End of arguments
     rsp = stack_push(rsp, 0);
@@ -149,7 +177,7 @@ void loader_run_elf(loader_config_t* config) {
     felix86_recompiler_config_t fconfig = {
         .testing = false,
         .optimize = !config->dont_optimize,
-        .use_interpreter = config->interpreter,
+        .use_interpreter = config->use_interpreter,
         .print_blocks = config->print_blocks,
         .base_address = (u64)elf->program
     };
