@@ -220,7 +220,11 @@ IR_HANDLE(push_r64) { // push r16/64 - 0x50-0x57
     ir_instruction_t* size = ir_emit_immediate(state, inst->operand_reg.reg.size == X86_REG_SIZE_WORD ? 2 : 8);
     ir_instruction_t* rsp_sub = ir_emit_sub(state, rsp, size);
     ir_instruction_t* reg = ir_emit_get_reg(state, &inst->operand_reg);
-    ir_emit_write_memory(state, &inst->prefixes, rsp_sub, reg);
+    if (inst->operand_reg.reg.size == X86_REG_SIZE_WORD) {
+        ir_emit_write_word(state, rsp_sub, reg);
+    } else {
+        ir_emit_write_qword(state, rsp_sub, reg);
+    }
     ir_emit_set_reg(state, &rsp_reg, rsp_sub);
 }
 
@@ -230,7 +234,12 @@ IR_HANDLE(pop_r64) { // pop r16/64 - 0x58-0x5f
     rsp_reg.reg.ref = X86_REF_RSP;
     rsp_reg.reg.size = X86_REG_SIZE_QWORD;
     ir_instruction_t* rsp = ir_emit_get_reg(state, &rsp_reg);
-    ir_instruction_t* reg = ir_emit_read_memory(state, &inst->prefixes, rsp);
+    ir_instruction_t* reg;
+    if (inst->operand_reg.reg.size == X86_REG_SIZE_WORD) {
+        reg = ir_emit_read_word(state, rsp);
+    } else {
+        reg = ir_emit_read_qword(state, rsp);
+    }
     ir_instruction_t* size = ir_emit_immediate(state, inst->operand_reg.reg.size == X86_REG_SIZE_WORD ? 2 : 8);
     ir_instruction_t* rsp_add = ir_emit_add(state, rsp, size);
     ir_emit_set_reg(state, &inst->operand_reg, reg);

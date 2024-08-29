@@ -64,6 +64,7 @@ static void interrupt(void* context, u8 vector) {}
     void verify_s(bool value) { s = value; } \
     void verify_o(bool value) { o = value; } \
     u8* data; \
+    u8* stack; \
 private: \
     void emit_code(); \
     void verify_checks() { \
@@ -94,9 +95,11 @@ TEST_CASE(#name, "[felix86]") { \
 } \
 Code_##name::Code_##name() : Xbyak::CodeGenerator(0x1000, malloc(0x2000)) { \
     data = (u8*)getCode(); \
+    stack = data + 0x2000; \
+    mov(rsp, (u64)stack); \
     emit_code(); \
     hlt(); /* emit a hlt instruction to stop the recompiler */ \
-    felix86_recompiler_config_t config = { .testing = true, .optimize = true, .print_blocks = true }; \
+    felix86_recompiler_config_t config = { .testing = true, .optimize = true, .print_blocks = true, .use_interpreter = true }; \
     recompiler = felix86_recompiler_create(&config); \
     felix86_set_guest(recompiler, X86_REF_RIP, (u64)data); \
     felix86_recompiler_run(recompiler, 0); \
@@ -135,10 +138,7 @@ Code_multi_##name::Code_multi_##name() : Xbyak::CodeGenerator(0x1000, malloc(0x2
     L(fail); \
     mov(rax, 0); \
     hlt(); \
-    for(int i = 0; i < 200; i++) { \
-        printf("%02x ", data[i]); \
-    } \
-    felix86_recompiler_config_t config = { .testing = true, .optimize = true, .print_blocks = true }; \
+    felix86_recompiler_config_t config = { .testing = true, .optimize = true, .print_blocks = true, .use_interpreter = true }; \
     felix86_recompiler_t* recompiler = felix86_recompiler_create(&config); \
     felix86_set_guest(recompiler, X86_REF_RIP, (u64)data); \
     felix86_recompiler_run(recompiler, 0); \

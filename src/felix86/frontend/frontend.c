@@ -48,6 +48,7 @@ typedef enum : u16 {
     REG_MM_FLAG = 128, // reg is an mm register
     RM_MM_FLAG = 256, // rm is an mm register
     REG_EAX_OVERRIDE_FLAG = 512,
+    DEFAULT_U64_FLAG = 1024,
 } decoding_flags_e;
 
 typedef struct {
@@ -318,7 +319,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         primary = secondary_table[opcode];
     }
 
-    u8 size = X86_REG_SIZE_DWORD;
+    u8 size = (primary.decoding_flags & DEFAULT_U64_FLAG) ? X86_REG_SIZE_QWORD : X86_REG_SIZE_DWORD;
     if (primary.decoding_flags & BYTE_OVERRIDE_FLAG) {
         inst.prefixes.byte_override = true;
         size = X86_REG_SIZE_BYTE_LOW;
@@ -372,7 +373,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         size_rm = X86_REG_SIZE_BYTE_LOW;
     } else if (primary.decoding_flags & RM_ALWAYS_WORD_FLAG) {
         size_rm = X86_REG_SIZE_WORD;
-    } else if (primary.decoding_flags & RM_AT_LEAST_DWORD_FLAG && size_rm < X86_REG_SIZE_DWORD) {
+    } else if ((primary.decoding_flags & RM_AT_LEAST_DWORD_FLAG) && size_rm < X86_REG_SIZE_DWORD) {
         size_rm = X86_REG_SIZE_DWORD;
     }
 

@@ -136,6 +136,16 @@ typedef enum : u8 {
 	X86_REG_SIZE_VECTOR,
 } x86_register_size_e;
 
+typedef enum : u8 {
+	X86_MEMORY_SIZE_BYTE,
+	X86_MEMORY_SIZE_WORD,
+	X86_MEMORY_SIZE_DWORD,
+	X86_MEMORY_SIZE_QWORD,
+	X86_MEMORY_SIZE_128_BIT,
+	X86_MEMORY_SIZE_256_BIT,
+	X86_MEMORY_SIZE_512_BIT,
+} x86_memory_size_e;
+
 typedef union {
 	struct {
 		u16 rex_w : 1;

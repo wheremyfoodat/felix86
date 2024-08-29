@@ -17,3 +17,12 @@ FELIX86_TEST(cpuid_dead_store) {
     verify(X86_REF_RCX, 6);
     verify(X86_REF_RDX, 5);
 }
+
+FELIX86_TEST(push_pop64) {
+    mov(rax, 0x123456789bcdef0);
+    push(rax);
+    mov(rbx, 0);
+    pop(rbx);
+
+    verify(X86_REF_RBX, 0x123456789bcdef0);
+}
