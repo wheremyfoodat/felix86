@@ -520,6 +520,10 @@ IR_HANDLE(cmovcc) { // cmovcc - 0x0f 0x40-0x4f
     ir_emit_cmovcc(state, inst);
 }
 
+IR_HANDLE(movq_mm_rm32) { // movq mm, rm32 - 0x0f 0x6e
+    ERROR("Unimplemented instruction: movq mm, rm32 - 0x0f 0x6e");
+}
+
 IR_HANDLE(movq_xmm_rm32) { // movq xmm, rm32 - 0x0f 0x6e
     x86_size_e size_e = inst->operand_rm.size;
     ir_instruction_t* rm = ir_emit_get_rm(state, &inst->operand_rm);

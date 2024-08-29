@@ -157,3 +157,11 @@ FELIX86_TEST(movq_simple) {
     verify(X86_REF_RAX, 0xBEEFDEADDEADC0DE);
     verify_xmm(X86_REF_XMM15, xmm);
 }
+
+FELIX86_TEST(mov_r64_rm64) {
+    static u64 mem = 0x123456789ABCDEF0;
+    mov(r8, (u64)&mem);
+    mov(r15, qword[r8]);
+
+    verify(X86_REF_R15, 0x123456789ABCDEF0);
+}
