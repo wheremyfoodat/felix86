@@ -38,7 +38,7 @@ x86_operand_t get_full_reg(x86_ref_e ref) {
 }
 
 ir_instruction_t* ir_emit_two_operand(ir_emitter_state_t* state, ir_opcode_e opcode, ir_instruction_t* source1, ir_instruction_t* source2) {
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
     instruction->opcode = opcode;
     instruction->type = IR_TYPE_TWO_OPERAND;
     instruction->two_operand.source1 = source1;
@@ -49,7 +49,7 @@ ir_instruction_t* ir_emit_two_operand(ir_emitter_state_t* state, ir_opcode_e opc
 }
 
 ir_instruction_t* ir_emit_one_operand(ir_emitter_state_t* state, ir_opcode_e opcode, ir_instruction_t* source) {
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
     instruction->opcode = opcode;
     instruction->type = IR_TYPE_ONE_OPERAND;
     instruction->one_operand.source = source;
@@ -58,7 +58,7 @@ ir_instruction_t* ir_emit_one_operand(ir_emitter_state_t* state, ir_opcode_e opc
 }
 
 ir_instruction_t* ir_emit_two_operand_immediates(ir_emitter_state_t* state, ir_opcode_e opcode, ir_instruction_t* source1, ir_instruction_t* source2, u32 imm32_1, u32 imm32_2) {
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
     instruction->opcode = opcode;
     instruction->type = IR_TYPE_TWO_OPERAND_IMMEDIATES;
     instruction->two_operand_immediates.source1 = source1;
@@ -167,7 +167,7 @@ ir_instruction_t* ir_emit_lea(ir_emitter_state_t* state, x86_operand_t* rm_opera
     ir_instruction_t* base;
     if (rm_operand->memory.base == X86_REF_RIP) {
         ir_instruction_t* rip = ir_emit_get_guest(state, X86_REF_RIP);
-        u64 offsetWithinBlock = (state->current_address - state->block->start_address) + state->current_instruction_length;
+        u64 offsetWithinBlock = (state->current_address - state->current_block->start_address) + state->current_instruction_length;
         ir_instruction_t* offset = ir_emit_immediate(state, offsetWithinBlock);
         ir_instruction_t* currentRip = ir_emit_add(state, rip, offset);
         base = currentRip;
@@ -213,51 +213,44 @@ ir_instruction_t* ir_emit_sext32(ir_emitter_state_t* state, ir_instruction_t* so
 
 ir_instruction_t* ir_emit_syscall(ir_emitter_state_t* state)
 {
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
     instruction->opcode = IR_SYSCALL;
     instruction->type = IR_TYPE_NO_OPERANDS;
     return instruction;
 }
 
-ir_instruction_t* ir_emit_ternary(ir_emitter_state_t* state, ir_instruction_t* condition, ir_instruction_t* true_value, ir_instruction_t* false_value)
+ir_instruction_t* ir_emit_exit(ir_emitter_state_t* state)
 {
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
-    instruction->opcode = IR_TERNARY;
-    instruction->type = IR_TYPE_TERNARY;
-    instruction->ternary.condition = condition;
-    instruction->ternary.true_value = true_value;
-    instruction->ternary.false_value = false_value;
-    condition->uses++;
-    true_value->uses++;
-    false_value->uses++;
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
+    instruction->opcode = IR_EXIT;
+    instruction->type = IR_TYPE_TERMINATION;
     return instruction;
 }
 
-ir_instruction_t* ir_emit_jump(ir_emitter_state_t* state, ir_instruction_t* target)
+ir_instruction_t* ir_emit_jump(ir_emitter_state_t* state, ir_block_t* target)
 {
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
     instruction->opcode = IR_JUMP;
-    instruction->type = IR_TYPE_ONE_OPERAND;
-    instruction->one_operand.source = target;
-    target->uses++;
+    instruction->type = IR_TYPE_TERMINATION;
+    instruction->jump.target = target;
     return instruction;
 }
 
-ir_instruction_t* ir_emit_jump_if_true(ir_emitter_state_t* state, ir_instruction_t* condition, ir_instruction_t* target)
+ir_instruction_t* ir_emit_jump_conditional(ir_emitter_state_t* state, ir_instruction_t* condition, ir_block_t* target_true, ir_block_t* target_false)
 {
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
-    instruction->opcode = IR_JUMP_IF_TRUE;
-    instruction->type = IR_TYPE_TWO_OPERAND;
-    instruction->two_operand.source1 = condition;
-    instruction->two_operand.source2 = target;
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
+    instruction->opcode = IR_JUMP_CONDITIONAL;
+    instruction->type = IR_TYPE_TERMINATION;
+    instruction->jump_conditional.condition = condition;
+    instruction->jump_conditional.target_true = target_true;
+    instruction->jump_conditional.target_false = target_false;
     condition->uses++;
-    target->uses++;
     return instruction;
 }
 
 ir_instruction_t* ir_emit_insert_integer_to_vector(ir_emitter_state_t* state, ir_instruction_t* vector_dest, ir_instruction_t* source, u8 size, u8 index)
 {
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
     instruction->opcode = IR_INSERT_INTEGER_TO_VECTOR;
     instruction->type = IR_TYPE_TWO_OPERAND_IMMEDIATES;
     instruction->two_operand_immediates.source1 = vector_dest;
@@ -271,7 +264,7 @@ ir_instruction_t* ir_emit_insert_integer_to_vector(ir_emitter_state_t* state, ir
 
 ir_instruction_t* ir_emit_extract_integer_from_vector(ir_emitter_state_t* state, ir_instruction_t* vector_src, u8 size, u8 index)
 {
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
     instruction->opcode = IR_EXTRACT_INTEGER_FROM_VECTOR;
     instruction->type = IR_TYPE_TWO_OPERAND_IMMEDIATES;
     instruction->two_operand_immediates.source1 = vector_src;
@@ -287,7 +280,7 @@ ir_instruction_t* ir_emit_get_guest(ir_emitter_state_t* state, x86_ref_e ref)
         ERROR("Invalid register reference");
     }
 
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
     instruction->opcode = IR_GET_GUEST;
     instruction->type = IR_TYPE_GET_GUEST;
     instruction->get_guest.ref = ref;
@@ -296,7 +289,7 @@ ir_instruction_t* ir_emit_get_guest(ir_emitter_state_t* state, x86_ref_e ref)
 
 ir_instruction_t* ir_emit_set_guest(ir_emitter_state_t* state, x86_ref_e ref, ir_instruction_t* source)
 {
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
     instruction->opcode = IR_SET_GUEST;
     instruction->type = IR_TYPE_SET_GUEST;
     instruction->set_guest.ref = ref;
@@ -305,26 +298,26 @@ ir_instruction_t* ir_emit_set_guest(ir_emitter_state_t* state, x86_ref_e ref, ir
     return instruction;
 }
 
-ir_instruction_t* ir_emit_get_flag(ir_emitter_state_t* state, x86_flag_e flag) {
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
-    instruction->opcode = IR_GET_FLAG;
-    instruction->type = IR_TYPE_GET_FLAG;
-    instruction->get_flag.flag = flag;
+ir_instruction_t* ir_emit_get_flag(ir_emitter_state_t* state, x86_ref_e flag) {
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
+    instruction->opcode = IR_GET_GUEST;
+    instruction->type = IR_TYPE_GET_GUEST;
+    instruction->get_guest.ref = flag;
     return instruction;
 }
 
-ir_instruction_t* ir_emit_get_flag_not(ir_emitter_state_t* state, x86_flag_e flag) {
+ir_instruction_t* ir_emit_get_flag_not(ir_emitter_state_t* state, x86_ref_e flag) {
     ir_instruction_t* instruction = ir_emit_get_flag(state, flag);
     ir_instruction_t* one = ir_emit_immediate(state, 1);
     return ir_emit_xor(state, instruction, one);
 }
 
-ir_instruction_t* ir_emit_set_flag(ir_emitter_state_t* state, x86_flag_e flag, ir_instruction_t* source) {
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
-    instruction->opcode = IR_SET_FLAG;
-    instruction->type = IR_TYPE_SET_FLAG;
-    instruction->set_flag.flag = flag;
-    instruction->set_flag.source = source;
+ir_instruction_t* ir_emit_set_flag(ir_emitter_state_t* state, x86_ref_e flag, ir_instruction_t* source) {
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
+    instruction->opcode = IR_SET_GUEST;
+    instruction->type = IR_TYPE_SET_GUEST;
+    instruction->set_guest.ref = flag;
+    instruction->set_guest.source = source;
     source->uses++;
     return instruction;
 }
@@ -371,7 +364,7 @@ ir_instruction_t* ir_emit_write_qword(ir_emitter_state_t* state, ir_instruction_
 
 ir_instruction_t* ir_emit_cpuid(ir_emitter_state_t* state)
 {
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
     instruction->opcode = IR_CPUID;
     instruction->type = IR_TYPE_NO_OPERANDS;
     return instruction;
@@ -379,7 +372,7 @@ ir_instruction_t* ir_emit_cpuid(ir_emitter_state_t* state)
 
 ir_instruction_t* ir_emit_immediate(ir_emitter_state_t* state, u64 value)
 {
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
     instruction->opcode = IR_IMMEDIATE;
     instruction->type = IR_TYPE_LOAD_IMMEDIATE;
     instruction->load_immediate.immediate = value;
@@ -397,7 +390,7 @@ ir_instruction_t* ir_emit_immediate_sext(ir_emitter_state_t* state, x86_operand_
         default: ERROR("Invalid immediate size");
     }
 
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
     instruction->opcode = IR_IMMEDIATE;
     instruction->type = IR_TYPE_LOAD_IMMEDIATE;
     instruction->load_immediate.immediate = value;
@@ -714,7 +707,7 @@ ir_instruction_t* ir_emit_get_carry_add(ir_emitter_state_t* state, ir_instructio
 
 ir_instruction_t* ir_emit_get_carry_adc(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2, x86_size_e size_e)
 {
-    ir_instruction_t* carry_in = ir_emit_get_flag(state, X86_FLAG_CF);
+    ir_instruction_t* carry_in = ir_emit_get_flag(state, X86_REF_CF);
     ir_instruction_t* sum = ir_emit_add(state, source1, source2);
     ir_instruction_t* sum_with_carry = ir_emit_add(state, sum, carry_in);
 
@@ -734,7 +727,7 @@ ir_instruction_t* ir_emit_get_carry_sub(ir_emitter_state_t* state, ir_instructio
 
 ir_instruction_t* ir_emit_get_carry_sbb(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2, x86_size_e size_e)
 {
-    ir_instruction_t* carry_in = ir_emit_get_flag(state, X86_FLAG_CF);
+    ir_instruction_t* carry_in = ir_emit_get_flag(state, X86_REF_CF);
     ir_instruction_t* sum = ir_emit_sub(state, source1, source2);
     ir_instruction_t* sum_with_carry = ir_emit_sub(state, sum, carry_in);
 
@@ -765,7 +758,7 @@ ir_instruction_t* ir_emit_get_aux_sub(ir_emitter_state_t* state, ir_instruction_
 
 ir_instruction_t* ir_emit_vector_mask_elements(ir_emitter_state_t* state, ir_instruction_t* vector, u32 mask)
 {
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
     instruction->opcode = IR_VECTOR_MASK_ELEMENTS;
     instruction->type = IR_TYPE_TWO_OPERAND_IMMEDIATES;
     instruction->two_operand_immediates.source1 = vector;
@@ -775,30 +768,14 @@ ir_instruction_t* ir_emit_vector_mask_elements(ir_emitter_state_t* state, ir_ins
 
 ir_instruction_t* ir_emit_set_cpazso(ir_emitter_state_t* state, ir_instruction_t* c, ir_instruction_t* p, ir_instruction_t* a, ir_instruction_t* z, ir_instruction_t* s, ir_instruction_t* o)
 {
-    if (c) ir_emit_set_flag(state, X86_FLAG_CF, c);
-    if (p) ir_emit_set_flag(state, X86_FLAG_PF, p);
-    if (a) ir_emit_set_flag(state, X86_FLAG_AF, a);
-    if (z) ir_emit_set_flag(state, X86_FLAG_ZF, z);
-    if (s) ir_emit_set_flag(state, X86_FLAG_SF, s);
-    if (o) ir_emit_set_flag(state, X86_FLAG_OF, o);
+    if (c) ir_emit_set_flag(state, X86_REF_CF, c);
+    if (p) ir_emit_set_flag(state, X86_REF_PF, p);
+    if (a) ir_emit_set_flag(state, X86_REF_AF, a);
+    if (z) ir_emit_set_flag(state, X86_REF_ZF, z);
+    if (s) ir_emit_set_flag(state, X86_REF_SF, s);
+    if (o) ir_emit_set_flag(state, X86_REF_OF, o);
 
     return NULL;
-}
-
-ir_instruction_t* ir_emit_debug_info_compile_time(ir_emitter_state_t* state, const char* format, ...)
-{
-    char* final = malloc(140);
-    ir_instruction_t* instruction = ir_ilist_push_back(state->block->instructions);
-    instruction->opcode = IR_DEBUG_COMPILETIME;
-    instruction->type = IR_TYPE_DEBUG;
-    instruction->debug.text = final;
-
-    va_list args;
-    va_start(args, format);
-    int off = vsnprintf(final, 140, format, args);
-    va_end(args);
-
-    return instruction;
 }
 
 void ir_emit_group1_imm(ir_emitter_state_t* state, x86_instruction_t* inst) {
@@ -821,7 +798,7 @@ void ir_emit_group1_imm(ir_emitter_state_t* state, x86_instruction_t* inst) {
             break;
         }
         case X86_GROUP1_ADC: {
-            ir_instruction_t* carry_in = ir_emit_get_flag(state, X86_FLAG_CF);
+            ir_instruction_t* carry_in = ir_emit_get_flag(state, X86_REF_CF);
             ir_instruction_t* imm_carry = ir_emit_add(state, imm, carry_in);
             result = ir_emit_add(state, rm, imm_carry);
             c = ir_emit_get_carry_adc(state, rm, imm_carry, inst->operand_rm.size);
@@ -830,7 +807,7 @@ void ir_emit_group1_imm(ir_emitter_state_t* state, x86_instruction_t* inst) {
             break;
         }
         case X86_GROUP1_SBB: {
-            ir_instruction_t* carry_in = ir_emit_get_flag(state, X86_FLAG_CF);
+            ir_instruction_t* carry_in = ir_emit_get_flag(state, X86_REF_CF);
             ir_instruction_t* imm_carry = ir_emit_add(state, imm, carry_in);
             result = ir_emit_sub(state, rm, imm_carry);
             c = ir_emit_get_carry_sbb(state, rm, imm_carry, inst->operand_rm.size);
@@ -1011,22 +988,22 @@ void ir_emit_group3_imm(ir_emitter_state_t* state, x86_instruction_t* inst) {
 
 ir_instruction_t* ir_emit_get_cc(ir_emitter_state_t* state, u8 opcode) {
     switch (opcode & 0xF) {
-        case 0: return ir_emit_get_flag(state, X86_FLAG_OF);
-        case 1: return ir_emit_get_flag_not(state, X86_FLAG_OF);
-        case 2: return ir_emit_get_flag(state, X86_FLAG_CF);
-        case 3: return ir_emit_get_flag_not(state, X86_FLAG_CF);
-        case 4: return ir_emit_get_flag(state, X86_FLAG_ZF);
-        case 5: return ir_emit_get_flag_not(state, X86_FLAG_ZF);
-        case 6: return ir_emit_or(state, ir_emit_get_flag(state, X86_FLAG_CF), ir_emit_get_flag(state, X86_FLAG_ZF));
-        case 7: return ir_emit_and(state, ir_emit_get_flag_not(state, X86_FLAG_CF), ir_emit_get_flag_not(state, X86_FLAG_ZF));
-        case 8: return ir_emit_get_flag(state, X86_FLAG_SF);
-        case 9: return ir_emit_get_flag_not(state, X86_FLAG_SF);
-        case 10: return ir_emit_get_flag(state, X86_FLAG_PF);
-        case 11: return ir_emit_get_flag_not(state, X86_FLAG_PF);
-        case 12: return ir_emit_not_equal(state, ir_emit_get_flag(state, X86_FLAG_SF), ir_emit_get_flag(state, X86_FLAG_OF));
-        case 13: return ir_emit_equal(state, ir_emit_get_flag(state, X86_FLAG_SF), ir_emit_get_flag(state, X86_FLAG_OF));
-        case 14: return ir_emit_or(state, ir_emit_equal(state, ir_emit_get_flag(state, X86_FLAG_ZF), ir_emit_immediate(state, 1)), ir_emit_not_equal(state, ir_emit_get_flag(state, X86_FLAG_SF), ir_emit_get_flag(state, X86_FLAG_OF)));
-        case 15: return ir_emit_and(state, ir_emit_equal(state, ir_emit_get_flag(state, X86_FLAG_ZF), ir_emit_immediate(state, 0)), ir_emit_equal(state, ir_emit_get_flag(state, X86_FLAG_SF), ir_emit_get_flag(state, X86_FLAG_OF)));
+        case 0: return ir_emit_get_flag(state, X86_REF_OF);
+        case 1: return ir_emit_get_flag_not(state, X86_REF_OF);
+        case 2: return ir_emit_get_flag(state, X86_REF_CF);
+        case 3: return ir_emit_get_flag_not(state, X86_REF_CF);
+        case 4: return ir_emit_get_flag(state, X86_REF_ZF);
+        case 5: return ir_emit_get_flag_not(state, X86_REF_ZF);
+        case 6: return ir_emit_or(state, ir_emit_get_flag(state, X86_REF_CF), ir_emit_get_flag(state, X86_REF_ZF));
+        case 7: return ir_emit_and(state, ir_emit_get_flag_not(state, X86_REF_CF), ir_emit_get_flag_not(state, X86_REF_ZF));
+        case 8: return ir_emit_get_flag(state, X86_REF_SF);
+        case 9: return ir_emit_get_flag_not(state, X86_REF_SF);
+        case 10: return ir_emit_get_flag(state, X86_REF_PF);
+        case 11: return ir_emit_get_flag_not(state, X86_REF_PF);
+        case 12: return ir_emit_not_equal(state, ir_emit_get_flag(state, X86_REF_SF), ir_emit_get_flag(state, X86_REF_OF));
+        case 13: return ir_emit_equal(state, ir_emit_get_flag(state, X86_REF_SF), ir_emit_get_flag(state, X86_REF_OF));
+        case 14: return ir_emit_or(state, ir_emit_equal(state, ir_emit_get_flag(state, X86_REF_ZF), ir_emit_immediate(state, 1)), ir_emit_not_equal(state, ir_emit_get_flag(state, X86_REF_SF), ir_emit_get_flag(state, X86_REF_OF)));
+        case 15: return ir_emit_and(state, ir_emit_equal(state, ir_emit_get_flag(state, X86_REF_ZF), ir_emit_immediate(state, 0)), ir_emit_equal(state, ir_emit_get_flag(state, X86_REF_SF), ir_emit_get_flag(state, X86_REF_OF)));
     }
 
     ERROR("Invalid condition code");
@@ -1036,11 +1013,13 @@ ir_instruction_t* ir_emit_jcc(ir_emitter_state_t* state, x86_instruction_t* inst
     u8 inst_length = inst->length;
     ir_instruction_t* imm = ir_emit_immediate_sext(state, &inst->operand_imm);
     ir_instruction_t* condition = ir_emit_get_cc(state, inst->opcode);
-    ir_instruction_t* jump_address_false = ir_emit_immediate(state, state->current_address + inst_length);
-    ir_instruction_t* jump_address_true = ir_emit_add(state, jump_address_false, imm);
-    ir_instruction_t* jump = ir_emit_ternary(state, condition, jump_address_true, jump_address_false);
+    u64 jump_address_false = state->current_address + inst_length;
+    u64 jump_address_true = state->current_address + inst_length + imm->load_immediate.immediate;
     state->exit = true;
-    return ir_emit_jump(state, jump);
+
+    ir_block_t* block_true = ir_function_get_block(state->function, state->current_block, jump_address_true);
+    ir_block_t* block_false = ir_function_get_block(state->function, state->current_block, jump_address_false);
+    return ir_emit_jump_conditional(state, condition, block_true, block_false);
 }
 
 ir_instruction_t* ir_emit_setcc(ir_emitter_state_t* state, x86_instruction_t* inst) {
@@ -1048,39 +1027,40 @@ ir_instruction_t* ir_emit_setcc(ir_emitter_state_t* state, x86_instruction_t* in
 }
 
 ir_instruction_t* ir_emit_cmovcc(ir_emitter_state_t* state, x86_instruction_t* inst) {
-    ir_instruction_t* rm = ir_emit_get_rm(state, &inst->operand_rm);
-    ir_instruction_t* reg = ir_emit_get_reg(state, &inst->operand_reg);
-    ir_instruction_t* condition = ir_emit_get_cc(state, inst->opcode);
-    ir_instruction_t* value = ir_emit_ternary(state, condition, rm, reg);
-    return ir_emit_set_reg(state, &inst->operand_reg, value);
+    ERROR("Unimplemented: cmovcc");
+    // ir_instruction_t* rm = ir_emit_get_rm(state, &inst->operand_rm);
+    // ir_instruction_t* reg = ir_emit_get_reg(state, &inst->operand_reg);
+    // ir_instruction_t* condition = ir_emit_get_cc(state, inst->opcode);
+    // ir_instruction_t* value = ir_emit_ternary(state, condition, rm, reg);
+    // return ir_emit_set_reg(state, &inst->operand_reg, value);
 }
 
-void ir_emit_rep_start(ir_emitter_state_t* state, x86_size_e size_e) {
-    state->exit = true;
+// void ir_emit_rep_start(ir_emitter_state_t* state, x86_size_e size_e) {
+//     state->exit = true;
 
-    x86_operand_t rcx = get_full_reg(X86_REF_RCX);
-    ir_instruction_t* condition = ir_emit_equal(state, ir_emit_get_reg(state, &rcx), ir_emit_immediate(state, 0));
-    ir_instruction_t* jump_address = ir_emit_immediate(state, state->current_address + state->current_instruction_length);
+//     x86_operand_t rcx = get_full_reg(X86_REF_RCX);
+//     ir_instruction_t* condition = ir_emit_equal(state, ir_emit_get_reg(state, &rcx), ir_emit_immediate(state, 0));
+//     ir_instruction_t* jump_address = ir_emit_immediate(state, state->current_address + state->current_instruction_length);
 
-    ir_emit_jump_if_true(state, condition, jump_address);
-}
+//     ir_emit_jump_if_true(state, condition, jump_address);
+// }
 
-void ir_emit_rep_end(ir_emitter_state_t* state, bool is_nz, x86_size_e size_e) {
-    x86_operand_t rcx_reg = get_full_reg(X86_REF_RCX);
-    rcx_reg.size = size_e;
+// void ir_emit_rep_end(ir_emitter_state_t* state, bool is_nz, x86_size_e size_e) {
+//     x86_operand_t rcx_reg = get_full_reg(X86_REF_RCX);
+//     rcx_reg.size = size_e;
 
-    ir_instruction_t* rcx = ir_emit_get_reg(state, &rcx_reg);
-    ir_instruction_t* rcx_sub = ir_emit_sub(state, rcx, ir_emit_immediate(state, 1));
-    ir_emit_set_reg(state, &rcx_reg, rcx_sub);
+//     ir_instruction_t* rcx = ir_emit_get_reg(state, &rcx_reg);
+//     ir_instruction_t* rcx_sub = ir_emit_sub(state, rcx, ir_emit_immediate(state, 1));
+//     ir_emit_set_reg(state, &rcx_reg, rcx_sub);
 
-    ir_instruction_t* zero = ir_emit_immediate(state, 0);
-    ir_instruction_t* zf = ir_emit_get_flag(state, X86_FLAG_ZF);
-    ir_instruction_t* condition_exit_rep = is_nz ? ir_emit_not_equal(state, zf, zero) : ir_emit_equal(state, zf, zero);
-    ir_instruction_t* condition_exit_c = ir_emit_equal(state, rcx, zero);
-    ir_instruction_t* condition = ir_emit_or(state, condition_exit_rep, condition_exit_c);
-    ir_instruction_t* jump_address_false = ir_emit_immediate(state, state->current_address); // repeat
-    ir_instruction_t* jump_address_true = ir_emit_immediate(state, state->current_address + state->current_instruction_length); // exit
-    ir_instruction_t* jump = ir_emit_ternary(state, condition, jump_address_true, jump_address_false);
+//     ir_instruction_t* zero = ir_emit_immediate(state, 0);
+//     ir_instruction_t* zf = ir_emit_get_flag(state, X86_REF_ZF);
+//     ir_instruction_t* condition_exit_rep = is_nz ? ir_emit_not_equal(state, zf, zero) : ir_emit_equal(state, zf, zero);
+//     ir_instruction_t* condition_exit_c = ir_emit_equal(state, rcx, zero);
+//     ir_instruction_t* condition = ir_emit_or(state, condition_exit_rep, condition_exit_c);
+//     ir_instruction_t* jump_address_false = ir_emit_immediate(state, state->current_address); // repeat
+//     ir_instruction_t* jump_address_true = ir_emit_immediate(state, state->current_address + state->current_instruction_length); // exit
+//     ir_instruction_t* jump = ir_emit_ternary(state, condition, jump_address_true, jump_address_false);
 
-    ir_emit_jump(state, jump);
-}
+//     ir_emit_jump(state, jump);
+// }

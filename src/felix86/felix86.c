@@ -2,7 +2,7 @@
 #include "felix86/common/log.h"
 #include "felix86/common/state.h"
 #include "felix86/frontend/frontend.h"
-#include "felix86/ir/block_metadata.h"
+#include "felix86/ir/function_cache.h"
 #include "felix86/ir/emitter.h"
 #include "felix86/ir/passes.h"
 #include "felix86/ir/print.h"
@@ -10,7 +10,7 @@
 #include <stdlib.h>
 
 struct felix86_recompiler_s {
-    ir_block_metadata_t* block_metadata;
+    ir_function_cache_t* function_cache;
     x86_state_t state;
     bool testing;
     bool optimize;
@@ -21,7 +21,7 @@ struct felix86_recompiler_s {
 
 felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* config) {
     felix86_recompiler_t* recompiler = calloc(1, sizeof(felix86_recompiler_t));
-    recompiler->block_metadata = ir_block_metadata_create();
+    recompiler->function_cache = ir_function_cache_create();
     recompiler->testing = config->testing;
     recompiler->optimize = config->optimize;
     recompiler->print_blocks = config->print_blocks;
@@ -32,7 +32,7 @@ felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* con
 }
 
 void felix86_recompiler_destroy(felix86_recompiler_t* recompiler) {
-    ir_block_metadata_destroy(recompiler->block_metadata);
+    // ir_function_cache_destroy(recompiler->function_cache);
     free(recompiler);
 }
 
@@ -72,8 +72,6 @@ u64 felix86_get_guest(felix86_recompiler_t* recompiler, x86_ref_e ref) {
             return recompiler->state.gprs[15];
         case X86_REF_RIP:
             return recompiler->state.rip;
-        case X86_REF_FLAGS:
-            return recompiler->state.flags;
         case X86_REF_GS:
             return recompiler->state.gs;
         case X86_REF_FS:
@@ -136,9 +134,6 @@ void felix86_set_guest(felix86_recompiler_t* recompiler, x86_ref_e ref, u64 valu
         case X86_REF_RIP:
             recompiler->state.rip = value;
             break;
-        case X86_REF_FLAGS:
-            recompiler->state.flags = value;
-            break;
         case X86_REF_GS:
             recompiler->state.gs = value;
             break;
@@ -166,46 +161,61 @@ void felix86_set_guest_xmm(felix86_recompiler_t* recompiler, x86_ref_e ref, xmm_
     recompiler->state.xmm[ref - X86_REF_XMM0] = value;
 }
 
-felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler, u64 cycles) {
+felix86_exit_reason_e felix86_recompiler_run_v2(felix86_recompiler_t* recompiler) {
+    u64 address = recompiler->state.rip;
+    ir_function_t* function = ir_function_cache_get_function(recompiler->function_cache, address);
+
+    frontend_compile_function(function);
+
+    return DoneTesting;
+}
+
+felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler) {
     if (!recompiler->use_interpreter) {
         ERROR("Interpreter not enabled");
     }
 
+    return felix86_recompiler_run_v2(recompiler);
+
     // TODO: check for backend block? needs asm dispatcher
-    while (true) {
-        ir_block_t* block = ir_block_metadata_get_block(recompiler->block_metadata, recompiler->state.rip);
+    // while (true) {
+    //     ir_block_t* block = ir_function_cache_get_block(recompiler->block_metadata, recompiler->state.rip);
 
-        if (!block->compiled) {
-            ir_emitter_state_t state = {0};
-            state.block = block;
-            state.current_address = recompiler->state.rip;
-            state.base_address = recompiler->base_address;
-            state.exit = false;
-            state.testing = recompiler->testing;
-            state.debug_info = recompiler->print_blocks;
-            frontend_compile_block(&state);
+    //     if (!block->compiled) {
+    //         ir_emitter_state_t state = {0};
+    //         state.block = block;
+    //         state.current_address = recompiler->state.rip;
+    //         state.base_address = recompiler->base_address;
+    //         state.exit = false;
+    //         state.testing = recompiler->testing;
+    //         state.debug_info = recompiler->print_blocks;
+    //         frontend_compile_block(&state);
 
-            if (recompiler->optimize) {
-                ir_const_propagation_pass(block);
-                ir_local_common_subexpression_elimination_pass_v2(block);
-                ir_copy_propagation_pass(block);
-                ir_dead_code_elimination_pass(block);
-                ir_verifier_pass(block);
-            }
+    //         if (recompiler->optimize) {
+    //             ir_const_propagation_pass(block);
+    //             ir_local_common_subexpression_elimination_pass_v2(block);
+    //             ir_copy_propagation_pass(block);
+    //             ir_dead_code_elimination_pass(block);
+    //             ir_verifier_pass(block);
+    //         }
             
-            ir_naming_pass(block);
+    //         ir_naming_pass(block);
             
-            if (recompiler->print_blocks) {
-                ir_print_block(block);
-            }
-        }
+    //         if (recompiler->print_blocks) {
+    //             ir_print_block(block);
+    //         }
+    //     }
 
-        ir_interpret_block(block, &recompiler->state);
+    //     ir_interpret_block(block, &recompiler->state);
 
-        if(recompiler->testing) {
-            return OutOfCycles;
-        }
-    }
+    //     if(recompiler->testing) {
+    //         return OutOfCycles;
+    //     }
+    // }
 
-    return OutOfCycles;
+    // return OutOfCycles;
+}
+
+ir_function_t* felix86_get_function(felix86_recompiler_t* recompiler, u64 address) {
+    return ir_function_cache_get_function(recompiler->function_cache, address);
 }

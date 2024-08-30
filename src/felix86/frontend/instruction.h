@@ -104,21 +104,17 @@ typedef enum : u8 {
 	X86_REF_XMM30,
 	X86_REF_XMM31,
 	X86_REF_RIP,
-	X86_REF_FLAGS,
+	X86_REF_CF,
+	X86_REF_PF,
+	X86_REF_AF,
+	X86_REF_ZF,
+	X86_REF_SF,
+	X86_REF_OF,
 	X86_REF_GS,
 	X86_REF_FS,
 
 	X86_REF_COUNT,
 } x86_ref_e;
-
-typedef enum : u8 {
-	X86_FLAG_CF = 0,
-	X86_FLAG_PF = 2,
-	X86_FLAG_AF = 4,
-	X86_FLAG_ZF = 6,
-	X86_FLAG_SF = 7,
-	X86_FLAG_OF = 11,
-} x86_flag_e;
 
 typedef enum : u8 {
 	X86_OP_TYPE_NONE,

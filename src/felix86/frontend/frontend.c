@@ -49,7 +49,6 @@ typedef enum : u16 {
     RM_MM_FLAG = 256, // rm is an mm register
     REG_EAX_OVERRIDE_FLAG = 512,
     DEFAULT_U64_FLAG = 1024,
-    CAN_USE_REP = 2048,
 } decoding_flags_e;
 
 typedef struct {
@@ -519,31 +518,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
     inst.length = index;
     state->current_instruction_length = inst.length;
 
-    if (state->debug_info) {
-        ZydisDisassembledInstruction instruction;
-        if (ZYAN_SUCCESS(ZydisDisassembleIntel(
-        /* machine_mode:    */ ZYDIS_MACHINE_MODE_LONG_64,
-        /* runtime_address: */ state->current_address,
-        /* buffer:          */ data,
-        /* length:          */ inst.length,
-        /* instruction:     */ &instruction
-        )))
-        {
-            ir_emit_debug_info_compile_time(state, "0x%016llx: %s", state->current_address - state->base_address, instruction.text);
-        }
-    }
-
-    bool can_use_rep = (decoding_flags & CAN_USE_REP) && (prefixes.rep_z_f3 || prefixes.rep_nz_f2);
-
-    if (can_use_rep) {
-        ir_emit_rep_start(state, inst.operand_reg.size);
-    }
-
     fn(state, &inst);
-
-    if (can_use_rep) {
-        ir_emit_rep_end(state, prefixes.rep_nz_f2, inst.operand_reg.size);
-    }
 
     state->current_address += inst.length;
 }
@@ -554,5 +529,31 @@ void frontend_compile_block(ir_emitter_state_t* state)
         frontend_compile_instruction(state);
     }
 
-    state->block->compiled = true;
+    state->current_block->compiled = true;
+}
+
+void frontend_compile_function(ir_function_t* function) {
+    ir_block_list_t* current = function->first;
+    while (current) {
+        ir_emitter_state_t state = {0};
+        state.function = function;
+        state.current_block = current->block;
+        state.current_address = current->block->start_address;
+
+        // This function may add more blocks to the function due to jumps
+        // which is why this is a while loop
+        frontend_compile_block(&state);
+
+        current = current->next;
+    }
+
+    // Verify they are all compiled
+    current = function->first;
+    while (current) {
+        if (!current->block->compiled) {
+            ERROR("Block not compiled");
+        }
+
+        current = current->next;
+    }
 }

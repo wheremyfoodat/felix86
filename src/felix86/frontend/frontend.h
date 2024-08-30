@@ -7,6 +7,7 @@ extern "C" {
 #include "felix86/ir/emitter.h"
 
 void frontend_compile_block(ir_emitter_state_t* state);
+void frontend_compile_function(ir_function_t* function);
 
 #ifdef __cplusplus
 }

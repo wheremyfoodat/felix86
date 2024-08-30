@@ -185,7 +185,7 @@ void loader_run_elf(loader_config_t* config) {
     felix86_recompiler_t* recompiler = felix86_recompiler_create(&fconfig);
     felix86_set_guest(recompiler, X86_REF_RIP, entry);
     felix86_set_guest(recompiler, X86_REF_RSP, rsp);
-    felix86_recompiler_run(recompiler, 0);
+    felix86_recompiler_run(recompiler);
     felix86_recompiler_destroy(recompiler);
 
     elf_destroy(elf);

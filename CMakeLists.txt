@@ -26,7 +26,8 @@ set(FELIX86_FRONTEND_SOURCES
 )
 
 set(FELIX86_IR_SOURCES
-    src/felix86/ir/block_metadata.cpp
+    src/felix86/ir/block.c
+    src/felix86/ir/function_cache.cpp
     src/felix86/ir/emitter.c
     src/felix86/ir/handlers_weak.c
     src/felix86/ir/handlers.c

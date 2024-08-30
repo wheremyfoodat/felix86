@@ -29,10 +29,6 @@ bool ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
                     temps[instruction->name] = state->rip;
                     break;
                 }
-                case X86_REF_FLAGS: {
-                    temps[instruction->name] = state->flags;
-                    break;
-                }
                 case X86_REF_FS: {
                     temps[instruction->name] = state->fs;
                     break;
@@ -60,10 +56,6 @@ bool ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
                 }
                 case X86_REF_RIP: {
                     state->rip = temps[instruction->set_guest.source->name];
-                    break;
-                }
-                case X86_REF_FLAGS: {
-                    state->flags = temps[instruction->set_guest.source->name];
                     break;
                 }
                 case X86_REF_FS: {
@@ -288,10 +280,6 @@ bool ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             temps[instruction->name] = __builtin_popcountll(temps[instruction->one_operand.source->name]);
             break;
         }
-        case IR_GET_FLAG: {
-            temps[instruction->name] = (state->flags >> instruction->get_flag.flag) & 1;
-            break;
-        }
         case IR_MOV: {
             WARN("Interpreting MOV, this should not happen\n");
             temps[instruction->name] = temps[instruction->one_operand.source->name];
@@ -299,15 +287,6 @@ bool ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
         }
         case IR_IMMEDIATE: {
             temps[instruction->name] = instruction->load_immediate.immediate;
-            break;
-        }
-        case IR_SET_FLAG: {
-            if (temps[instruction->set_flag.source->name] & ~1) {
-                ERROR("Invalid flag value");
-            }
-
-            state->flags &= ~(1 << instruction->set_flag.flag);
-            state->flags |= temps[instruction->set_flag.source->name] << instruction->set_flag.flag;
             break;
         }
         case IR_SYSCALL: {
@@ -337,29 +316,9 @@ bool ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             temps[instruction->name] = ~temps[instruction->one_operand.source->name];
             break;
         }
-        case IR_TERNARY: {
-            bool condition = temps[instruction->ternary.condition->name];
-            temps[instruction->name] = condition ? temps[instruction->ternary.true_value->name] : temps[instruction->ternary.false_value->name];
-            break;
-        }
-        case IR_DEBUG_RUNTIME: {
-            LOG("Debug message: %s", instruction->debug.text);
-            break;
-        }
-        case IR_DEBUG_COMPILETIME: {
-            LOG("Debug message: %s", instruction->debug.text);
-            break;
-        }
         case IR_JUMP: {
-            state->rip = temps[instruction->one_operand.source->name];
+            ERROR("Interpreting jump");
             return true;
-        }
-        case IR_JUMP_IF_TRUE: {
-            if (temps[instruction->two_operand.source1->name]) {
-                state->rip = temps[instruction->two_operand.source2->name];
-                return true;
-            }
-            break;
         }
         default: {
             ERROR("Invalid opcode");

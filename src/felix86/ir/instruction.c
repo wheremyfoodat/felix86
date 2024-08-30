@@ -5,6 +5,7 @@ void ir_clear_instruction(ir_instruction_t* instruction) {
     instruction->raw_data[0] = 0;
     instruction->raw_data[1] = 0;
     instruction->raw_data[2] = 0;
+    instruction->raw_data[3] = 0;
 }
 
 // Copies just the expression, zero initializing everything else
@@ -50,18 +51,23 @@ ir_instruction_t ir_copy_expression(ir_instruction_t* expression) {
             break;
         }
 
-        case IR_TYPE_GET_FLAG: {
-            ret.get_flag.flag = expression->get_flag.flag;
+        case IR_TYPE_LOAD_GUEST_FROM_MEMORY: {
+            ret.load_guest_from_memory.ref = expression->load_guest_from_memory.ref;
             break;
         }
 
-        case IR_TYPE_SET_FLAG: {
-            ret.set_flag.flag = expression->set_flag.flag;
-            ret.set_flag.source = expression->set_flag.source;
+        case IR_TYPE_STORE_GUEST_TO_MEMORY: {
+            ret.store_guest_to_memory.source = expression->store_guest_to_memory.source;
+            ret.store_guest_to_memory.ref = expression->store_guest_to_memory.ref;
             break;
         }
 
         case IR_TYPE_NO_OPERANDS: {
+            break;
+        }
+
+        case IR_TYPE_PHI: {
+            ret.phi.list = expression->phi.list;
             break;
         }
 

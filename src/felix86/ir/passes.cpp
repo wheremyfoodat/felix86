@@ -27,28 +27,106 @@ bool is_read_write(ir_instruction_t* instruction) {
 	}
 	return false;
 }
-todo, start block that gets all registers, end block taht writesback all registers
-using definitions_t = std::array<std::map<ir_block_t*, ir_instruction_t>, X86_REF_COUNT>;
 
-inline void write_variable(definitions_t& definitions, x86_ref_e variable, ir_instruction_t value, ir_block_t* block) {
+using definitions_t = std::array<std::map<ir_block_t*, ir_instruction_t*>, X86_REF_COUNT>;
+
+inline void write_variable(definitions_t& definitions, x86_ref_e variable, ir_instruction_t* value, ir_block_t* block) {
 	definitions[variable][block] = value;
 }
 
-ir_instruction_t read_variable_recursive(definitions_t& definitions, x86_ref_e variable, ir_block_t* block);
+ir_instruction_t* read_variable_recursive(definitions_t& definitions, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current);
 
-inline ir_instruction_t read_variable(definitions_t& definitions, x86_ref_e variable, ir_block_t* block) {
+inline ir_instruction_t* read_variable(definitions_t& definitions, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current) {
 	if (definitions[variable].find(block) != definitions[variable].end()) {
 		return definitions[variable][block];
 	} else {
-		return read_variable_recursive(definitions, variable, block);
+		return read_variable_recursive(definitions, variable, block, current);
 	}
 }
 
-inline ir_instruction_t read_variable_recursive(definitions_t& definitions, x86_ref_e variable, ir_block_t* block) {
-
+inline void add_phi_operands(definitions_t& definitions, ir_block_t* block, x86_ref_e variable, ir_instruction_t* phi, ir_instruction_list_t* current) {
+	ir_block_list_t* pred = block->predecessors;
+	while (pred) {
+		ir_instruction_t* value = read_variable(definitions, variable, pred->block, current);
+		if (!value) {
+			ERROR("Failed to find value for variable %d in block %016lx", variable, pred->block->start_address);
+		}
+		
+		ir_phi_node_t* node = phi->phi.list;
+		phi->phi.list = (ir_phi_node_t*)malloc(sizeof(ir_phi_node_t));
+		phi->phi.list->block = pred->block;
+		phi->phi.list->value = value;
+		phi->phi.list->next = node;
+		
+		pred = pred->next;
+	}
 }
 
-void ir_ssa_pass_local(std::map<ir_instruction_t, std::vector<ir_block_t*>>& definitions, ir_block_t* block) {
+inline ir_instruction_t* read_variable_recursive(definitions_t& definitions, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current) {
+	u8 predecessorCount = 0;
+	ir_block_list_t* pred = block->predecessors;
+	while (pred) {
+		predecessorCount++;
+		pred = pred->next;
+	}
+
+	ir_instruction_t* ret;
+	if (predecessorCount == 1) {
+		ret = read_variable(definitions, variable, block->predecessors->block, current);
+	} else if (predecessorCount > 1) {
+		ret = ir_ilist_insert_after(current);
+		ret->type = IR_TYPE_PHI;
+		ret->opcode = IR_PHI;
+		ret->phi.list = nullptr;
+		write_variable(definitions, variable, ret, block);
+		add_phi_operands(definitions, block, variable, ret, current);
+	} else {
+		return NULL;
+	}
+
+	write_variable(definitions, variable, ret, block);
+	return ret;
+}
+
+void ir_ssa_pass_impl(definitions_t& definitions, ir_block_t* block) {
+	ir_instruction_list_t* current = block->instructions->next;
+	while(current) {
+		switch(current->instruction.type) {
+			case IR_TYPE_SET_GUEST: {
+				write_variable(definitions, current->instruction.set_guest.ref, &current->instruction, block);
+				break;
+			}
+			case IR_TYPE_GET_GUEST: {
+				ir_instruction_t* value = read_variable(definitions, current->instruction.get_guest.ref, block, current);
+				if (value) {
+					ir_clear_instruction(&current->instruction);
+					current->instruction.type = IR_TYPE_ONE_OPERAND;
+					current->instruction.opcode = IR_MOV;
+					current->instruction.one_operand.source = value;
+				}
+				break;
+			}
+			default: {
+				break;
+			}
+		}
+
+		current = current->next;
+	}
+
+	ir_block_list_t* succ = block->successors;
+	while (succ) {
+		ir_ssa_pass_impl(definitions, succ->block);
+		succ = succ->next;
+	}
+}
+
+// This and the above functions are based entirely on Simple and Efficient Construction of Static Single Assignment Form paper
+extern "C" void ir_ssa_pass(ir_function_t* function) {
+	ir_block_t* block = function->first->block;
+
+	definitions_t definitions = {};
+	ir_ssa_pass_impl(definitions, block);
 }
 
 
@@ -64,9 +142,7 @@ bool operates_on_temporaries(ir_instruction_t* instruction) {
 	switch (instruction->opcode) {
 		// These instructions directly modify the guest state
 		case IR_GET_GUEST:
-		case IR_GET_FLAG:
 		case IR_SET_GUEST:
-		case IR_SET_FLAG:
 		case IR_CPUID: 
 		case IR_SYSCALL: {
 			return false;
@@ -116,23 +192,6 @@ extern "C" void ir_local_common_subexpression_elimination_pass_v2(ir_block_t* bl
 						current->instruction.one_operand.source = new_source;
 					} else {
 						registers[current->instruction.get_guest.ref] = &current->instruction;
-					}
-					break;
-				}
-				case IR_SET_FLAG: {
-					flags[current->instruction.set_flag.flag] = current->instruction.set_flag.source;
-					break;
-				}
-				case IR_GET_FLAG: {
-					if (flags[current->instruction.get_flag.flag]) {
-						flags[current->instruction.get_flag.flag]->uses++;
-						ir_instruction_t* new_source = flags[current->instruction.get_flag.flag];
-						ir_clear_instruction(&current->instruction);
-						current->instruction.type = IR_TYPE_ONE_OPERAND;
-						current->instruction.opcode = IR_MOV;
-						current->instruction.one_operand.source = new_source;
-					} else {
-						flags[current->instruction.get_flag.flag] = &current->instruction;
 					}
 					break;
 				}
@@ -208,13 +267,6 @@ extern "C" void ir_copy_propagation_pass(ir_block_t* block) {
 					}
 					break;
 				}
-				case IR_TYPE_SET_FLAG: {
-					if (copies.find(instruction->set_flag.source) != copies.end()) {
-						instruction->set_flag.source = copies[instruction->set_flag.source];
-						instruction->set_flag.source->uses++;
-					}
-					break;
-				}
 				case IR_TYPE_TWO_OPERAND_IMMEDIATES: {
 					if (copies.find(instruction->two_operand_immediates.source1) != copies.end()) {
 						instruction->two_operand_immediates.source1 = copies[instruction->two_operand_immediates.source1];
@@ -223,21 +275,6 @@ extern "C" void ir_copy_propagation_pass(ir_block_t* block) {
 					if (copies.find(instruction->two_operand_immediates.source2) != copies.end()) {
 						instruction->two_operand_immediates.source2 = copies[instruction->two_operand_immediates.source2];
 						instruction->two_operand_immediates.source2->uses++;
-					}
-					break;
-				}
-				case IR_TYPE_TERNARY: {
-					if (copies.find(instruction->ternary.condition) != copies.end()) {
-						instruction->ternary.condition = copies[instruction->ternary.condition];
-						instruction->ternary.condition->uses++;
-					}
-					if (copies.find(instruction->ternary.true_value) != copies.end()) {
-						instruction->ternary.true_value = copies[instruction->ternary.true_value];
-						instruction->ternary.true_value->uses++;
-					}
-					if (copies.find(instruction->ternary.false_value) != copies.end()) {
-						instruction->ternary.false_value = copies[instruction->ternary.false_value];
-						instruction->ternary.false_value->uses++;
 					}
 					break;
 				}

@@ -4,12 +4,12 @@
 #include <stddef.h>
 #include <stdio.h>
 
-void ir_naming_pass(ir_block_t* block) {
-    ir_instruction_list_t* current = block->instructions->next;
-    u32 name = 0;
-    while (current) {
-        current->instruction.name = name++;
-        current = current->next;
+void ir_naming_pass(ir_function_t* function) {
+    int name = 0;
+    for (ir_block_list_t* current = function->first; current; current = current->next) {
+        for (ir_instruction_list_t* current_instruction = current->block->instructions->next; current_instruction; current_instruction = current_instruction->next) {
+            current_instruction->instruction.name = name++;
+        }
     }
 }
 
@@ -37,8 +37,7 @@ void ir_dead_code_elimination_pass(ir_block_t* block) {
             case IR_WRITE_WORD:
             case IR_WRITE_DWORD:
             case IR_WRITE_QWORD:
-            case IR_JUMP: 
-            case IR_JUMP_IF_TRUE: {
+            case IR_JUMP: {
                 last = previous;
                 continue;
             }
@@ -88,41 +87,9 @@ void ir_dead_code_elimination_pass(ir_block_t* block) {
                 }
                 break;
             }
-            case IR_TYPE_TERNARY: {
-                if (instruction->uses == 0) {
-                    instruction->ternary.condition->uses--;
-                    if (instruction->ternary.condition != instruction->ternary.true_value) {
-                        instruction->ternary.true_value->uses--;
-                    }
-                    if (instruction->ternary.condition != instruction->ternary.false_value && instruction->ternary.true_value != instruction->ternary.false_value) {
-                        instruction->ternary.false_value->uses--;
-                    }
-                    ir_ilist_remove(last);
-                    ir_ilist_free(last);
-                }
-                break;
-            }
             case IR_TYPE_GET_GUEST: {
                 not_last_register[instruction->get_guest.ref] = false;
                 if (instruction->uses == 0) {
-                    ir_ilist_remove(last);
-                    ir_ilist_free(last);
-                }
-                break;
-            }
-            case IR_TYPE_GET_FLAG: {
-                not_last_flag[instruction->get_flag.flag] = false;
-                if (instruction->uses == 0) {
-                    ir_ilist_remove(last);
-                    ir_ilist_free(last);
-                }
-                break;
-            }
-            case IR_TYPE_SET_FLAG: {
-                bool not_last = not_last_flag[instruction->set_flag.flag];
-                not_last_flag[instruction->set_flag.flag] = true;
-                if (instruction->uses == 0 && not_last) {
-                    instruction->set_flag.source->uses--;
                     ir_ilist_remove(last);
                     ir_ilist_free(last);
                 }

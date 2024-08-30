@@ -71,12 +71,12 @@ private: \
         for (auto& check : checks) { \
             REQUIRE(felix86_get_guest(recompiler, check.first) == check.second); \
         } \
-        if (c.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_FLAGS) & (1 << X86_FLAG_CF)) == c.value()); \
-        if (p.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_FLAGS) & (1 << X86_FLAG_PF)) == p.value()); \
-        if (a.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_FLAGS) & (1 << X86_FLAG_AF)) == a.value()); \
-        if (z.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_FLAGS) & (1 << X86_FLAG_ZF)) == z.value()); \
-        if (s.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_FLAGS) & (1 << X86_FLAG_SF)) == s.value()); \
-        if (o.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_FLAGS) & (1 << X86_FLAG_OF)) == o.value()); \
+        if (c.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_CF)) == c.value()); \
+        if (p.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_PF)) == p.value()); \
+        if (a.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_AF)) == a.value()); \
+        if (z.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_ZF)) == z.value()); \
+        if (s.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_SF)) == s.value()); \
+        if (o.has_value()) REQUIRE(!!(felix86_get_guest(recompiler, X86_REF_OF)) == o.value()); \
         for (auto& check : xmm_checks) { \
             xmm_reg_t has = felix86_get_guest_xmm(recompiler, std::get<0>(check)); \
             xmm_reg_t expected = std::get<1>(check); \
@@ -102,7 +102,7 @@ Code_##name::Code_##name() : Xbyak::CodeGenerator(0x1000, malloc(0x2000)) { \
     felix86_recompiler_config_t config = { .testing = true, .optimize = true, .print_blocks = true, .use_interpreter = true }; \
     recompiler = felix86_recompiler_create(&config); \
     felix86_set_guest(recompiler, X86_REF_RIP, (u64)data); \
-    felix86_recompiler_run(recompiler, 0); \
+    felix86_recompiler_run(recompiler); \
     verify_checks(); \
     felix86_recompiler_destroy(recompiler); \
 } \
@@ -141,7 +141,7 @@ Code_multi_##name::Code_multi_##name() : Xbyak::CodeGenerator(0x1000, malloc(0x2
     felix86_recompiler_config_t config = { .testing = true, .optimize = true, .print_blocks = true, .use_interpreter = true }; \
     felix86_recompiler_t* recompiler = felix86_recompiler_create(&config); \
     felix86_set_guest(recompiler, X86_REF_RIP, (u64)data); \
-    felix86_recompiler_run(recompiler, 0); \
+    felix86_recompiler_run(recompiler); \
     felix86_recompiler_destroy(recompiler); \
     REQUIRE(felix86_get_guest(recompiler, X86_REF_RAX) == 1); \
 } \

@@ -12,8 +12,7 @@ typedef enum : u8 {
 	IR_NULL,
 
 	IR_START_OF_BLOCK,
-	IR_DEBUG_RUNTIME,
-	IR_DEBUG_COMPILETIME,
+	IR_PHI,
 
 	IR_MOV,
 	IR_IMMEDIATE,
@@ -23,18 +22,19 @@ typedef enum : u8 {
 	IR_SEXT_GPR32,
 	IR_SYSCALL,
 	IR_CPUID,
-	IR_TERNARY,
-	IR_JUMP,
-	IR_JUMP_IF_TRUE,
 
 	IR_VECTOR_MASK_ELEMENTS,
 
+	IR_LOAD_GUEST_FROM_MEMORY,
+	IR_STORE_GUEST_TO_MEMORY,
 	IR_GET_GUEST,
 	IR_SET_GUEST,
 	IR_INSERT_INTEGER_TO_VECTOR,
 	IR_EXTRACT_INTEGER_FROM_VECTOR,
-	IR_GET_FLAG,
-	IR_SET_FLAG,
+
+	IR_EXIT,
+	IR_JUMP,
+	IR_JUMP_CONDITIONAL,
 
 	IR_ADD,
 	IR_SUB,
@@ -73,10 +73,18 @@ typedef enum : u8 {
 	IR_TYPE_TWO_OPERAND_IMMEDIATES,
 	IR_TYPE_GET_GUEST,
 	IR_TYPE_SET_GUEST,
-	IR_TYPE_GET_FLAG,
-	IR_TYPE_SET_FLAG,
+	IR_TYPE_LOAD_GUEST_FROM_MEMORY,
+	IR_TYPE_STORE_GUEST_TO_MEMORY,
 	IR_TYPE_NO_OPERANDS,
+	IR_TYPE_TERMINATION,
+	IR_TYPE_PHI,
 } ir_type_e;
+
+typedef struct ir_phi_node_s {
+	struct ir_block_s* block;
+	struct ir_instruction_s* value;
+	struct ir_phi_node_s* next;
+} ir_phi_node_t;
 
 typedef struct ir_instruction_s {
 	union {
@@ -110,25 +118,29 @@ typedef struct ir_instruction_s {
 		} set_guest;
 
 		struct {
-			x86_flag_e flag;
-		} get_flag;
+			x86_ref_e ref;
+		} load_guest_from_memory;
 
 		struct {
-			x86_flag_e flag;
 			struct ir_instruction_s* source;
-		} set_flag;
+			x86_ref_e ref;
+		} store_guest_to_memory;
 
 		struct {
 			struct ir_instruction_s* condition;
-			struct ir_instruction_s* true_value;
-			struct ir_instruction_s* false_value;
-		} ternary;
+			struct ir_block_s* target_true;
+			struct ir_block_s* target_false;
+		} jump_conditional;
 
 		struct {
-			const char* text;
-		} debug;
+			struct ir_block_s* target;
+		} jump;
 
-		u64 raw_data[3];
+		struct {
+			ir_phi_node_t* list;
+		} phi;
+
+		u64 raw_data[4];
 	};
 
 	u16 uses;

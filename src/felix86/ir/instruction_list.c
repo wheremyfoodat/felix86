@@ -22,6 +22,22 @@ ir_instruction_t* ir_ilist_push_back(ir_instruction_list_t* ilist) {
     return &new_node->instruction;
 }
 
+ir_instruction_t* ir_ilist_insert_before(ir_instruction_list_t* before) {
+    ir_instruction_list_t* new_node = calloc(1, sizeof(ir_instruction_list_t));
+    new_node->previous = before->previous;
+    new_node->next = before;
+    before->previous = new_node;
+    return &new_node->instruction;
+}
+
+ir_instruction_t* ir_ilist_insert_after(ir_instruction_list_t* after) {
+    ir_instruction_list_t* new_node = calloc(1, sizeof(ir_instruction_list_t));
+    new_node->previous = after;
+    new_node->next = after->next;
+    after->next = new_node;
+    return &new_node->instruction;
+}
+
 void ir_ilist_remove(ir_instruction_list_t* ilist) {
     if (ilist->previous) {
         ilist->previous->next = ilist->next;

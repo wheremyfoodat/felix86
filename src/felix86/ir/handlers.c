@@ -422,14 +422,15 @@ IR_HANDLE(group2_rm8_imm8) { // rol/ror/rcl/rcr/shl/shr/sal/sar rm8, imm8 - 0xc0
 }
 
 IR_HANDLE(ret) { // ret - 0xc3
-    ir_instruction_t* rsp = ir_emit_get_guest(state, X86_REF_RSP);
-    ir_instruction_t* size = ir_emit_immediate(state, 8);
-    ir_instruction_t* rip = ir_emit_read_qword(state, rsp);
-    ir_instruction_t* rsp_add = ir_emit_add(state, rsp, size);
-    ir_emit_set_guest(state, X86_REF_RSP, rsp_add);
-    ir_emit_jump(state, rip);
+    ERROR("Unimplemented instruction: ret - 0xc3");
+    // ir_instruction_t* rsp = ir_emit_get_guest(state, X86_REF_RSP);
+    // ir_instruction_t* size = ir_emit_immediate(state, 8);
+    // ir_instruction_t* rip = ir_emit_read_qword(state, rsp);
+    // ir_instruction_t* rsp_add = ir_emit_add(state, rsp, size);
+    // ir_emit_set_guest(state, X86_REF_RSP, rsp_add);
+    // ir_emit_jump(state, rip);
 
-    state->exit = true;
+    // state->exit = true;
 }
 
 IR_HANDLE(mov_rm8_imm8) { // mov rm8, imm8 - 0xc6
@@ -466,26 +467,28 @@ IR_HANDLE(leave) { // leave - 0xc9
 }
 
 IR_HANDLE(call_rel32) { // call rel32 - 0xe8
-    u64 displacement = (i64)(i32)inst->operand_imm.immediate.data;
-    u64 jump_address = state->current_address + inst->length + displacement;
-    u64 returnAddress = state->current_address + inst->length;
-    ir_instruction_t* rip = ir_emit_immediate(state, jump_address);
-    ir_instruction_t* returnRip = ir_emit_immediate(state, returnAddress);
-    ir_instruction_t* rsp = ir_emit_get_guest(state, X86_REF_RSP);
-    ir_instruction_t* size = ir_emit_immediate(state, 8);
-    ir_instruction_t* rsp_sub = ir_emit_sub(state, rsp, size);
-    ir_emit_write_qword(state, rsp_sub, returnRip);
-    ir_emit_set_guest(state, X86_REF_RSP, rsp_sub);
-    ir_emit_jump(state, rip);
+    ERROR("Unimplemented instruction: call rel32 - 0xe8");
+    // u64 displacement = (i64)(i32)inst->operand_imm.immediate.data;
+    // u64 jump_address = state->current_address + inst->length + displacement;
+    // u64 returnAddress = state->current_address + inst->length;
+    // ir_instruction_t* rip = ir_emit_immediate(state, jump_address);
+    // ir_instruction_t* returnRip = ir_emit_immediate(state, returnAddress);
+    // ir_instruction_t* rsp = ir_emit_get_guest(state, X86_REF_RSP);
+    // ir_instruction_t* size = ir_emit_immediate(state, 8);
+    // ir_instruction_t* rsp_sub = ir_emit_sub(state, rsp, size);
+    // ir_emit_write_qword(state, rsp_sub, returnRip);
+    // ir_emit_set_guest(state, X86_REF_RSP, rsp_sub);
+    // ir_emit_jump(state, rip);
 
-    state->exit = true;
+    // state->exit = true;
 }
 
 IR_HANDLE(jmp_rel32) { // jmp rel32 - 0xe9
     u64 displacement = (i64)(i32)inst->operand_imm.immediate.data;
     u64 jump_address = state->current_address + inst->length + displacement;
-    ir_instruction_t* rip = ir_emit_immediate(state, jump_address);
-    ir_emit_jump(state, rip);
+    
+    ir_block_t* block = ir_function_get_block(state->function, state->current_block, jump_address);
+    ir_emit_jump(state, block);
 
     state->exit = true;
 }
@@ -493,18 +496,16 @@ IR_HANDLE(jmp_rel32) { // jmp rel32 - 0xe9
 IR_HANDLE(jmp_rel8) { // jmp rel8 - 0xeb
     u64 displacement = (i64)(i8)inst->operand_imm.immediate.data;
     u64 jump_address = state->current_address + inst->length + displacement;
-    ir_instruction_t* rip = ir_emit_immediate(state, jump_address);
-    ir_emit_jump(state, rip);
+
+    ir_block_t* block = ir_function_get_block(state->function, state->current_block, jump_address);
+    ir_emit_jump(state, block);
 
     state->exit = true;
 }
 
 IR_HANDLE(hlt) { // hlt - 0xf4
-    if (!state->testing) {
-        ERROR("Hit HLT instruction during: %016lx", state->current_address);
-    } else {
-        state->exit = true;
-    }
+    ir_emit_exit(state);
+    state->exit = true;
 }
 
 IR_HANDLE(group3_rm8) { // test/not/neg/mul/imul/div/idiv rm8, imm8 - 0xf6

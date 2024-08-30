@@ -10,13 +10,11 @@ extern "C" {
 #include "felix86/ir/instruction.h"
 
 typedef struct {
-	ir_block_t* block;
-	u64 base_address;
+	ir_function_t* function;
+	ir_block_t* current_block;
 	u64 current_address;
 	u8 current_instruction_length;
 	bool exit;
-	bool testing;
-	bool debug_info;
 } ir_emitter_state_t;
 
 u16 get_bit_size(x86_size_e size);
@@ -45,11 +43,11 @@ ir_instruction_t* ir_emit_sext8(ir_emitter_state_t* state, ir_instruction_t* sou
 ir_instruction_t* ir_emit_sext16(ir_emitter_state_t* state, ir_instruction_t* source);
 ir_instruction_t* ir_emit_sext32(ir_emitter_state_t* state, ir_instruction_t* source);
 ir_instruction_t* ir_emit_syscall(ir_emitter_state_t* state);
-ir_instruction_t* ir_emit_ternary(
-	ir_emitter_state_t* state, ir_instruction_t* condition, ir_instruction_t* true_value, ir_instruction_t* false_value
+ir_instruction_t* ir_emit_exit(ir_emitter_state_t* state);
+ir_instruction_t* ir_emit_jump(ir_emitter_state_t* state, ir_block_t* block);
+ir_instruction_t* ir_emit_jump_conditional(
+	ir_emitter_state_t* state, ir_instruction_t* condition, ir_block_t* target_true, ir_block_t* target_false
 );
-ir_instruction_t* ir_emit_jump(ir_emitter_state_t* state, ir_instruction_t* target);
-ir_instruction_t* ir_emit_jump_if_true(ir_emitter_state_t* state, ir_instruction_t* condition, ir_instruction_t* target);
 ir_instruction_t* ir_emit_insert_integer_to_vector(
 	ir_emitter_state_t* state, ir_instruction_t* vector_dest, ir_instruction_t* source, u8 size, u8 index
 );
@@ -57,9 +55,9 @@ ir_instruction_t* ir_emit_extract_integer_from_vector(ir_emitter_state_t* state,
 
 ir_instruction_t* ir_emit_get_guest(ir_emitter_state_t* state, x86_ref_e ref);
 ir_instruction_t* ir_emit_set_guest(ir_emitter_state_t* state, x86_ref_e ref, ir_instruction_t* source);
-ir_instruction_t* ir_emit_get_flag(ir_emitter_state_t* state, x86_flag_e flag);
-ir_instruction_t* ir_emit_set_flag(ir_emitter_state_t* state, x86_flag_e flag, ir_instruction_t* source);
-ir_instruction_t* ir_emit_get_flag_not(ir_emitter_state_t* state, x86_flag_e flag);
+ir_instruction_t* ir_emit_get_flag(ir_emitter_state_t* state, x86_ref_e flag);
+ir_instruction_t* ir_emit_set_flag(ir_emitter_state_t* state, x86_ref_e flag, ir_instruction_t* source);
+ir_instruction_t* ir_emit_get_flag_not(ir_emitter_state_t* state, x86_ref_e flag);
 
 ir_instruction_t* ir_emit_read_byte(ir_emitter_state_t* state, ir_instruction_t* address);
 ir_instruction_t* ir_emit_read_word(ir_emitter_state_t* state, ir_instruction_t* address);
