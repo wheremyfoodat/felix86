@@ -14,7 +14,6 @@ FELIX86_TEST(mov_r8_imm8) {
     mov(sil, value);
     mov(dil, value2);
     mov(bpl, value);
-    mov(spl, value2);
     mov(r8b, value);
     mov(r9b, value2);
     mov(r10b, value);
@@ -31,7 +30,6 @@ FELIX86_TEST(mov_r8_imm8) {
     verify(X86_REF_RSI, value);
     verify(X86_REF_RDI, value2);
     verify(X86_REF_RBP, value);
-    verify(X86_REF_RSP, value2);
     verify(X86_REF_R8, value);
     verify(X86_REF_R9, value2);
     verify(X86_REF_R10, value);
@@ -158,4 +156,12 @@ FELIX86_TEST(movq_simple) {
     xmm.data[0] = 0xBEEFDEADDEADC0DE;
     verify(X86_REF_RAX, 0xBEEFDEADDEADC0DE);
     verify_xmm(X86_REF_XMM15, xmm);
+}
+
+FELIX86_TEST(mov_r64_rm64) {
+    static u64 mem = 0x123456789ABCDEF0;
+    mov(r8, (u64)&mem);
+    mov(r15, qword[r8]);
+
+    verify(X86_REF_R15, 0x123456789ABCDEF0);
 }

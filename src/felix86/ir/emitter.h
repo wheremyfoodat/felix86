@@ -19,13 +19,16 @@ typedef struct {
 	bool debug_info;
 } ir_emitter_state_t;
 
+u16 get_bit_size(x86_size_e size);
+x86_operand_t get_full_reg(x86_ref_e ref);
+
 ir_instruction_t* ir_emit_add(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_sub(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_left_shift(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_right_shift(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_right_shift_arithmetic(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
-ir_instruction_t* ir_emit_left_rotate(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2);
-ir_instruction_t* ir_emit_right_rotate(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2);
+ir_instruction_t* ir_emit_left_rotate(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2, x86_size_e size);
+ir_instruction_t* ir_emit_right_rotate(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2, x86_size_e size);
 ir_instruction_t* ir_emit_and(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_or(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_xor(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
@@ -37,7 +40,7 @@ ir_instruction_t* ir_emit_greater_than_signed(ir_emitter_state_t* state, ir_inst
 ir_instruction_t* ir_emit_less_than_signed(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_greater_than_unsigned(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_less_than_unsigned(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
-ir_instruction_t* ir_emit_lea(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* rm_operand);
+ir_instruction_t* ir_emit_lea(ir_emitter_state_t* state, x86_operand_t* rm_operand, bool address_override);
 ir_instruction_t* ir_emit_sext8(ir_emitter_state_t* state, ir_instruction_t* source);
 ir_instruction_t* ir_emit_sext16(ir_emitter_state_t* state, ir_instruction_t* source);
 ir_instruction_t* ir_emit_sext32(ir_emitter_state_t* state, ir_instruction_t* source);
@@ -45,6 +48,8 @@ ir_instruction_t* ir_emit_syscall(ir_emitter_state_t* state);
 ir_instruction_t* ir_emit_ternary(
 	ir_emitter_state_t* state, ir_instruction_t* condition, ir_instruction_t* true_value, ir_instruction_t* false_value
 );
+ir_instruction_t* ir_emit_jump(ir_emitter_state_t* state, ir_instruction_t* target);
+ir_instruction_t* ir_emit_jump_if_true(ir_emitter_state_t* state, ir_instruction_t* condition, ir_instruction_t* target);
 ir_instruction_t* ir_emit_insert_integer_to_vector(
 	ir_emitter_state_t* state, ir_instruction_t* vector_dest, ir_instruction_t* source, u8 size, u8 index
 );
@@ -76,12 +81,12 @@ ir_instruction_t* ir_emit_immediate(ir_emitter_state_t* state, u64 value);
 ir_instruction_t* ir_emit_immediate_sext(ir_emitter_state_t* state, x86_operand_t* operand);
 
 ir_instruction_t* ir_emit_get_reg(ir_emitter_state_t* state, x86_operand_t* reg_operand);
-ir_instruction_t* ir_emit_get_rm(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* rm_operand);
+ir_instruction_t* ir_emit_get_rm(ir_emitter_state_t* state, x86_operand_t* rm_operand);
 ir_instruction_t* ir_emit_set_reg(ir_emitter_state_t* state, x86_operand_t* reg_operand, ir_instruction_t* source);
-ir_instruction_t* ir_emit_set_rm(ir_emitter_state_t* state, x86_prefixes_t* prefixes, x86_operand_t* rm_operand, ir_instruction_t* source);
+ir_instruction_t* ir_emit_set_rm(ir_emitter_state_t* state, x86_operand_t* rm_operand, ir_instruction_t* source);
 
-ir_instruction_t* ir_emit_write_memory(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* address, ir_instruction_t* value);
-ir_instruction_t* ir_emit_read_memory(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* address);
+ir_instruction_t* ir_emit_write_memory(ir_emitter_state_t* state, ir_instruction_t* address, ir_instruction_t* value, x86_size_e size);
+ir_instruction_t* ir_emit_read_memory(ir_emitter_state_t* state, ir_instruction_t* address, x86_size_e size);
 
 ir_instruction_t* ir_emit_get_gpr8_low(ir_emitter_state_t* state, x86_ref_e reg);
 ir_instruction_t* ir_emit_get_gpr8_high(ir_emitter_state_t* state, x86_ref_e reg);
@@ -94,25 +99,24 @@ ir_instruction_t* ir_emit_set_gpr8_high(ir_emitter_state_t* state, x86_ref_e reg
 ir_instruction_t* ir_emit_set_gpr16(ir_emitter_state_t* state, x86_ref_e reg, ir_instruction_t* source);
 ir_instruction_t* ir_emit_set_gpr32(ir_emitter_state_t* state, x86_ref_e reg, ir_instruction_t* source);
 ir_instruction_t* ir_emit_set_gpr64(ir_emitter_state_t* state, x86_ref_e reg, ir_instruction_t* source);
-ir_instruction_t* ir_emit_set_vector(ir_emitter_state_t* state, x86_ref_e reg, ir_instruction_t* source);
 
 ir_instruction_t* ir_emit_get_parity(ir_emitter_state_t* state, ir_instruction_t* source);
 ir_instruction_t* ir_emit_get_zero(ir_emitter_state_t* sta32te, ir_instruction_t* source);
-ir_instruction_t* ir_emit_get_sign(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source);
+ir_instruction_t* ir_emit_get_sign(ir_emitter_state_t* state, ir_instruction_t* source, x86_size_e size);
 ir_instruction_t* ir_emit_get_overflow_add(
-	ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result
+	ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result, x86_size_e size
 );
 ir_instruction_t* ir_emit_get_overflow_sub(
-	ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result
+	ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result, x86_size_e size
 );
 ir_instruction_t* ir_emit_get_carry_add(
-	ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result
+	ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result, x86_size_e size
 );
-ir_instruction_t* ir_emit_get_carry_adc(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2);
+ir_instruction_t* ir_emit_get_carry_adc(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2, x86_size_e size);
 ir_instruction_t* ir_emit_get_carry_sub(
-	ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result
+	ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result, x86_size_e size
 );
-ir_instruction_t* ir_emit_get_carry_sbb(ir_emitter_state_t* state, x86_prefixes_t* prefixes, ir_instruction_t* source1, ir_instruction_t* source2);
+ir_instruction_t* ir_emit_get_carry_sbb(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2, x86_size_e size_e);
 ir_instruction_t* ir_emit_get_aux_add(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_get_aux_sub(ir_emitter_state_t* state, ir_instruction_t* source1, ir_instruction_t* source2);
 
@@ -132,6 +136,9 @@ ir_instruction_t* ir_emit_get_cc(ir_emitter_state_t* state, u8 opcode);
 void ir_emit_group1_imm(ir_emitter_state_t* state, x86_instruction_t* inst);
 void ir_emit_group2_imm(ir_emitter_state_t* state, x86_instruction_t* inst);
 void ir_emit_group3_imm(ir_emitter_state_t* state, x86_instruction_t* inst);
+
+void ir_emit_rep_start(ir_emitter_state_t* state, x86_size_e size);
+void ir_emit_rep_end(ir_emitter_state_t* state, bool is_nz, x86_size_e size);
 
 #ifdef __cplusplus
 }

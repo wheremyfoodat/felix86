@@ -31,6 +31,22 @@ void ir_dead_code_elimination_pass(ir_block_t* block) {
     while (last) {
         ir_instruction_t* instruction = &last->instruction;
         ir_instruction_list_t* previous = last->previous;
+
+        switch (instruction->opcode) {
+            case IR_WRITE_BYTE:
+            case IR_WRITE_WORD:
+            case IR_WRITE_DWORD:
+            case IR_WRITE_QWORD:
+            case IR_JUMP: 
+            case IR_JUMP_IF_TRUE: {
+                last = previous;
+                continue;
+            }
+            default: {
+                break;
+            }
+        }
+
         switch (instruction->type) {
             case IR_TYPE_LOAD_IMMEDIATE: {
                 if (instruction->uses == 0) {
@@ -41,10 +57,6 @@ void ir_dead_code_elimination_pass(ir_block_t* block) {
             }
             case IR_TYPE_TWO_OPERAND: {
                 if (instruction->uses == 0) {
-                    if (instruction->opcode == IR_WRITE_BYTE || instruction->opcode == IR_WRITE_WORD || instruction->opcode == IR_WRITE_DWORD || instruction->opcode == IR_WRITE_QWORD) {
-                        break;
-                    }
-
                     instruction->two_operand.source1->uses--;
 
                     if (instruction->two_operand.source1 != instruction->two_operand.source2) {
