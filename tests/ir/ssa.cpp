@@ -11,23 +11,13 @@ using namespace Xbyak::util;
 
 TEST_CASE("local-ssa", "[felix86]") {
     Xbyak::CodeGenerator c(0x1000, malloc(0x1000));
-    Xbyak::Label true_label, false_label, end_label;
-    c.mov(rbx, 0x3);
-    c.mov(rax, 0x1);
-    c.cmp(rax, 0x1);
-    c.jne(false_label);
-    c.jmp(true_label);
-
-    c.L(true_label);
-    c.mov(rax, rbx);
-    c.jmp(end_label);
-
-    c.L(false_label);
-    c.mov(rax, 0x3);
-    c.jmp(end_label);
-
-    c.L(end_label);
-    c.mov(rbx, rax);
+    Xbyak::Label loop, end;
+    
+    c.L(loop);
+    c.add(rax, 1);
+    c.cmp(rax, 10);
+    c.jl(loop);
+    c.L(end);
 
     c.hlt();
 

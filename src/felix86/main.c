@@ -1,3 +1,4 @@
+#include "felix86/gui.h"
 #include "felix86/loader/loader.h"
 #include "felix86/common/version.h"
 #include "felix86/common/log.h"
@@ -82,6 +83,10 @@ int main(int argc, char* argv[]) {
 
     argp_parse(&argp, argc, argv, 0, 0, &config);
 
-    loader_run_elf(&config);
+    if (argc == 0) {
+        felix86_gui();
+    } else {
+        loader_run_elf(&config);
+    }
     return 0;
 }

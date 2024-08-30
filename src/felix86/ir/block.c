@@ -21,7 +21,16 @@ ir_function_t* ir_function_create(u64 address)
 {
     ir_block_list_t* list = ir_block_list_create(ir_block_create(address));
 
+    // We add a dummy block at the start with guaranteed no predecessors
+    ir_block_list_t* entry = ir_block_list_create(ir_block_create(0));
+
+    ir_emitter_state_t state = {0};
+    state.current_block = entry->block;
+
+    list->block->predecessors = entry;
+
     ir_function_t* function = malloc(sizeof(ir_function_t));
+    function->entry = entry;
     function->first = list;
     function->last = list;
 

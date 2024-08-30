@@ -19,7 +19,6 @@ add_subdirectory(external/Catch2)
 add_subdirectory(external/xbyak)
 # add_subdirectory(external/riscv-disassembler)
 add_subdirectory(external/zydis)
-# add_subdirectory(external/ELFIO)
 
 set(FELIX86_FRONTEND_SOURCES
     src/felix86/frontend/frontend.c
@@ -75,7 +74,7 @@ target_include_directories(felix86_core PUBLIC ${FELIX86_INCLUDES})
 target_link_libraries(felix86_core PUBLIC Zydis)
 
 add_executable(felix86)
-target_sources(felix86 PRIVATE src/felix86/main.c)
+target_sources(felix86 PRIVATE src/felix86/main.c src/felix86/gui.cpp)
 target_link_libraries(felix86 PRIVATE felix86_core)
 
 set(FELIX86_TEST_SOURCES

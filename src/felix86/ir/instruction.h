@@ -73,8 +73,6 @@ typedef enum : u8 {
 	IR_TYPE_TWO_OPERAND_IMMEDIATES,
 	IR_TYPE_GET_GUEST,
 	IR_TYPE_SET_GUEST,
-	IR_TYPE_LOAD_GUEST_FROM_MEMORY,
-	IR_TYPE_STORE_GUEST_TO_MEMORY,
 	IR_TYPE_NO_OPERANDS,
 	IR_TYPE_TERMINATION,
 	IR_TYPE_PHI,
@@ -116,15 +114,6 @@ typedef struct ir_instruction_s {
 			struct ir_instruction_s* source;
 			x86_ref_e ref;
 		} set_guest;
-
-		struct {
-			x86_ref_e ref;
-		} load_guest_from_memory;
-
-		struct {
-			struct ir_instruction_s* source;
-			x86_ref_e ref;
-		} store_guest_to_memory;
 
 		struct {
 			struct ir_instruction_s* condition;

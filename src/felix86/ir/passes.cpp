@@ -34,24 +34,20 @@ inline void write_variable(definitions_t& definitions, x86_ref_e variable, ir_in
 	definitions[variable][block] = value;
 }
 
-ir_instruction_t* read_variable_recursive(definitions_t& definitions, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current);
+ir_instruction_t* read_variable_recursive(ir_function_t* function, definitions_t& definitions, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current);
 
-inline ir_instruction_t* read_variable(definitions_t& definitions, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current) {
+inline ir_instruction_t* read_variable(ir_function_t* function, definitions_t& definitions, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current) {
 	if (definitions[variable].find(block) != definitions[variable].end()) {
 		return definitions[variable][block];
 	} else {
-		return read_variable_recursive(definitions, variable, block, current);
+		return read_variable_recursive(function, definitions, variable, block, current);
 	}
 }
 
-inline void add_phi_operands(definitions_t& definitions, ir_block_t* block, x86_ref_e variable, ir_instruction_t* phi, ir_instruction_list_t* current) {
+inline void add_phi_operands(ir_function_t* function, definitions_t& definitions, ir_block_t* block, x86_ref_e variable, ir_instruction_t* phi, ir_instruction_list_t* current) {
 	ir_block_list_t* pred = block->predecessors;
 	while (pred) {
-		ir_instruction_t* value = read_variable(definitions, variable, pred->block, current);
-		if (!value) {
-			ERROR("Failed to find value for variable %d in block %016lx", variable, pred->block->start_address);
-		}
-		
+		ir_instruction_t* value = read_variable(function, definitions, variable, pred->block, current);
 		ir_phi_node_t* node = phi->phi.list;
 		phi->phi.list = (ir_phi_node_t*)malloc(sizeof(ir_phi_node_t));
 		phi->phi.list->block = pred->block;
@@ -62,7 +58,11 @@ inline void add_phi_operands(definitions_t& definitions, ir_block_t* block, x86_
 	}
 }
 
-inline ir_instruction_t* read_variable_recursive(definitions_t& definitions, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current) {
+todo:
+reduce arguments in functions
+follow the pdf more closely
+
+inline ir_instruction_t* read_variable_recursive(ir_function_t* function, definitions_t& definitions, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current) {
 	u8 predecessorCount = 0;
 	ir_block_list_t* pred = block->predecessors;
 	while (pred) {
@@ -72,23 +72,28 @@ inline ir_instruction_t* read_variable_recursive(definitions_t& definitions, x86
 
 	ir_instruction_t* ret;
 	if (predecessorCount == 1) {
-		ret = read_variable(definitions, variable, block->predecessors->block, current);
+		ret = read_variable(function, definitions, variable, block->predecessors->block, current);
 	} else if (predecessorCount > 1) {
 		ret = ir_ilist_insert_after(current);
 		ret->type = IR_TYPE_PHI;
 		ret->opcode = IR_PHI;
 		ret->phi.list = nullptr;
 		write_variable(definitions, variable, ret, block);
-		add_phi_operands(definitions, block, variable, ret, current);
+		add_phi_operands(function, definitions, block, variable, ret, current);
+	} else if (predecessorCount == 0) {
+		ret = ir_ilist_push_back(function->entry->block->instructions);
+		ret->type = IR_TYPE_GET_GUEST;
+		ret->opcode = IR_GET_GUEST;
+		ret->get_guest.ref = variable;
 	} else {
-		return NULL;
+		ERROR("Unreachable");
 	}
 
 	write_variable(definitions, variable, ret, block);
 	return ret;
 }
 
-void ir_ssa_pass_impl(definitions_t& definitions, ir_block_t* block) {
+void ir_ssa_pass_impl(ir_function_t* function, definitions_t& definitions, ir_block_t* block) {
 	ir_instruction_list_t* current = block->instructions->next;
 	while(current) {
 		switch(current->instruction.type) {
@@ -97,13 +102,11 @@ void ir_ssa_pass_impl(definitions_t& definitions, ir_block_t* block) {
 				break;
 			}
 			case IR_TYPE_GET_GUEST: {
-				ir_instruction_t* value = read_variable(definitions, current->instruction.get_guest.ref, block, current);
-				if (value) {
-					ir_clear_instruction(&current->instruction);
-					current->instruction.type = IR_TYPE_ONE_OPERAND;
-					current->instruction.opcode = IR_MOV;
-					current->instruction.one_operand.source = value;
-				}
+				ir_instruction_t* value = read_variable(function, definitions, current->instruction.get_guest.ref, block, current);
+				ir_clear_instruction(&current->instruction);
+				current->instruction.type = IR_TYPE_ONE_OPERAND;
+				current->instruction.opcode = IR_MOV;
+				current->instruction.one_operand.source = value;
 				break;
 			}
 			default: {
@@ -113,20 +116,16 @@ void ir_ssa_pass_impl(definitions_t& definitions, ir_block_t* block) {
 
 		current = current->next;
 	}
-
-	ir_block_list_t* succ = block->successors;
-	while (succ) {
-		ir_ssa_pass_impl(definitions, succ->block);
-		succ = succ->next;
-	}
 }
 
 // This and the above functions are based entirely on Simple and Efficient Construction of Static Single Assignment Form paper
 extern "C" void ir_ssa_pass(ir_function_t* function) {
-	ir_block_t* block = function->first->block;
-
 	definitions_t definitions = {};
-	ir_ssa_pass_impl(definitions, block);
+	ir_block_list_t* current = function->first;
+	while (current) {
+		ir_ssa_pass_impl(function, definitions, current->block);
+		current = current->next;
+	}
 }
 
 

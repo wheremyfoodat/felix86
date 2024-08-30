@@ -21,6 +21,7 @@ typedef struct ir_block_list_s {
 } ir_block_list_t;
 
 typedef struct ir_function_t {
+	ir_block_list_t* entry;
 	ir_block_list_t* first;
 	ir_block_list_t* last;
 } ir_function_t;

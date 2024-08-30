@@ -36,7 +36,7 @@ void print_guest(x86_ref_e guest) {
 }
 
 void print_one_op(ir_instruction_t* instruction, const char* op) {
-    printf("t%d = %s(t%d)", instruction->name, op, instruction->one_operand.source->name);
+    printf("t%d = %s t%d", instruction->name, op, instruction->one_operand.source->name);
 }
 
 void print_two_op(ir_instruction_t* instruction, const char* op) {
@@ -152,15 +152,14 @@ void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
             break;
         }
         case IR_GET_GUEST: {
-            printf("t%d = get_guest(", instruction->name);
+            printf("t%d = get_guest ", instruction->name);
             print_guest(instruction->get_guest.ref);
-            printf(")");
             break;
         }
         case IR_SET_GUEST: {
-            printf("t%d = set_guest(", instruction->name);
+            printf("t%d = set_guest ", instruction->name);
             print_guest(instruction->set_guest.ref);
-            printf(", t%d)", instruction->set_guest.source->name);
+            printf(", t%d", instruction->set_guest.source->name);
             break;
         }
         case IR_READ_BYTE: {
@@ -196,21 +195,6 @@ void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
             break;
         }
         case IR_START_OF_BLOCK: {
-            u8 predecessors = 0;
-            ir_block_list_t* pred = block->predecessors;
-            while (pred) {
-                predecessors++;
-                pred = pred->next;
-            }
-
-            u8 successors = 0;
-            ir_block_list_t* succ = block->successors;
-            while (succ) {
-                successors++;
-                succ = succ->next;
-            }
-
-            printf("start_of_block: %016lx, predecessors: %d, successors: %d", block->start_address, predecessors, successors);
             break;
         }
         case IR_SYSCALL: {
@@ -230,7 +214,7 @@ void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
             break;
         }
         case IR_PHI: {
-            printf("t%d = φ(", instruction->name);
+            printf("t%d = φ<", instruction->name);
             ir_phi_node_t* node = instruction->phi.list;
             while (node) {
                 if (!node->value || !node->block) {
@@ -243,11 +227,11 @@ void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
                     printf(", ");
                 }
             }
-            printf(")");
+            printf(">");
             break;
         }
         case IR_JUMP_CONDITIONAL: {
-            printf("jump (t%d ? %016lx : %016lx)", instruction->jump_conditional.condition->name, instruction->jump_conditional.target_true->start_address, instruction->jump_conditional.target_false->start_address);
+            printf("jump t%d ? %016lx : %016lx", instruction->jump_conditional.condition->name, instruction->jump_conditional.target_true->start_address, instruction->jump_conditional.target_false->start_address);
             break;
         }
         case IR_INSERT_INTEGER_TO_VECTOR: {
@@ -273,11 +257,20 @@ void ir_print_block(ir_block_t* block) {
 }
 
 void ir_print_function_uml(ir_function_t* function) {
+    printf("@startuml\n");
     ir_block_list_t* block = function->first;
     while (block) {
+        printf("class block_%016lx {\n", block->block->start_address);
         ir_block_t* b = block->block;
-        printf("Block %016lx:\n", b->start_address);
         ir_print_block(b);
+        printf("}\n");
+        ir_block_list_t* successor = b->successors;
+        while (successor) {
+            printf("block_%016lx --> block_%016lx\n", b->start_address, successor->block->start_address);
+            successor = successor->next;
+        }
         block = block->next;
     }
+    printf("hide class circle\n");
+    printf("@enduml\n");
 }

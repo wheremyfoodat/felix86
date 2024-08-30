@@ -51,17 +51,6 @@ ir_instruction_t ir_copy_expression(ir_instruction_t* expression) {
             break;
         }
 
-        case IR_TYPE_LOAD_GUEST_FROM_MEMORY: {
-            ret.load_guest_from_memory.ref = expression->load_guest_from_memory.ref;
-            break;
-        }
-
-        case IR_TYPE_STORE_GUEST_TO_MEMORY: {
-            ret.store_guest_to_memory.source = expression->store_guest_to_memory.source;
-            ret.store_guest_to_memory.ref = expression->store_guest_to_memory.ref;
-            break;
-        }
-
         case IR_TYPE_NO_OPERANDS: {
             break;
         }
