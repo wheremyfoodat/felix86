@@ -15,7 +15,7 @@ felix86 is very early in development. If you want a more complete emulator, use 
 - [An optimization guide for x86 platforms by Agner Fog](https://www.agner.org/optimize/optimizing_assembly.pdf)
 - [Intel® 64 and IA-32 Architectures Software Developer’s Manual](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4), the most complete resource however unfortunately it's hard to find what you need sometimes
 
-## Useful documentation for JITs
+## Useful documentation for emulator JITs
 - [JIT wikipedia entry](https://en.wikipedia.org/wiki/Just-in-time_compilation)
 - [Basic block](https://en.wikipedia.org/wiki/Basic_block)
 - [Static single assignment](https://en.wikipedia.org/wiki/Static_single-assignment_form)
@@ -24,6 +24,8 @@ felix86 is very early in development. If you want a more complete emulator, use 
 - [Constant propagation](https://en.wikipedia.org/wiki/Constant_folding)
 - [Dead store](https://en.wikipedia.org/wiki/Dead_store)
 - [Linear scan register allocation](https://web.cs.ucla.edu/~palsberg/course/cs132/linearscan.pdf)
+- [Simple and Efficient Construction of Static Single Assignment Form](https://link.springer.com/chapter/10.1007/978-3-642-37051-9_6)
+- Yuzu source code
 - [Dynarmic source code & docs folder](https://github.com/PabloMK7/dynarmic/)
 - [Dillonb's n64 source code](https://github.com/Dillonb/n64/tree/master/src/cpu/dynarec/v2)
 - [PCSX-Redux source code](https://github.com/grumpycoders/pcsx-redux)

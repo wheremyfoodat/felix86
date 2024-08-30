@@ -18,6 +18,7 @@ void ir_handle_##name_66(ir_emitter_state_t* state, x86_instruction_t* inst); \
 void ir_handle_##name_f2(ir_emitter_state_t* state, x86_instruction_t* inst); \
 void ir_handle_##name_f3(ir_emitter_state_t* state, x86_instruction_t* inst);
 #include "felix86/frontend/secondary.inc"
+#undef X
 
 #ifdef __cplusplus
 }
