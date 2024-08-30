@@ -26,7 +26,7 @@ ir_block_t* ir_block_metadata_get_block(ir_block_metadata_t* metadata, u64 addre
 		return it->second;
 	}
 
-	ir_block_t* block = new ir_block_t();
+	ir_block_t* block = new ir_block_t {};
 	block->start_address = address;
 	block->instructions = ir_ilist_create();
 	block->compiled = false;

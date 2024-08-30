@@ -76,8 +76,6 @@ typedef enum : u8 {
 	IR_TYPE_GET_FLAG,
 	IR_TYPE_SET_FLAG,
 	IR_TYPE_NO_OPERANDS,
-	IR_TYPE_TERNARY,
-	IR_TYPE_DEBUG,
 } ir_type_e;
 
 typedef struct ir_instruction_s {
@@ -140,6 +138,8 @@ typedef struct ir_instruction_s {
 } ir_instruction_t;
 
 void ir_clear_instruction(ir_instruction_t* instruction);
+
+ir_instruction_t ir_copy_expression(ir_instruction_t* expression);
 
 #ifdef __cplusplus
 }

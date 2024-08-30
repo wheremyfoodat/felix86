@@ -3,10 +3,57 @@
 #include <array>
 #include <cstring>
 #include <map>
+#include <vector>
 
 #include "felix86/common/log.h"
 #include "felix86/ir/instruction.h"
 #include "felix86/ir/print.h"
+
+bool is_read_write(ir_instruction_t* instruction) {
+	switch (instruction->opcode) {
+		case IR_READ_BYTE:
+		case IR_READ_WORD:
+		case IR_READ_DWORD:
+		case IR_READ_QWORD:
+		case IR_WRITE_BYTE:
+		case IR_WRITE_WORD:
+		case IR_WRITE_DWORD:
+		case IR_WRITE_QWORD: {
+			return true;
+		}
+		default: {
+			break;
+		}
+	}
+	return false;
+}
+todo, start block that gets all registers, end block taht writesback all registers
+using definitions_t = std::array<std::map<ir_block_t*, ir_instruction_t>, X86_REF_COUNT>;
+
+inline void write_variable(definitions_t& definitions, x86_ref_e variable, ir_instruction_t value, ir_block_t* block) {
+	definitions[variable][block] = value;
+}
+
+ir_instruction_t read_variable_recursive(definitions_t& definitions, x86_ref_e variable, ir_block_t* block);
+
+inline ir_instruction_t read_variable(definitions_t& definitions, x86_ref_e variable, ir_block_t* block) {
+	if (definitions[variable].find(block) != definitions[variable].end()) {
+		return definitions[variable][block];
+	} else {
+		return read_variable_recursive(definitions, variable, block);
+	}
+}
+
+inline ir_instruction_t read_variable_recursive(definitions_t& definitions, x86_ref_e variable, ir_block_t* block) {
+
+}
+
+void ir_ssa_pass_local(std::map<ir_instruction_t, std::vector<ir_block_t*>>& definitions, ir_block_t* block) {
+}
+
+
+
+
 
 bool operator<(const ir_instruction_t& a1, const ir_instruction_t& a2) {
 	int res = memcmp(&a1, &a2, sizeof(ir_instruction_t));

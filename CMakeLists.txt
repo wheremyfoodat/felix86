@@ -84,6 +84,7 @@ set(FELIX86_TEST_SOURCES
     tests/mov.cpp
     tests/lea.cpp
     tests/special.cpp
+    tests/ir/ssa.cpp
 )
 
 add_executable(felix86_test)

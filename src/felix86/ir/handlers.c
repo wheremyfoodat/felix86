@@ -32,6 +32,23 @@ IR_HANDLE(add_rm8_r8) { // add rm8, r8 - 0x00
     ir_emit_set_cpazso(state, c, p, a, z, s, o);
 }
 
+IR_HANDLE(add_rm32_r32) { // add rm16/32/64, r16/32/64 - 0x01
+    x86_size_e size_e = inst->operand_reg.size;
+    ir_instruction_t* rm = ir_emit_get_rm(state, &inst->operand_rm);
+    ir_instruction_t* reg = ir_emit_get_reg(state, &inst->operand_reg);
+    ir_instruction_t* result = ir_emit_add(state, rm, reg);
+    ir_emit_set_rm(state, &inst->operand_rm, result);
+
+    ir_instruction_t* c = ir_emit_get_carry_add(state, rm, reg, result, size_e);
+    ir_instruction_t* p = ir_emit_get_parity(state, result);
+    ir_instruction_t* a = ir_emit_get_aux_add(state, rm, reg);
+    ir_instruction_t* z = ir_emit_get_zero(state, result);
+    ir_instruction_t* s = ir_emit_get_sign(state, result, size_e);
+    ir_instruction_t* o = ir_emit_get_overflow_add(state, rm, reg, result, size_e);
+
+    ir_emit_set_cpazso(state, c, p, a, z, s, o);
+}
+
 IR_HANDLE(add_r32_rm32) { // add r16/32/64, rm16/32/64 - 0x03
     x86_size_e size_e = inst->operand_reg.size;
     ir_instruction_t* reg = ir_emit_get_reg(state, &inst->operand_reg);
@@ -45,6 +62,23 @@ IR_HANDLE(add_r32_rm32) { // add r16/32/64, rm16/32/64 - 0x03
     ir_instruction_t* z = ir_emit_get_zero(state, result);
     ir_instruction_t* s = ir_emit_get_sign(state, result, size_e);
     ir_instruction_t* o = ir_emit_get_overflow_add(state, reg, rm, result, size_e);
+
+    ir_emit_set_cpazso(state, c, p, a, z, s, o);
+}
+
+IR_HANDLE(add_al_imm8) { // add al, imm8 - 0x04
+    x86_size_e size_e = inst->operand_reg.size;
+    ir_instruction_t* al = ir_emit_get_reg(state, &inst->operand_reg);
+    ir_instruction_t* imm = ir_emit_immediate(state, inst->operand_imm.immediate.data);
+    ir_instruction_t* result = ir_emit_add(state, al, imm);
+    ir_emit_set_reg(state, &inst->operand_reg, result);
+
+    ir_instruction_t* c = ir_emit_get_carry_add(state, al, imm, result, size_e);
+    ir_instruction_t* p = ir_emit_get_parity(state, result);
+    ir_instruction_t* a = ir_emit_get_aux_add(state, al, imm);
+    ir_instruction_t* z = ir_emit_get_zero(state, result);
+    ir_instruction_t* s = ir_emit_get_sign(state, result, size_e);
+    ir_instruction_t* o = ir_emit_get_overflow_add(state, al, imm, result, size_e);
 
     ir_emit_set_cpazso(state, c, p, a, z, s, o);
 }
@@ -303,6 +337,12 @@ IR_HANDLE(test_rm32_r32) { // test rm16/32/64, r/m16/32/64 - 0x85
     ir_instruction_t* s = ir_emit_get_sign(state, result, size_e);
 
     ir_emit_set_cpazso(state, zero, p, NULL, z, s, zero);
+}
+
+// TODO: merge the following two handlers and similar handlers
+IR_HANDLE(mov_rm8_r8) { // mov rm8, r8 - 0x88
+    ir_instruction_t* reg = ir_emit_get_reg(state, &inst->operand_reg);
+    ir_emit_set_rm(state, &inst->operand_rm, reg);
 }
 
 IR_HANDLE(mov_rm32_r32) { // mov rm16/32/64, r16/32/64 - 0x89
