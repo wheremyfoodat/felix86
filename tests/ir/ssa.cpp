@@ -11,14 +11,9 @@ using namespace Xbyak::util;
 
 TEST_CASE("local-ssa", "[felix86]") {
     Xbyak::CodeGenerator c(0x1000, malloc(0x1000));
-    Xbyak::Label loop, end;
-    
-    c.L(loop);
-    c.add(rax, 1);
-    c.cmp(rax, 10);
-    c.jl(loop);
-    c.L(end);
 
+    c.add(rax, 1);
+    c.adc(rax, 2);
     c.hlt();
 
     felix86_recompiler_config_t config = { .testing = true, .print_blocks = true, .use_interpreter = true };

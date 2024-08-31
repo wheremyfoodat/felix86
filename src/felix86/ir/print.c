@@ -238,13 +238,24 @@ void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
             printf("x%d = insert_integer_to_vector(t%d, index=%d, size=%d)", instruction->two_operand_immediates.source1->name, instruction->two_operand_immediates.source2->name, instruction->two_operand_immediates.imm32_1, instruction->two_operand_immediates.imm32_2);
             break;
         }
+        case IR_LOAD_GUEST_FROM_MEMORY: {
+            printf("t%d = load_guest_from_memory ", instruction->name);
+            print_guest(instruction->get_guest.ref);
+            break;
+        }
+        case IR_STORE_GUEST_TO_MEMORY: {
+            printf("store_guest_to_memory ");
+            print_guest(instruction->set_guest.ref);
+            printf(", t%d", instruction->set_guest.source->name);
+            break;
+        }
         default: {
             printf("Unknown opcode: %d", instruction->opcode);
             break;
         }
     }
 
-    // printf("\t\t(uses: %d)", instruction->uses);
+    printf("\t\t\t\t(uses: %d)", instruction->uses);
     printf("\n");
 }
 

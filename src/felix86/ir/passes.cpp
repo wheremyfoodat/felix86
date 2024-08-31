@@ -28,23 +28,49 @@ bool is_read_write(ir_instruction_t* instruction) {
 	return false;
 }
 
-using definitions_t = std::array<std::map<ir_block_t*, ir_instruction_t*>, X86_REF_COUNT>;
+struct definitions_t {
+	std::array<std::map<ir_block_t*, ir_instruction_t*>, X86_REF_COUNT> def {};
+};
 
 inline void write_variable(definitions_t& definitions, x86_ref_e variable, ir_instruction_t* value, ir_block_t* block) {
-	definitions[variable][block] = value;
+	definitions.def[variable][block] = value;
 }
 
 ir_instruction_t* read_variable_recursive(ir_function_t* function, definitions_t& definitions, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current);
 
 inline ir_instruction_t* read_variable(ir_function_t* function, definitions_t& definitions, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current) {
-	if (definitions[variable].find(block) != definitions[variable].end()) {
-		return definitions[variable][block];
+	if (definitions.def[variable].find(block) != definitions.def[variable].end()) {
+		return definitions.def[variable][block];
 	} else {
 		return read_variable_recursive(function, definitions, variable, block, current);
 	}
 }
 
-inline void add_phi_operands(ir_function_t* function, definitions_t& definitions, ir_block_t* block, x86_ref_e variable, ir_instruction_t* phi, ir_instruction_list_t* current) {
+inline ir_instruction_t* try_remove_trivial_phi(ir_instruction_t* phi) {
+	ir_instruction_t* same = nullptr;
+	ir_phi_node_t* node = phi->phi.list;
+	while (node) {
+		if (node->value == same || node->value == phi) {
+			continue;
+		}
+
+		if (same != nullptr) {
+			return phi;
+		}
+
+		same = node->value;
+
+		node = node->next;
+	}
+
+	if (same == nullptr) {
+		ERROR("The phi is unreachable or in the entry block");
+	}
+	
+	return same;
+}
+
+inline ir_instruction_t* add_phi_operands(ir_function_t* function, definitions_t& definitions, ir_block_t* block, x86_ref_e variable, ir_instruction_t* phi, ir_instruction_list_t* current) {
 	ir_block_list_t* pred = block->predecessors;
 	while (pred) {
 		ir_instruction_t* value = read_variable(function, definitions, variable, pred->block, current);
@@ -53,14 +79,13 @@ inline void add_phi_operands(ir_function_t* function, definitions_t& definitions
 		phi->phi.list->block = pred->block;
 		phi->phi.list->value = value;
 		phi->phi.list->next = node;
+		value->uses++;
 		
 		pred = pred->next;
 	}
-}
 
-todo:
-reduce arguments in functions
-follow the pdf more closely
+	return try_remove_trivial_phi(phi);
+}
 
 inline ir_instruction_t* read_variable_recursive(ir_function_t* function, definitions_t& definitions, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current) {
 	u8 predecessorCount = 0;
@@ -81,9 +106,13 @@ inline ir_instruction_t* read_variable_recursive(ir_function_t* function, defini
 		write_variable(definitions, variable, ret, block);
 		add_phi_operands(function, definitions, block, variable, ret, current);
 	} else if (predecessorCount == 0) {
-		ret = ir_ilist_push_back(function->entry->block->instructions);
-		ret->type = IR_TYPE_GET_GUEST;
-		ret->opcode = IR_GET_GUEST;
+		// The search has reached our empty entry block without finding a definition
+		// Which means we actually need to read the guest from memory
+		// We insert an instruction that reads the guest from memory right before the current instruction
+		// and return that
+		ret = ir_ilist_insert_before(current);
+		ret->type = IR_TYPE_LOAD_GUEST_FROM_MEMORY;
+		ret->opcode = IR_LOAD_GUEST_FROM_MEMORY;
 		ret->get_guest.ref = variable;
 	} else {
 		ERROR("Unreachable");
@@ -96,17 +125,45 @@ inline ir_instruction_t* read_variable_recursive(ir_function_t* function, defini
 void ir_ssa_pass_impl(ir_function_t* function, definitions_t& definitions, ir_block_t* block) {
 	ir_instruction_list_t* current = block->instructions->next;
 	while(current) {
-		switch(current->instruction.type) {
-			case IR_TYPE_SET_GUEST: {
+		switch(current->instruction.opcode) {
+			case IR_SET_GUEST: {
 				write_variable(definitions, current->instruction.set_guest.ref, &current->instruction, block);
 				break;
 			}
-			case IR_TYPE_GET_GUEST: {
+			case IR_GET_GUEST: {
 				ir_instruction_t* value = read_variable(function, definitions, current->instruction.get_guest.ref, block, current);
 				ir_clear_instruction(&current->instruction);
 				current->instruction.type = IR_TYPE_ONE_OPERAND;
 				current->instruction.opcode = IR_MOV;
 				current->instruction.one_operand.source = value;
+				value->uses++;
+				break;
+			}
+			case IR_CPUID: {
+				definitions.def[X86_REF_RAX].clear();
+				definitions.def[X86_REF_RCX].clear();
+				definitions.def[X86_REF_RDX].clear();
+				definitions.def[X86_REF_RBX].clear();
+				break;
+			}
+			case IR_SYSCALL: {
+				definitions.def[X86_REF_RAX].clear();
+				break;
+			}
+			case IR_JUMP_RUNTIME:
+			case IR_EXIT: {
+				// We need to emit a writeback to memory for all variables that are used
+				for (u8 i = 0; i < X86_REF_COUNT; i++) {
+					if (!definitions.def[i].empty()) {
+						ir_instruction_t* value = read_variable(function, definitions, (x86_ref_e)i, block, current);
+						ir_instruction_t* write = ir_ilist_insert_before(current);
+						write->type = IR_TYPE_STORE_GUEST_TO_MEMORY;
+						write->opcode = IR_STORE_GUEST_TO_MEMORY;
+						write->set_guest.ref = (x86_ref_e)i;
+						write->set_guest.source = value;
+						value->uses++;
+					}
+				}
 				break;
 			}
 			default: {
