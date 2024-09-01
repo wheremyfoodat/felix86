@@ -28,41 +28,40 @@ bool is_read_write(ir_instruction_t* instruction) {
 	return false;
 }
 
-struct definitions_t {
+struct ssa_state_t {
 	std::array<std::map<ir_block_t*, ir_instruction_t*>, X86_REF_COUNT> def {};
-	std::map<ir_instruction_t*, ir_instruction_t*> copies;
 };
 
-inline void write_variable(definitions_t& definitions, x86_ref_e variable, ir_instruction_t* value, ir_block_t* block) {
-	definitions.def[variable][block] = value;
+ir_instruction_t* read_variable_recursive(ir_function_t* function, ssa_state_t& state, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current);
+
+inline void write_variable(ssa_state_t& state, x86_ref_e variable, ir_block_t* block, ir_instruction_t* value) {
+	state.def[variable][block] = value;
 }
 
-ir_instruction_t* read_variable_recursive(ir_function_t* function, definitions_t& definitions, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current);
-
-inline ir_instruction_t* read_variable(ir_function_t* function, definitions_t& definitions, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current) {
-	if (definitions.def[variable].find(block) != definitions.def[variable].end()) {
-		return definitions.def[variable][block];
+inline ir_instruction_t* read_variable(ir_function_t* function, ssa_state_t& state, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current) {
+	if (state.def[variable].find(block) != state.def[variable].end()) {
+		return state.def[variable][block];
 	} else {
-		return read_variable_recursive(function, definitions, variable, block, current);
+		return read_variable_recursive(function, state, variable, block, current);
 	}
 }
 
 inline ir_instruction_t* try_remove_trivial_phi(ir_instruction_t* phi) {
 	ir_instruction_t* same = nullptr;
-	ir_phi_node_t* node = phi->phi.list;
-	while (node) {
-		if (node->value == same || node->value == phi) {
-			node = node->next;
-			continue;
+	ir_phi_node_t* op = phi->phi.list;
+	while (op) {
+		if (op->value == same || op->value == phi) {
+			op = op->next;
+			continue; // Unique value or self−reference
 		}
 
 		if (same != nullptr) {
-			return phi;
+			return phi; // The phi merges at least two values: not trivial
 		}
 
-		same = node->value;
+		same = op->value;
 
-		node = node->next;
+		op = op->next;
 	}
 
 	if (same == nullptr) {
@@ -72,10 +71,10 @@ inline ir_instruction_t* try_remove_trivial_phi(ir_instruction_t* phi) {
 	return same;
 }
 
-inline ir_instruction_t* add_phi_operands(ir_function_t* function, definitions_t& definitions, ir_block_t* block, x86_ref_e variable, ir_instruction_t* phi, ir_instruction_list_t* current) {
+inline ir_instruction_t* add_phi_operands(ir_function_t* function, ssa_state_t& state, ir_block_t* block, x86_ref_e variable, ir_instruction_t* phi, ir_instruction_list_t* current) {
 	ir_block_list_t* pred = block->predecessors;
 	while (pred) {
-		ir_instruction_t* value = read_variable(function, definitions, variable, pred->block, current);
+		ir_instruction_t* value = read_variable(function, state, variable, pred->block, current);
 		ir_phi_node_t* node = phi->phi.list;
 		phi->phi.list = (ir_phi_node_t*)malloc(sizeof(ir_phi_node_t));
 		phi->phi.list->block = pred->block;
@@ -85,29 +84,24 @@ inline ir_instruction_t* add_phi_operands(ir_function_t* function, definitions_t
 		
 		pred = pred->next;
 	}
-
 	return try_remove_trivial_phi(phi);
 }
 
-inline ir_instruction_t* read_variable_recursive(ir_function_t* function, definitions_t& definitions, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current) {
-	u8 predecessorCount = 0;
-	ir_block_list_t* pred = block->predecessors;
-	while (pred) {
-		predecessorCount++;
-		pred = pred->next;
-	}
+inline ir_instruction_t* read_variable_recursive(ir_function_t* function, ssa_state_t& state, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current) {
+	u32 predecessor_count = block->predecessors_count;
 
 	ir_instruction_t* ret;
-	if (predecessorCount == 1) {
-		ret = read_variable(function, definitions, variable, block->predecessors->block, current);
-	} else if (predecessorCount > 1) {
+	if (predecessor_count == 1) {
+		// Optimize the common case of one predecessor: No phi needed
+		ret = read_variable(function, state, variable, block->predecessors->block, current);
+	} else if (predecessor_count > 1) {
 		ret = ir_ilist_insert_before(current);
 		ret->type = IR_TYPE_PHI;
 		ret->opcode = IR_PHI;
 		ret->phi.list = nullptr;
-		write_variable(definitions, variable, ret, block);
-		add_phi_operands(function, definitions, block, variable, ret, current);
-	} else if (predecessorCount == 0) {
+		write_variable(state, variable, block, ret);
+		ret = add_phi_operands(function, state, block, variable, ret, current);
+	} else if (predecessor_count == 0) {
 		// The search has reached our empty entry block without finding a definition
 		// Which means we actually need to read the guest from memory
 		// We insert an instruction that reads the guest from memory right before the current instruction
@@ -116,21 +110,19 @@ inline ir_instruction_t* read_variable_recursive(ir_function_t* function, defini
 		ret->type = IR_TYPE_LOAD_GUEST_FROM_MEMORY;
 		ret->opcode = IR_LOAD_GUEST_FROM_MEMORY;
 		ret->get_guest.ref = variable;
-	} else {
-		ERROR("Unreachable");
 	}
 
-	write_variable(definitions, variable, ret, block);
+	write_variable(state, variable, block, ret);
 	return ret;
 }
 
-void ir_ssa_pass_impl(ir_function_t* function, definitions_t& definitions, ir_block_t* block) {
+void ir_ssa_pass_impl(ir_function_t* function, ssa_state_t& state, ir_block_t* block) {
 	ir_instruction_list_t* current = block->instructions->next;
 	while(current) {
 		ir_instruction_list_t* next = current->next;
 		switch(current->instruction.opcode) {
 			case IR_SET_GUEST: {
-				write_variable(definitions, current->instruction.set_guest.ref, &current->instruction, block);
+				write_variable(state, current->instruction.set_guest.ref, block, &current->instruction);
 				ir_instruction_t* source = current->instruction.set_guest.source;
 				ir_clear_instruction(&current->instruction);
 				current->instruction.type = IR_TYPE_ONE_OPERAND;
@@ -139,7 +131,7 @@ void ir_ssa_pass_impl(ir_function_t* function, definitions_t& definitions, ir_bl
 				break;
 			}
 			case IR_GET_GUEST: {
-				ir_instruction_t* value = read_variable(function, definitions, current->instruction.get_guest.ref, block, current);
+				ir_instruction_t* value = read_variable(function, state, current->instruction.get_guest.ref, block, current);
 				ir_clear_instruction(&current->instruction);
 				current->instruction.type = IR_TYPE_ONE_OPERAND;
 				current->instruction.opcode = IR_MOV;
@@ -148,22 +140,22 @@ void ir_ssa_pass_impl(ir_function_t* function, definitions_t& definitions, ir_bl
 				break;
 			}
 			case IR_CPUID: {
-				definitions.def[X86_REF_RAX].clear();
-				definitions.def[X86_REF_RCX].clear();
-				definitions.def[X86_REF_RDX].clear();
-				definitions.def[X86_REF_RBX].clear();
+				state.def[X86_REF_RAX].clear();
+				state.def[X86_REF_RCX].clear();
+				state.def[X86_REF_RDX].clear();
+				state.def[X86_REF_RBX].clear();
 				break;
 			}
 			case IR_SYSCALL: {
-				definitions.def[X86_REF_RAX].clear();
+				state.def[X86_REF_RAX].clear();
 				break;
 			}
 			case IR_JUMP_REGISTER:
 			case IR_EXIT: {
 				// We need to emit a writeback to memory for all variables that are used
 				for (u8 i = 0; i < X86_REF_COUNT; i++) {
-					if (!definitions.def[i].empty()) {
-						ir_instruction_t* value = read_variable(function, definitions, (x86_ref_e)i, block, current);
+					if (!state.def[i].empty()) {
+						ir_instruction_t* value = read_variable(function, state, (x86_ref_e)i, block, current);
 						ir_instruction_t* write = ir_ilist_insert_before(current);
 						write->type = IR_TYPE_STORE_GUEST_TO_MEMORY;
 						write->opcode = IR_STORE_GUEST_TO_MEMORY;
@@ -185,10 +177,10 @@ void ir_ssa_pass_impl(ir_function_t* function, definitions_t& definitions, ir_bl
 
 // This and the above functions are based entirely on Simple and Efficient Construction of Static Single Assignment Form paper
 extern "C" void ir_ssa_pass(ir_function_t* function) {
-	definitions_t definitions = {};
+	ssa_state_t state = {};
 	ir_block_list_t* current = function->first;
 	while (current) {
-		ir_ssa_pass_impl(function, definitions, current->block);
+		ir_ssa_pass_impl(function, state, current->block);
 		current = current->next;
 	}
 }
@@ -349,6 +341,17 @@ extern "C" void ir_copy_propagation_pass_block(std::map<ir_instruction_t*, ir_in
 					}
 					break;
 				}
+				case IR_TYPE_PHI: {
+					ir_phi_node_t* node = instruction->phi.list;
+					while (node) {
+						if (copies.find(node->value) != copies.end()) {
+							node->value = copies[node->value];
+							node->value->uses++;
+						}
+						node = node->next;
+					}
+					break;
+				}
 				default: {
 					break;
 				}
@@ -366,9 +369,9 @@ extern "C" void ir_copy_propagation_pass_block(std::map<ir_instruction_t*, ir_in
 }
 
 void ir_copy_propagation_pass(ir_function_t* function) {
-	// std::map<ir_instruction_t*, ir_instruction_t*> copies;
-	// ir_block_list_t* block = function->first;
-	// ir_copy_propagation_pass_block(copies, block->block);
+	std::map<ir_instruction_t*, ir_instruction_t*> copies;
+	ir_block_list_t* block = function->first;
+	ir_copy_propagation_pass_block(copies, block->block);
 }
 
 void ir_verifier_pass(ir_block_t* block) {

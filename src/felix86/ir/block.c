@@ -41,13 +41,7 @@ ir_block_t* ir_function_get_block(ir_function_t* function, ir_block_t* predecess
     for (ir_block_list_t* current = function->first; current; current = current->next) {
         if (current->block->start_address == address) {
             if (predecessor) {
-                ir_block_list_t* list = ir_block_list_create(predecessor);
-                list->next = current->block->predecessors;
-                current->block->predecessors = list;
-
-                list = ir_block_list_create(current->block);
-                list->next = predecessor->successors;
-                predecessor->successors = list;
+                ir_add_predecessor(current->block, predecessor);
             }
             return current->block;
         }
@@ -60,11 +54,30 @@ ir_block_t* ir_function_get_block(ir_function_t* function, ir_block_t* predecess
 
     // Add block to predecessor's successors
     if (predecessor) {
-        ir_block_list_t* list = ir_block_list_create(block);
-        list->next = predecessor->successors;
-        predecessor->successors = list;
-        block->predecessors = ir_block_list_create(predecessor);
+        ir_add_successor(predecessor, block);
     }
 
     return block;
+}
+
+void ir_add_predecessor(ir_block_t* block, ir_block_t* predecessor) {
+    ir_block_list_t* list = ir_block_list_create(predecessor);
+    list->next = block->predecessors;
+    block->predecessors = list;
+    block->predecessors_count++;
+    ir_block_list_t* succ = ir_block_list_create(block);
+    succ->next = predecessor->successors;
+    predecessor->successors = succ;
+    predecessor->successors_count++;
+}
+
+void ir_add_successor(ir_block_t* block, ir_block_t* successor) {
+    ir_block_list_t* list = ir_block_list_create(successor);
+    list->next = block->successors;
+    block->successors = list;
+    block->successors_count++;
+    ir_block_list_t* pred = ir_block_list_create(block);
+    pred->next = successor->predecessors;
+    successor->predecessors = pred;
+    successor->predecessors_count++;
 }

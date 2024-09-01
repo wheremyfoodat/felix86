@@ -17,6 +17,7 @@ FELIX86_TEST(loop_10_times) {
     Label loop;
     mov(rax, 0);
     L(loop);
+    add(rax, 1);
     jne(loop);
     hlt();
 
