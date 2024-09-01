@@ -30,6 +30,7 @@ bool is_read_write(ir_instruction_t* instruction) {
 
 struct definitions_t {
 	std::array<std::map<ir_block_t*, ir_instruction_t*>, X86_REF_COUNT> def {};
+	std::map<ir_instruction_t*, ir_instruction_t*> copies;
 };
 
 inline void write_variable(definitions_t& definitions, x86_ref_e variable, ir_instruction_t* value, ir_block_t* block) {
@@ -125,18 +126,34 @@ inline ir_instruction_t* read_variable_recursive(ir_function_t* function, defini
 void ir_ssa_pass_impl(ir_function_t* function, definitions_t& definitions, ir_block_t* block) {
 	ir_instruction_list_t* current = block->instructions->next;
 	while(current) {
+		ir_instruction_list_t* next = current->next;
 		switch(current->instruction.opcode) {
 			case IR_SET_GUEST: {
 				write_variable(definitions, current->instruction.set_guest.ref, &current->instruction, block);
+				
+				ir_instruction_t* instruction = &current->instruction;
+				if (definitions.copies.find(instruction->set_guest.source) != definitions.copies.end()) {
+					definitions.copies[instruction] = definitions.copies[instruction->set_guest.source];
+				} else {
+					definitions.copies[instruction] = instruction->set_guest.source;
+				}
+
+				ir_ilist_remove(current);
+				ir_ilist_free(current);
 				break;
 			}
 			case IR_GET_GUEST: {
 				ir_instruction_t* value = read_variable(function, definitions, current->instruction.get_guest.ref, block, current);
-				ir_clear_instruction(&current->instruction);
-				current->instruction.type = IR_TYPE_ONE_OPERAND;
-				current->instruction.opcode = IR_MOV;
-				current->instruction.one_operand.source = value;
-				value->uses++;
+				
+				ir_instruction_t* instruction = &current->instruction;
+				if (definitions.copies.find(value) != definitions.copies.end()) {
+					definitions.copies[instruction] = definitions.copies[value];
+				} else {
+					definitions.copies[instruction] = value;
+				}
+
+				ir_ilist_remove(current);
+				ir_ilist_free(current);
 				break;
 			}
 			case IR_CPUID: {
@@ -171,7 +188,7 @@ void ir_ssa_pass_impl(ir_function_t* function, definitions_t& definitions, ir_bl
 			}
 		}
 
-		current = current->next;
+		current = next;
 	}
 }
 

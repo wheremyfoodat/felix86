@@ -76,6 +76,18 @@ u64 felix86_get_guest(felix86_recompiler_t* recompiler, x86_ref_e ref) {
             return recompiler->state.gs;
         case X86_REF_FS:
             return recompiler->state.fs;
+        case X86_REF_CF:
+            return recompiler->state.cf;
+        case X86_REF_PF:
+            return recompiler->state.pf;
+        case X86_REF_AF:
+            return recompiler->state.af;
+        case X86_REF_ZF:
+            return recompiler->state.zf;
+        case X86_REF_SF:
+            return recompiler->state.sf;
+        case X86_REF_OF:
+            return recompiler->state.of;
         default:
             ERROR("Invalid GPR reference");
     }
@@ -140,6 +152,24 @@ void felix86_set_guest(felix86_recompiler_t* recompiler, x86_ref_e ref, u64 valu
         case X86_REF_FS:
             recompiler->state.fs = value;
             break;
+        case X86_REF_CF:
+            recompiler->state.cf = value;
+            break;
+        case X86_REF_PF:
+            recompiler->state.pf = value;
+            break;
+        case X86_REF_AF:
+            recompiler->state.af = value;
+            break;
+        case X86_REF_ZF:
+            recompiler->state.zf = value;
+            break;
+        case X86_REF_SF:
+            recompiler->state.sf = value;
+            break;
+        case X86_REF_OF:
+            recompiler->state.of = value;
+            break;
         default:
             ERROR("Invalid GPR reference");
     }
@@ -166,6 +196,11 @@ felix86_exit_reason_e felix86_recompiler_run_v2(felix86_recompiler_t* recompiler
     ir_function_t* function = ir_function_cache_get_function(recompiler->function_cache, address);
 
     frontend_compile_function(function);
+
+    ir_ssa_pass(function);
+    ir_naming_pass(function);
+
+    ir_interpret_function(function, &recompiler->state);
 
     return DoneTesting;
 }

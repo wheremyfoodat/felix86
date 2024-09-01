@@ -8,14 +8,14 @@
 static u64 temps[4096] = {0};
 static xmm_reg_t xmm_temps[256] = {0};
 
-bool ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
+ir_block_t* ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
 {
     switch (instruction->opcode) {
         case IR_NULL: {
             ERROR("Interpreting null, this should not happen\n");
             break;
         }
-        case IR_GET_GUEST: {
+        case IR_LOAD_GUEST_FROM_MEMORY: {
             switch (instruction->get_guest.ref) {
                 case X86_REF_RAX ... X86_REF_R15: {
                     temps[instruction->name] = state->gprs[instruction->get_guest.ref - X86_REF_RAX];
@@ -37,6 +37,30 @@ bool ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
                     temps[instruction->name] = state->gs;
                     break;
                 }
+                case X86_REF_CF: {
+                    temps[instruction->name] = state->cf;
+                    break;
+                }
+                case X86_REF_PF: {
+                    temps[instruction->name] = state->pf;
+                    break;
+                }
+                case X86_REF_AF: {
+                    temps[instruction->name] = state->af;
+                    break;
+                }
+                case X86_REF_ZF: {
+                    temps[instruction->name] = state->zf;
+                    break;
+                }
+                case X86_REF_SF: {
+                    temps[instruction->name] = state->sf;
+                    break;
+                }
+                case X86_REF_OF: {
+                    temps[instruction->name] = state->of;
+                    break;
+                }
                 default: {
                     ERROR("Invalid GPR reference");
                     break;
@@ -44,7 +68,7 @@ bool ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             }
             break;
         }
-        case IR_SET_GUEST: {
+        case IR_STORE_GUEST_TO_MEMORY: {
             switch (instruction->set_guest.ref) {
                 case X86_REF_RAX ... X86_REF_R15: {
                     state->gprs[instruction->set_guest.ref - X86_REF_RAX] = temps[instruction->set_guest.source->name];
@@ -64,6 +88,48 @@ bool ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
                 }
                 case X86_REF_GS: {
                     state->gs = temps[instruction->set_guest.source->name];
+                    break;
+                }
+                case X86_REF_CF: {
+                    if (temps[instruction->set_guest.source->name] > 1) {
+                        ERROR("Invalid value for CF");
+                    }
+                    state->cf = temps[instruction->set_guest.source->name];
+                    break;
+                }
+                case X86_REF_PF: {
+                    if (temps[instruction->set_guest.source->name] > 1) {
+                        ERROR("Invalid value for PF");
+                    }
+                    state->pf = temps[instruction->set_guest.source->name];
+                    break;
+                }
+                case X86_REF_AF: {
+                    if (temps[instruction->set_guest.source->name] > 1) {
+                        ERROR("Invalid value for AF");
+                    }
+                    state->af = temps[instruction->set_guest.source->name];
+                    break;
+                }
+                case X86_REF_ZF: {
+                    if (temps[instruction->set_guest.source->name] > 1) {
+                        ERROR("Invalid value for ZF");
+                    }
+                    state->zf = temps[instruction->set_guest.source->name];
+                    break;
+                }
+                case X86_REF_SF: {
+                    if (temps[instruction->set_guest.source->name] > 1) {
+                        ERROR("Invalid value for SF");
+                    }
+                    state->sf = temps[instruction->set_guest.source->name];
+                    break;
+                }
+                case X86_REF_OF: {
+                    if (temps[instruction->set_guest.source->name] > 1) {
+                        ERROR("Invalid value for OF");
+                    }
+                    state->of = temps[instruction->set_guest.source->name];
                     break;
                 }
                 default: {
@@ -281,7 +347,7 @@ bool ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             break;
         }
         case IR_MOV: {
-            WARN("Interpreting MOV, this should not happen\n");
+            WARN("Interpreting MOV, this should not happen");
             temps[instruction->name] = temps[instruction->one_operand.source->name];
             break;
         }
@@ -317,23 +383,53 @@ bool ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
             break;
         }
         case IR_JUMP: {
-            ERROR("Interpreting jump");
-            return true;
+            return instruction->jump.target;
+        }
+        case IR_EXIT: {
+            return NULL;
+        }
+        case IR_JUMP_CONDITIONAL: {
+            if (temps[instruction->jump_conditional.condition->name]) {
+                return instruction->jump_conditional.target_true;
+            } else {
+                return instruction->jump_conditional.target_false;
+            }
+            break;
+        }
+        case IR_SET_GUEST: {
+            ERROR("Interpreting set_guest, this should not happen");
+            break;
+        }
+        case IR_GET_GUEST: {
+            ERROR("Interpreting get_guest, this should not happen");
+            break;
         }
         default: {
-            ERROR("Invalid opcode");
+            ERROR("Invalid opcode: %d", instruction->opcode);
             break;
         }
     }
-    return false;
+    return NULL;
 }
 
-void ir_interpret_block(ir_block_t* block, x86_state_t* state)
+ir_block_t* ir_interpret_block(ir_block_t* block, x86_state_t* state)
 {
+    ir_block_t* next;
     memset(temps, 0, sizeof(temps));
     ir_instruction_list_t* current = block->instructions;
     while (current) {
-        ir_interpret_instruction(&current->instruction, state);
+        next = ir_interpret_instruction(&current->instruction, state);
         current = current->next;
+
+        if (next && !current) {
+            ERROR("Block has tried to jump to a different block but there are more instructions to interpret");
+        }
     }
+
+    return next;
+}
+
+void ir_interpret_function(ir_function_t* function, x86_state_t* state) {
+    ir_block_list_t* block = function->first;
+    ir_interpret_block(block->block, state);
 }
