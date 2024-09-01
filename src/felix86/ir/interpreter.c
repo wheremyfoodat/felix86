@@ -1,6 +1,7 @@
 #include "felix86/ir/interpreter.h"
 #include "felix86/common/log.h"
 #include "felix86/common/utility.h"
+#include "felix86/ir/print.h"
 #include <string.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -8,7 +9,7 @@
 static u64 temps[4096] = {0};
 static xmm_reg_t xmm_temps[256] = {0};
 
-ir_block_t* ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t* state)
+ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instruction, x86_state_t* state)
 {
     switch (instruction->opcode) {
         case IR_NULL: {
@@ -388,6 +389,10 @@ ir_block_t* ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t*
         case IR_EXIT: {
             return NULL;
         }
+        case IR_JUMP_REGISTER: {
+            state->rip = temps[instruction->one_operand.source->name];
+            return NULL;
+        }
         case IR_JUMP_CONDITIONAL: {
             if (temps[instruction->jump_conditional.condition->name]) {
                 return instruction->jump_conditional.target_true;
@@ -412,24 +417,20 @@ ir_block_t* ir_interpret_instruction(ir_instruction_t* instruction, x86_state_t*
     return NULL;
 }
 
-ir_block_t* ir_interpret_block(ir_block_t* block, x86_state_t* state)
-{
-    ir_block_t* next;
+void ir_interpret_function(ir_function_t* function, x86_state_t* state) {
     memset(temps, 0, sizeof(temps));
-    ir_instruction_list_t* current = block->instructions;
+    ir_block_list_t* blocks = function->first;
+    ir_block_t* intro = NULL;
+    ir_instruction_list_t* current = blocks->block->instructions;
+    ir_block_t* next;
+    ir_block_t* entry = blocks->block;
     while (current) {
-        next = ir_interpret_instruction(&current->instruction, state);
-        current = current->next;
-
-        if (next && !current) {
-            ERROR("Block has tried to jump to a different block but there are more instructions to interpret");
+        next = ir_interpret_instruction(entry, &current->instruction, state);
+        if (next) {
+            entry = next;
+            current = next->instructions;
+        } else {
+            current = current->next;
         }
     }
-
-    return next;
-}
-
-void ir_interpret_function(ir_function_t* function, x86_state_t* state) {
-    ir_block_list_t* block = function->first;
-    ir_interpret_block(block->block, state);
 }

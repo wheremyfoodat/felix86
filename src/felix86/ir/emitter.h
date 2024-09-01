@@ -48,6 +48,7 @@ ir_instruction_t* ir_emit_jump(ir_emitter_state_t* state, ir_block_t* block);
 ir_instruction_t* ir_emit_jump_conditional(
 	ir_emitter_state_t* state, ir_instruction_t* condition, ir_block_t* target_true, ir_block_t* target_false
 );
+ir_instruction_t* ir_emit_jump_register(ir_emitter_state_t* state, ir_instruction_t* target);
 ir_instruction_t* ir_emit_insert_integer_to_vector(
 	ir_emitter_state_t* state, ir_instruction_t* vector_dest, ir_instruction_t* source, u8 size, u8 index
 );

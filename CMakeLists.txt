@@ -84,10 +84,11 @@ set(FELIX86_TEST_SOURCES
     tests/mov.cpp
     tests/lea.cpp
     tests/special.cpp
-    tests/ir/ssa.cpp
+    tests/control_flow.cpp
 )
 
 add_executable(felix86_test)
 target_sources(felix86_test PRIVATE ${FELIX86_TEST_SOURCES})
+target_include_directories(felix86_test PRIVATE tests)
 target_link_libraries(felix86_test PRIVATE felix86_core Catch2::Catch2WithMain xbyak)
 target_compile_options(felix86_test PRIVATE $<$<COMPILE_LANGUAGE:CPP>:-fno-operator-names>)

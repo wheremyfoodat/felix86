@@ -467,20 +467,19 @@ IR_HANDLE(leave) { // leave - 0xc9
 }
 
 IR_HANDLE(call_rel32) { // call rel32 - 0xe8
-    ERROR("Unimplemented instruction: call rel32 - 0xe8");
-    // u64 displacement = (i64)(i32)inst->operand_imm.immediate.data;
-    // u64 jump_address = state->current_address + inst->length + displacement;
-    // u64 returnAddress = state->current_address + inst->length;
-    // ir_instruction_t* rip = ir_emit_immediate(state, jump_address);
-    // ir_instruction_t* returnRip = ir_emit_immediate(state, returnAddress);
-    // ir_instruction_t* rsp = ir_emit_get_guest(state, X86_REF_RSP);
-    // ir_instruction_t* size = ir_emit_immediate(state, 8);
-    // ir_instruction_t* rsp_sub = ir_emit_sub(state, rsp, size);
-    // ir_emit_write_qword(state, rsp_sub, returnRip);
-    // ir_emit_set_guest(state, X86_REF_RSP, rsp_sub);
-    // ir_emit_jump(state, rip);
+    u64 displacement = (i64)(i32)inst->operand_imm.immediate.data;
+    u64 jump_address = state->current_address + inst->length + displacement;
+    u64 returnAddress = state->current_address + inst->length;
+    ir_instruction_t* rip = ir_emit_immediate(state, jump_address);
+    ir_instruction_t* returnRip = ir_emit_immediate(state, returnAddress);
+    ir_instruction_t* rsp = ir_emit_get_guest(state, X86_REF_RSP);
+    ir_instruction_t* size = ir_emit_immediate(state, 8);
+    ir_instruction_t* rsp_sub = ir_emit_sub(state, rsp, size);
+    ir_emit_write_qword(state, rsp_sub, returnRip);
+    ir_emit_set_guest(state, X86_REF_RSP, rsp_sub);
+    ir_emit_jump_register(state, rip);
 
-    // state->exit = true;
+    state->exit = true;
 }
 
 IR_HANDLE(jmp_rel32) { // jmp rel32 - 0xe9

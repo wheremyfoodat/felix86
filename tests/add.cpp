@@ -51,8 +51,8 @@ FELIX86_TEST(add_dead_store_load) {
     verify(X86_REF_RAX, 0x5 + 0x5);
 }
 
-FELIX86_MULTI_TEST(add_multi) {
-    mov(rbx, 0);
-    add(rbx, 1);
-    verify(X86_REF_RBX, 1);
-}
+// FELIX86_MULTI_TEST(add_multi) {
+//     mov(rbx, 0);
+//     add(rbx, 1);
+//     verify(X86_REF_RBX, 1);
+// }

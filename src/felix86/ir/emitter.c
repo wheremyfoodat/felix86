@@ -223,7 +223,7 @@ ir_instruction_t* ir_emit_exit(ir_emitter_state_t* state)
 {
     ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
     instruction->opcode = IR_EXIT;
-    instruction->type = IR_TYPE_TERMINATION;
+    instruction->type = IR_TYPE_NO_OPERANDS;
     return instruction;
 }
 
@@ -231,8 +231,18 @@ ir_instruction_t* ir_emit_jump(ir_emitter_state_t* state, ir_block_t* target)
 {
     ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
     instruction->opcode = IR_JUMP;
-    instruction->type = IR_TYPE_TERMINATION;
+    instruction->type = IR_TYPE_JUMP;
     instruction->jump.target = target;
+    return instruction;
+}
+
+ir_instruction_t* ir_emit_jump_register(ir_emitter_state_t* state, ir_instruction_t* target)
+{
+    ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
+    instruction->opcode = IR_JUMP_REGISTER;
+    instruction->type = IR_TYPE_ONE_OPERAND;
+    instruction->one_operand.source = target;
+    target->uses++;
     return instruction;
 }
 
@@ -240,7 +250,7 @@ ir_instruction_t* ir_emit_jump_conditional(ir_emitter_state_t* state, ir_instruc
 {
     ir_instruction_t* instruction = ir_ilist_push_back(state->current_block->instructions);
     instruction->opcode = IR_JUMP_CONDITIONAL;
-    instruction->type = IR_TYPE_TERMINATION;
+    instruction->type = IR_TYPE_JUMP_CONDITIONAL;
     instruction->jump_conditional.condition = condition;
     instruction->jump_conditional.target_true = target_true;
     instruction->jump_conditional.target_false = target_false;

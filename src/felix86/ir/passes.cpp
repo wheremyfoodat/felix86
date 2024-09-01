@@ -52,6 +52,7 @@ inline ir_instruction_t* try_remove_trivial_phi(ir_instruction_t* phi) {
 	ir_phi_node_t* node = phi->phi.list;
 	while (node) {
 		if (node->value == same || node->value == phi) {
+			node = node->next;
 			continue;
 		}
 
@@ -100,7 +101,7 @@ inline ir_instruction_t* read_variable_recursive(ir_function_t* function, defini
 	if (predecessorCount == 1) {
 		ret = read_variable(function, definitions, variable, block->predecessors->block, current);
 	} else if (predecessorCount > 1) {
-		ret = ir_ilist_insert_after(current);
+		ret = ir_ilist_insert_before(current);
 		ret->type = IR_TYPE_PHI;
 		ret->opcode = IR_PHI;
 		ret->phi.list = nullptr;
@@ -130,30 +131,20 @@ void ir_ssa_pass_impl(ir_function_t* function, definitions_t& definitions, ir_bl
 		switch(current->instruction.opcode) {
 			case IR_SET_GUEST: {
 				write_variable(definitions, current->instruction.set_guest.ref, &current->instruction, block);
-				
-				ir_instruction_t* instruction = &current->instruction;
-				if (definitions.copies.find(instruction->set_guest.source) != definitions.copies.end()) {
-					definitions.copies[instruction] = definitions.copies[instruction->set_guest.source];
-				} else {
-					definitions.copies[instruction] = instruction->set_guest.source;
-				}
-
-				ir_ilist_remove(current);
-				ir_ilist_free(current);
+				ir_instruction_t* source = current->instruction.set_guest.source;
+				ir_clear_instruction(&current->instruction);
+				current->instruction.type = IR_TYPE_ONE_OPERAND;
+				current->instruction.opcode = IR_MOV;
+				current->instruction.one_operand.source = source;
 				break;
 			}
 			case IR_GET_GUEST: {
 				ir_instruction_t* value = read_variable(function, definitions, current->instruction.get_guest.ref, block, current);
-				
-				ir_instruction_t* instruction = &current->instruction;
-				if (definitions.copies.find(value) != definitions.copies.end()) {
-					definitions.copies[instruction] = definitions.copies[value];
-				} else {
-					definitions.copies[instruction] = value;
-				}
-
-				ir_ilist_remove(current);
-				ir_ilist_free(current);
+				ir_clear_instruction(&current->instruction);
+				current->instruction.type = IR_TYPE_ONE_OPERAND;
+				current->instruction.opcode = IR_MOV;
+				current->instruction.one_operand.source = value;
+				value->uses++;
 				break;
 			}
 			case IR_CPUID: {
@@ -167,7 +158,7 @@ void ir_ssa_pass_impl(ir_function_t* function, definitions_t& definitions, ir_bl
 				definitions.def[X86_REF_RAX].clear();
 				break;
 			}
-			case IR_JUMP_RUNTIME:
+			case IR_JUMP_REGISTER:
 			case IR_EXIT: {
 				// We need to emit a writeback to memory for all variables that are used
 				for (u8 i = 0; i < X86_REF_COUNT; i++) {
@@ -296,9 +287,7 @@ extern "C" void ir_local_common_subexpression_elimination_pass_v2(ir_block_t* bl
 	}
 }
 
-extern "C" void ir_copy_propagation_pass(ir_block_t* block) {
-	std::map<ir_instruction_t*, ir_instruction_t*> copies;
-
+extern "C" void ir_copy_propagation_pass_block(std::map<ir_instruction_t*, ir_instruction_t*> copies, ir_block_t* block) {
 	ir_instruction_list_t* current = block->instructions->next;
 	while (current) {
 		ir_instruction_t* instruction = &current->instruction;
@@ -326,6 +315,7 @@ extern "C" void ir_copy_propagation_pass(ir_block_t* block) {
 					}
 					break;
 				}
+				case IR_TYPE_JUMP:
 				case IR_TYPE_ONE_OPERAND: {
 					if (copies.find(instruction->one_operand.source) != copies.end()) {
 						instruction->one_operand.source = copies[instruction->one_operand.source];
@@ -333,10 +323,18 @@ extern "C" void ir_copy_propagation_pass(ir_block_t* block) {
 					}
 					break;
 				}
+				case IR_TYPE_STORE_GUEST_TO_MEMORY:
 				case IR_TYPE_SET_GUEST: {
 					if (copies.find(instruction->set_guest.source) != copies.end()) {
 						instruction->set_guest.source = copies[instruction->set_guest.source];
 						instruction->set_guest.source->uses++;
+					}
+					break;
+				}
+				case IR_TYPE_JUMP_CONDITIONAL: {
+					if (copies.find(instruction->jump_conditional.condition) != copies.end()) {
+						instruction->jump_conditional.condition = copies[instruction->jump_conditional.condition];
+						instruction->jump_conditional.condition->uses++;
 					}
 					break;
 				}
@@ -358,6 +356,19 @@ extern "C" void ir_copy_propagation_pass(ir_block_t* block) {
 			current = current->next;
 		}
 	}
+
+	ir_block_list_t* succ = block->successors;
+	while (succ) {
+		if (succ->block != block)
+			ir_copy_propagation_pass_block(copies, succ->block);
+		succ = succ->next;
+	}
+}
+
+void ir_copy_propagation_pass(ir_function_t* function) {
+	// std::map<ir_instruction_t*, ir_instruction_t*> copies;
+	// ir_block_list_t* block = function->first;
+	// ir_copy_propagation_pass_block(copies, block->block);
 }
 
 void ir_verifier_pass(ir_block_t* block) {
