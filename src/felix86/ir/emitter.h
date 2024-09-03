@@ -34,15 +34,15 @@ ir_instruction_t* ir_emit_lea(ir_instruction_list_t* instructions, x86_operand_t
 ir_instruction_t* ir_emit_sext8(ir_instruction_list_t* instructions, ir_instruction_t* source);
 ir_instruction_t* ir_emit_sext16(ir_instruction_list_t* instructions, ir_instruction_t* source);
 ir_instruction_t* ir_emit_sext32(ir_instruction_list_t* instructions, ir_instruction_t* source);
-ir_instruction_t* ir_emit_syscall(ir_instruction_list_t* state);
-ir_instruction_t* ir_emit_exit(ir_instruction_list_t* state);
+ir_instruction_t* ir_emit_syscall(ir_instruction_list_t* instructions);
+ir_instruction_t* ir_emit_exit(ir_instruction_list_t* instructions);
 ir_instruction_t* ir_emit_jump(ir_instruction_list_t* instructions, ir_block_t* block);
 ir_instruction_t* ir_emit_jump_conditional(
-	ir_instruction_list_t* state, ir_instruction_t* condition, ir_block_t* target_true, ir_block_t* target_false
+	ir_instruction_list_t* instructions, ir_instruction_t* condition, ir_block_t* target_true, ir_block_t* target_false
 );
 ir_instruction_t* ir_emit_jump_register(ir_instruction_list_t* instructions, ir_instruction_t* target);
 ir_instruction_t* ir_emit_insert_integer_to_vector(
-	ir_instruction_list_t* state, ir_instruction_t* vector_dest, ir_instruction_t* source, u8 size, u8 index
+	ir_instruction_list_t* instructions, ir_instruction_t* vector_dest, ir_instruction_t* source, u8 size, u8 index
 );
 ir_instruction_t* ir_emit_extract_integer_from_vector(ir_instruction_list_t* instructions, ir_instruction_t* vector_src, u8 size, u8 index);
 
@@ -61,7 +61,7 @@ ir_instruction_t* ir_emit_write_word(ir_instruction_list_t* instructions, ir_ins
 ir_instruction_t* ir_emit_write_dword(ir_instruction_list_t* instructions, ir_instruction_t* address, ir_instruction_t* source);
 ir_instruction_t* ir_emit_write_qword(ir_instruction_list_t* instructions, ir_instruction_t* address, ir_instruction_t* source);
 
-ir_instruction_t* ir_emit_cpuid(ir_instruction_list_t* state);
+ir_instruction_t* ir_emit_cpuid(ir_instruction_list_t* instructions);
 
 ir_instruction_t* ir_emit_setcc(ir_instruction_list_t* instructions, x86_instruction_t* inst);
 ir_instruction_t* ir_emit_cmovcc(ir_instruction_list_t* instructions, x86_instruction_t* inst);
@@ -94,24 +94,24 @@ ir_instruction_t* ir_emit_get_parity(ir_instruction_list_t* instructions, ir_ins
 ir_instruction_t* ir_emit_get_zero(ir_instruction_list_t* sta32te, ir_instruction_t* source);
 ir_instruction_t* ir_emit_get_sign(ir_instruction_list_t* instructions, ir_instruction_t* source, x86_size_e size);
 ir_instruction_t* ir_emit_get_overflow_add(
-	ir_instruction_list_t* state, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result, x86_size_e size
+	ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result, x86_size_e size
 );
 ir_instruction_t* ir_emit_get_overflow_sub(
-	ir_instruction_list_t* state, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result, x86_size_e size
+	ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result, x86_size_e size
 );
 ir_instruction_t* ir_emit_get_carry_add(
-	ir_instruction_list_t* state, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result, x86_size_e size
+	ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result, x86_size_e size
 );
 ir_instruction_t* ir_emit_get_carry_adc(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2, x86_size_e size);
 ir_instruction_t* ir_emit_get_carry_sub(
-	ir_instruction_list_t* state, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result, x86_size_e size
+	ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result, x86_size_e size
 );
 ir_instruction_t* ir_emit_get_carry_sbb(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2, x86_size_e size_e);
 ir_instruction_t* ir_emit_get_aux_add(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_get_aux_sub(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 
 ir_instruction_t* ir_emit_set_cpazso(
-	ir_instruction_list_t* state, ir_instruction_t* c, ir_instruction_t* p, ir_instruction_t* a, ir_instruction_t* z, ir_instruction_t* s,
+	ir_instruction_list_t* instructions, ir_instruction_t* c, ir_instruction_t* p, ir_instruction_t* a, ir_instruction_t* z, ir_instruction_t* s,
 	ir_instruction_t* o
 );
 

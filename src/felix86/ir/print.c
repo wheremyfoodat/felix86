@@ -44,6 +44,11 @@ void print_two_op(ir_instruction_t* instruction, const char* op) {
 }
 
 void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
+    if (instruction->opcode == IR_START_OF_BLOCK) {
+        return;
+    }
+
+    printf("\t");
     switch (instruction->opcode) {
         case IR_IMMEDIATE: {
             printf("t%d = 0x%0llx", instruction->name, (unsigned long long)instruction->load_immediate.immediate);
@@ -144,7 +149,7 @@ void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
             }
 
             if (instruction->two_operand_immediates.imm64_1 != 0) {
-                printf("%lld", (long long)(i64)(i32)instruction->two_operand_immediates.imm64_1);
+                printf("%lld", (long long)instruction->two_operand_immediates.imm64_1);
             }
             
             printf("]");
@@ -194,9 +199,6 @@ void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
             printf("qword[t%d] = t%d", instruction->two_operand.source1->name, instruction->two_operand.source2->name);
             break;
         }
-        case IR_START_OF_BLOCK: {
-            break;
-        }
         case IR_SYSCALL: {
             printf("syscall");
             break;
@@ -206,7 +208,7 @@ void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
             break;
         }
         case IR_JUMP: {
-            printf("jump %016lx", instruction->jump.target->start_address);
+            printf("jump %p", instruction->jump.target);
             break;
         }
         case IR_EXIT: {
@@ -220,7 +222,7 @@ void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
                 if (!node->value || !node->block) {
                     printf("NULL");
                 } else {
-                    printf("t%d @ %016lx", node->value->name, node->block->start_address);
+                    printf("t%d @ %p", node->value->name, node->block);
                 }
                 node = node->next;
                 if (node) {
@@ -231,7 +233,7 @@ void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
             break;
         }
         case IR_JUMP_CONDITIONAL: {
-            printf("jump t%d ? %016lx : %016lx", instruction->jump_conditional.condition->name, instruction->jump_conditional.target_true->start_address, instruction->jump_conditional.target_false->start_address);
+            printf("jump t%d ? %p : %p", instruction->jump_conditional.condition->name, instruction->jump_conditional.target_true, instruction->jump_conditional.target_false);
             break;
         }
         case IR_INSERT_INTEGER_TO_VECTOR: {
@@ -255,7 +257,7 @@ void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
         }
     }
 
-    printf("\t\t\t\t(uses: %d)", instruction->uses);
+    // printf("\t\t\t\t(uses: %d)", instruction->uses);
     printf("\n");
 }
 
@@ -271,13 +273,13 @@ void ir_print_function_uml(ir_function_t* function) {
     printf("@startuml\n");
     ir_block_list_t* block = function->first;
     while (block) {
-        printf("class block_%016lx {\n", block->block->start_address);
+        printf("class block_%p {\n", block->block);
         ir_block_t* b = block->block;
         ir_print_block(b);
         printf("}\n");
         ir_block_list_t* successor = b->successors;
         while (successor) {
-            printf("block_%016lx --> block_%016lx\n", b->start_address, successor->block->start_address);
+            printf("block_%p --> block_%p\n", b, successor->block);
             successor = successor->next;
         }
         block = block->next;

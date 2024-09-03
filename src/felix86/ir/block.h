@@ -7,6 +7,8 @@ extern "C" {
 #include "felix86/common/utility.h"
 #include "felix86/ir/instruction_list.h"
 
+#define IR_BLOCK_NO_ADDRESS (-1ull)
+
 typedef struct ir_block_s {
 	u64 start_address;
 	ir_instruction_list_t* instructions;

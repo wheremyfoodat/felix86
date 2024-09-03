@@ -10,6 +10,7 @@ using namespace Xbyak::util;
     Code_##name(); \
     ~Code_##name() { free(data); } \
     void verify(x86_ref_e ref, u64 value) { checks.push_back({ ref, value }); } \
+    void verify_memory(void* mem, u64 value, u8 size) { mem_checks.push_back({ mem, value, size }); } \
     void verify_xmm(x86_ref_e ref, xmm_reg_t reg) { xmm_checks.push_back({ ref, reg }); } \
     void verify_c(bool value) { c = value; } \
     void verify_p(bool value) { p = value; } \
@@ -38,9 +39,21 @@ private: \
                 REQUIRE(has.data[i] == expected.data[i]); \
             } \
         } \
+        for (auto& check : mem_checks) { \
+            void* mem = std::get<0>(check); \
+            u64 value = std::get<1>(check); \
+            u8 size = std::get<2>(check); \
+            switch (size) { \
+                case 1: REQUIRE(*(u8*)mem == (u8)value); break; \
+                case 2: REQUIRE(*(u16*)mem == (u16)value); break; \
+                case 4: REQUIRE(*(u32*)mem == (u32)value); break; \
+                case 8: REQUIRE(*(u64*)mem == value); break; \
+            } \
+        } \
     } \
     felix86_recompiler_t* recompiler; \
     std::vector<std::pair<x86_ref_e, u64>> checks; \
+    std::vector<std::tuple<void*, u64, u8>> mem_checks; \
     std::vector<std::pair<x86_ref_e, xmm_reg_t>> xmm_checks; \
     std::optional<bool> c,p,a,z,s,o; \
 }; \
@@ -61,42 +74,3 @@ Code_##name::Code_##name() : Xbyak::CodeGenerator(0x1000, malloc(0x2000)) { \
     felix86_recompiler_destroy(recompiler); \
 } \
 void Code_##name::emit_code()
-
-
-#define FELIX86_MULTI_TEST(name) struct Code_multi_##name final : Xbyak::CodeGenerator { \
-    Code_multi_##name(); \
-    ~Code_multi_##name() { free(data); } \
-    void verify(x86_ref_e ref, u64 value) { \
-        push(rax); \
-        mov(rax, value); \
-        cmp(rax, Xbyak::Reg64(ref - X86_REF_RAX)); \
-        pop(rax); \
-        jne(fail); \
-    } \
-    u8* data; \
-    u8* stack; \
-private: \
-    Xbyak::Label fail; \
-    void emit_code(); \
-}; \
-TEST_CASE(#name, "[felix86-multi]") { \
-    Code_multi_##name c; \
-} \
-Code_multi_##name::Code_multi_##name() : Xbyak::CodeGenerator(0x1000, malloc(0x2000)) { \
-    data = (u8*)getCode(); \
-    stack = data + 0x2000; \
-    mov(rsp, (u64)stack); \
-    emit_code(); \
-    mov(rax, 1); \
-    hlt(); /* emit a hlt instruction to stop the recompiler */ \
-    L(fail); \
-    mov(rax, 0); \
-    hlt(); \
-    felix86_recompiler_config_t config = { .testing = true, .optimize = true, .print_blocks = true, .use_interpreter = true }; \
-    felix86_recompiler_t* recompiler = felix86_recompiler_create(&config); \
-    felix86_set_guest(recompiler, X86_REF_RIP, (u64)data); \
-    felix86_recompiler_run(recompiler); \
-    felix86_recompiler_destroy(recompiler); \
-    REQUIRE(felix86_get_guest(recompiler, X86_REF_RAX) == 1); \
-} \
-void Code_multi_##name::emit_code()

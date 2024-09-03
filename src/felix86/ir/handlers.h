@@ -7,6 +7,8 @@ extern "C" {
 #include "felix86/frontend/instruction.h"
 #include "felix86/frontend/frontend.h"
 
+#define INSTS (state->current_block->instructions)
+
 typedef void (*ir_handle_fn_t)(frontend_state_t* state, x86_instruction_t* inst);
 
 #define X(opcode, name, modrm, immsize) void ir_handle_##name(frontend_state_t* state, x86_instruction_t* inst);

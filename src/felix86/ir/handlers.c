@@ -5,7 +5,6 @@
 
 #define IR_HANDLE(name) void ir_handle_##name(frontend_state_t* state, x86_instruction_t* inst)
 
-#define INSTS (state->current_block->instructions)
 #define SET_REG(source) ()
 
 IR_HANDLE(error) {

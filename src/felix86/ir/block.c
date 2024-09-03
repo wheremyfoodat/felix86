@@ -35,12 +35,14 @@ ir_function_t* ir_function_create(u64 address)
 }
 
 ir_block_t* ir_function_get_block(ir_function_t* function, ir_block_t* predecessor, u64 address) {
-    for (ir_block_list_t* current = function->first; current; current = current->next) {
-        if (current->block->start_address == address) {
-            if (predecessor) {
-                ir_add_predecessor(current->block, predecessor);
+    if (address != IR_BLOCK_NO_ADDRESS) {
+        for (ir_block_list_t* current = function->first; current; current = current->next) {
+            if (current->block->start_address == address) {
+                if (predecessor) {
+                    ir_add_predecessor(current->block, predecessor);
+                }
+                return current->block;
             }
-            return current->block;
         }
     }
 
