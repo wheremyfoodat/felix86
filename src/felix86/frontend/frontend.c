@@ -144,7 +144,7 @@ u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, bool rex_
     ERROR("Unreachable");
 }
 
-void frontend_compile_instruction(ir_emitter_state_t* state)
+void frontend_compile_instruction(frontend_state_t* state)
 {
     u8* data = (u8*)state->current_address;
 
@@ -289,6 +289,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
                 prefix = true;
                 index += 1;
                 secondary_table_index = 2;
+                ERROR("REP unimplemented");
                 break;
             }
 
@@ -297,6 +298,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
                 prefix = true;
                 index += 1;
                 secondary_table_index = 3;
+                ERROR("REP unimplemented");
                 break;
             }
 
@@ -346,7 +348,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         modrm_t modrm;
         modrm.raw = data[index++];
 
-        sib_t sib;
+        sib_t sib = {0};
         if (modrm.rm == 0b100 && modrm.mod != 0b11) {
             sib.raw = data[index++];
         }
@@ -354,13 +356,13 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         u8 displacement_size = decode_modrm(&inst.operand_rm, &inst.operand_reg, rex_b, rex_x, rex_r, modrm, sib);
         switch (displacement_size) {
             case 1: {
-                inst.operand_rm.memory.displacement = (i32)(i8)data[index];
+                inst.operand_rm.memory.displacement = (i64)(i32)(i8)data[index];
                 index += 1;
                 break;
             }
             
             case 4: {
-                inst.operand_rm.memory.displacement = *(u32*)&data[index];
+                inst.operand_rm.memory.displacement = (i64)*(i32*)&data[index];
                 index += 4;
                 break;
             }
@@ -513,17 +515,20 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
             inst.operand_rm.reg.ref = X86_REF_RAX + (reg_index & 0x3);
             inst.operand_rm.reg.high8 = high;
         }
+    } else if (inst.operand_rm.memory.base == X86_REF_RIP) {
+        inst.operand_rm.memory.displacement += state->current_address + index;
+        inst.operand_rm.memory.base = X86_REF_COUNT;
+        printf("base: %d, index: %d, scale: %d, displacement: %016lx\n", inst.operand_rm.memory.base, inst.operand_rm.memory.index, inst.operand_rm.memory.scale, inst.operand_rm.memory.displacement);
     }
 
     inst.length = index;
-    state->current_instruction_length = inst.length;
 
     fn(state, &inst);
 
     state->current_address += inst.length;
 }
 
-void frontend_compile_block(ir_emitter_state_t* state)
+void frontend_compile_block(frontend_state_t* state)
 {
     while (!state->exit) {
         frontend_compile_instruction(state);
@@ -535,7 +540,7 @@ void frontend_compile_block(ir_emitter_state_t* state)
 void frontend_compile_function(ir_function_t* function) {
     ir_block_list_t* current = function->first;
     while (current) {
-        ir_emitter_state_t state = {0};
+        frontend_state_t state = {0};
         state.function = function;
         state.current_block = current->block;
         state.current_address = current->block->start_address;

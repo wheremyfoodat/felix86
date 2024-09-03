@@ -130,21 +130,21 @@ void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
             if (instruction->two_operand_immediates.source1) {
                 printf("t%d", instruction->two_operand_immediates.source1->name);
 
-                if (instruction->two_operand_immediates.source2 || instruction->two_operand_immediates.imm32_1 != 0) {
+                if (instruction->two_operand_immediates.source2 || instruction->two_operand_immediates.imm64_1 != 0) {
                     printf(" + ");
                 }
             }
 
             if (instruction->two_operand_immediates.source2) {
-                printf("t%d * %d", instruction->two_operand_immediates.source2->name, instruction->two_operand_immediates.imm32_2);
+                printf("t%d * %d", instruction->two_operand_immediates.source2->name, instruction->two_operand_immediates.imm64_2);
 
-                if (instruction->two_operand_immediates.imm32_1 != 0) {
+                if (instruction->two_operand_immediates.imm64_1 != 0) {
                     printf(" + ");
                 }
             }
 
-            if (instruction->two_operand_immediates.imm32_1 != 0) {
-                printf("%lld", (long long)(i64)(i32)instruction->two_operand_immediates.imm32_1);
+            if (instruction->two_operand_immediates.imm64_1 != 0) {
+                printf("%lld", (long long)(i64)(i32)instruction->two_operand_immediates.imm64_1);
             }
             
             printf("]");
@@ -235,7 +235,7 @@ void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
             break;
         }
         case IR_INSERT_INTEGER_TO_VECTOR: {
-            printf("x%d = insert_integer_to_vector(t%d, index=%d, size=%d)", instruction->two_operand_immediates.source1->name, instruction->two_operand_immediates.source2->name, instruction->two_operand_immediates.imm32_1, instruction->two_operand_immediates.imm32_2);
+            printf("x%d = insert_integer_to_vector(t%d, index=%d, size=%d)", instruction->two_operand_immediates.source1->name, instruction->two_operand_immediates.source2->name, instruction->two_operand_immediates.imm64_1, instruction->two_operand_immediates.imm64_2);
             break;
         }
         case IR_LOAD_GUEST_FROM_MEMORY: {

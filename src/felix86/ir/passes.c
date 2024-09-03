@@ -403,8 +403,8 @@ void ir_const_propagation_pass(ir_block_t* block) {
             }
             case IR_LEA: {
                 if (both_operands_immediate(instruction)) {
-                    i64 disp32 = (i32)instruction->two_operand_immediates.imm32_1;
-                    u8 scale = instruction->two_operand_immediates.imm32_2;
+                    i64 disp32 = (i32)instruction->two_operand_immediates.imm64_1;
+                    u8 scale = instruction->two_operand_immediates.imm64_2;
                     replace_with_immediate(instruction, _Src1_ + _Src2_ * scale  + disp32);
                 }
                 break;

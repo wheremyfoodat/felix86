@@ -219,7 +219,7 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler) {
     //     ir_block_t* block = ir_function_cache_get_block(recompiler->block_metadata, recompiler->state.rip);
 
     //     if (!block->compiled) {
-    //         ir_emitter_state_t state = {0};
+    //         frontend_state_t state = {0};
     //         state.block = block;
     //         state.current_address = recompiler->state.rip;
     //         state.base_address = recompiler->base_address;

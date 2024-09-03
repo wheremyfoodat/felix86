@@ -142,8 +142,8 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
         }
         case IR_INSERT_INTEGER_TO_VECTOR: {
             xmm_reg_t xmm = xmm_temps[instruction->two_operand_immediates.source1->name];
-            u32 index = instruction->two_operand_immediates.imm32_1;
-            switch (instruction->two_operand_immediates.imm32_2) {
+            u32 index = instruction->two_operand_immediates.imm64_1;
+            switch (instruction->two_operand_immediates.imm64_2) {
                 case X86_SIZE_BYTE: {
                     if (index > 63) {
                         ERROR("Invalid index");
@@ -190,8 +190,8 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
         }
         case IR_EXTRACT_INTEGER_FROM_VECTOR: {
             xmm_reg_t xmm = xmm_temps[instruction->two_operand_immediates.source1->name];
-            u32 index = instruction->two_operand_immediates.imm32_1;
-            switch (instruction->two_operand_immediates.imm32_2) {
+            u32 index = instruction->two_operand_immediates.imm64_1;
+            switch (instruction->two_operand_immediates.imm64_2) {
                 case X86_SIZE_BYTE: {
                     if (index > 63) {
                         ERROR("Invalid index");
@@ -291,8 +291,8 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
         case IR_LEA: {
             u64 base = instruction->two_operand_immediates.source1 ? temps[instruction->two_operand_immediates.source1->name] : 0;
             u64 index = instruction->two_operand_immediates.source2 ? temps[instruction->two_operand_immediates.source2->name] : 0;
-            u64 displacement = (i64)(i32)instruction->two_operand_immediates.imm32_1;
-            u64 scale = instruction->two_operand_immediates.imm32_2;
+            u64 displacement = instruction->two_operand_immediates.imm64_1;
+            u64 scale = instruction->two_operand_immediates.imm64_2;
             temps[instruction->name] = base + index * scale + displacement;
             break;
         }

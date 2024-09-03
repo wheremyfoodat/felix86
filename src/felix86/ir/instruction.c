@@ -35,8 +35,8 @@ ir_instruction_t ir_copy_expression(ir_instruction_t* expression) {
         case IR_TYPE_TWO_OPERAND_IMMEDIATES: {
             ret.two_operand_immediates.source1 = expression->two_operand_immediates.source1;
             ret.two_operand_immediates.source2 = expression->two_operand_immediates.source2;
-            ret.two_operand_immediates.imm32_1 = expression->two_operand_immediates.imm32_1;
-            ret.two_operand_immediates.imm32_2 = expression->two_operand_immediates.imm32_2;
+            ret.two_operand_immediates.imm64_1 = expression->two_operand_immediates.imm64_1;
+            ret.two_operand_immediates.imm64_2 = expression->two_operand_immediates.imm64_2;
             break;
         }
 

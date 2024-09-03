@@ -6,52 +6,6 @@
 using namespace Xbyak;
 using namespace Xbyak::util;
 
-static u8 read8(void* context, u64 address) {
-    u8* data = (u8*)context;
-    return data[address];
-}
-
-static u16 read16(void* context, u64 address) {
-    u8* data = (u8*)context;
-    return *(u16*)&data[address];
-}
-
-static u32 read32(void* context, u64 address) {
-    u8* data = (u8*)context;
-    return *(u32*)&data[address];
-}
-
-static u64 read64(void* context, u64 address) {
-    u8* data = (u8*)context;
-    return *(u64*)&data[address];
-}
-
-static void write8(void* context, u64 address, u8 value) {
-    u8* data = (u8*)context;
-    data[address] = value;
-}
-
-static void write16(void* context, u64 address, u16 value) {
-    u8* data = (u8*)context;
-    *(u16*)&data[address] = value;
-}
-
-static void write32(void* context, u64 address, u32 value) {
-    u8* data = (u8*)context;
-    *(u32*)&data[address] = value;
-}
-
-static void write64(void* context, u64 address, u64 value) {
-    u8* data = (u8*)context;
-    *(u64*)&data[address] = value;
-}
-
-static u8* get_pointer(void* context, u64 address) {
-    return (u8*)context + address;
-}
-
-static void interrupt(void* context, u8 vector) {}
-
 #define FELIX86_TEST(name) struct Code_##name final : Xbyak::CodeGenerator { \
     Code_##name(); \
     ~Code_##name() { free(data); } \

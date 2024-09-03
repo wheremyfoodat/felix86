@@ -5,7 +5,7 @@ project(felix86)
 # add_compile_options(-fsanitize=address)
 # add_link_options(-fsanitize=address)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=implicit-fallthrough")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=implicit-fallthrough -Werror=incompatible-pointer-types -Wall")
 
 add_compile_options($<$<COMPILE_LANGUAGE:CPP>:-fno-rtti> $<$<COMPILE_LANGUAGE:CPP>:-fno-exceptions>)
 
@@ -84,7 +84,7 @@ set(FELIX86_TEST_SOURCES
     tests/mov.cpp
     tests/lea.cpp
     tests/special.cpp
-    tests/control_flow.cpp
+    tests/ir/control_flow.cpp
 )
 
 add_executable(felix86_test)

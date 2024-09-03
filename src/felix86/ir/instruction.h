@@ -23,8 +23,6 @@ typedef enum : u8 {
 	IR_SYSCALL,
 	IR_CPUID,
 
-	IR_VECTOR_MASK_ELEMENTS,
-
 	IR_LOAD_GUEST_FROM_MEMORY,
 	IR_STORE_GUEST_TO_MEMORY,
 	IR_GET_GUEST,
@@ -106,8 +104,8 @@ typedef struct ir_instruction_s {
 		struct {
 			struct ir_instruction_s* source1;
 			struct ir_instruction_s* source2;
-			u32 imm32_1;
-			u32 imm32_2;
+			u64 imm64_1;
+			u64 imm64_2;
 		} two_operand_immediates;
 
 		struct {

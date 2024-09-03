@@ -1,5 +1,5 @@
+#include "felix86/frontend/frontend.h"
 #include "felix86/ir/block.h"
-#include "felix86/ir/emitter.h"
 #include <stdlib.h>
 
 ir_block_list_t* ir_block_list_create(ir_block_t* block)
@@ -23,9 +23,6 @@ ir_function_t* ir_function_create(u64 address)
 
     // We add a dummy block at the start with guaranteed no predecessors
     ir_block_list_t* entry = ir_block_list_create(ir_block_create(0));
-
-    ir_emitter_state_t state = {0};
-    state.current_block = entry->block;
 
     list->block->predecessors = entry;
 
