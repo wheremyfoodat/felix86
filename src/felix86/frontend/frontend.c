@@ -523,7 +523,7 @@ void frontend_compile_instruction(frontend_state_t* state)
     bool is_rep = prefixes.rep_nz_f2 || prefixes.rep_z_f3;
     ir_block_t* rep_loop_block = NULL;
     if (is_rep) {
-        rep_loop_block = ir_function_get_block(state->function, state->current_block, IR_BLOCK_NO_ADDRESS);
+        rep_loop_block = ir_function_get_block(state->function, state->current_block, IR_NO_ADDRESS);
         // Add as successor to itself
         ir_add_successor(rep_loop_block, rep_loop_block);
         ir_block_t* rep_exit_block = ir_function_get_block(state->function, state->current_block, state->current_address + inst.length);
@@ -587,7 +587,7 @@ void frontend_compile_function(ir_function_t* function) {
     while (current) {
         state.current_block = current->block;
         state.current_address = current->block->start_address;
-        if (state.current_address != IR_BLOCK_NO_ADDRESS) {
+        if (state.current_address != IR_NO_ADDRESS) {
             frontend_compile_block(&state);
         }
         state.exit = false;

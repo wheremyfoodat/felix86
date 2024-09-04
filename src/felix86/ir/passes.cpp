@@ -36,6 +36,7 @@ ir_instruction_t* read_variable_recursive(ir_function_t* function, ssa_state_t& 
 
 inline void write_variable(ssa_state_t& state, x86_ref_e variable, ir_block_t* block, ir_instruction_t* value) {
 	state.def[variable][block] = value;
+	printf("block[%p] variable[%d] = %p (%d)\n", block, variable, value, value->name);
 }
 
 inline ir_instruction_t* read_variable(ir_function_t* function, ssa_state_t& state, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current) {
@@ -101,6 +102,7 @@ inline ir_instruction_t* read_variable_recursive(ir_function_t* function, ssa_st
 		ret->phi.list = nullptr;
 		write_variable(state, variable, block, ret);
 		ret = add_phi_operands(function, state, block, variable, ret, current);
+		printf("creating phi!\n");
 	} else if (predecessor_count == 0) {
 		// The search has reached our empty entry block without finding a definition
 		// Which means we actually need to read the guest from memory
@@ -123,11 +125,11 @@ void ir_ssa_pass_impl(ir_function_t* function, ssa_state_t& state, ir_block_t* b
 		switch(current->instruction.opcode) {
 			case IR_SET_GUEST: {
 				write_variable(state, current->instruction.set_guest.ref, block, &current->instruction);
-				ir_instruction_t* source = current->instruction.set_guest.source;
-				ir_clear_instruction(&current->instruction);
-				current->instruction.type = IR_TYPE_ONE_OPERAND;
-				current->instruction.opcode = IR_MOV;
-				current->instruction.one_operand.source = source;
+				// ir_instruction_t* source = current->instruction.set_guest.source;
+				// ir_clear_instruction(&current->instruction);
+				// current->instruction.type = IR_TYPE_ONE_OPERAND;
+				// current->instruction.opcode = IR_MOV;
+				// current->instruction.one_operand.source = source;
 				break;
 			}
 			case IR_GET_GUEST: {
@@ -180,14 +182,11 @@ extern "C" void ir_ssa_pass(ir_function_t* function) {
 	ssa_state_t state = {};
 	ir_block_list_t* current = function->first;
 	while (current) {
+		printf("ssa passing: %p\n", current->block);
 		ir_ssa_pass_impl(function, state, current->block);
 		current = current->next;
 	}
 }
-
-
-
-
 
 bool operator<(const ir_instruction_t& a1, const ir_instruction_t& a2) {
 	int res = memcmp(&a1, &a2, sizeof(ir_instruction_t));

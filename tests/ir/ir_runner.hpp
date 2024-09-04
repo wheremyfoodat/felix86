@@ -5,16 +5,25 @@
 #include "felix86/felix86.h"
 #include "felix86/ir/emitter.h"
 #include "felix86/ir/block.h"
+#include "felix86/ir/passes.h"
+#include "felix86/ir/print.h"
+#include "felix86/ir/interpreter.h"
 
 #define START_IR_TEST() \
-    ir_function_t* function = ir_function_create(0); \
-    ir_block_list_t* current = function->first; \
-    frontend_state_t state_s = {0}; \
-    state_s.function = function; \
-    state_s.current_block = current->block; \
-    state_s.current_address = current->block->start_address; \
-    frontend_state_t* state = &state_s;
+    ir_function_t* function = ir_function_create(IR_NO_ADDRESS); \
+    ir_block_t* current_block = function->first->block;\
+    ir_block_t* entry = current_block
+
+#define END_IR_TEST() \
+    ir_ssa_pass(function); \
+    ir_copy_propagation_pass(function); \
+    ir_naming_pass(function)
 
 #define SWITCH_TO_BLOCK(block) \
-    state->current_block = block; \
-    state->current_address = block->start_address;
+    current_block = block
+
+#define INSTS \
+    current_block->instructions
+
+#define CREATE_BLOCK(predecessor) \
+    (ir_function_get_block(function, predecessor, IR_NO_ADDRESS))

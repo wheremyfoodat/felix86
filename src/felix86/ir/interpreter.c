@@ -356,6 +356,19 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             temps[instruction->name] = instruction->load_immediate.immediate;
             break;
         }
+        case IR_PHI: {
+            ir_phi_node_t* node = instruction->phi.list;
+            while (node) {
+                if (entry == node->block) {
+                    temps[instruction->name] = temps[node->value->name];
+                    return NULL;
+                }
+
+                node = node->next;
+            }
+            ERROR("Entry not found while interpreting PHI node");
+            break;
+        }
         case IR_SYSCALL: {
             u64 opcode = state->gprs[0];
             u64 arg1 = state->gprs[X86_REF_RDI - X86_REF_RAX];
@@ -420,14 +433,15 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
 void ir_interpret_function(ir_function_t* function, x86_state_t* state) {
     memset(temps, 0, sizeof(temps));
     ir_block_list_t* blocks = function->first;
-    ir_block_t* intro = NULL;
     ir_instruction_list_t* current = blocks->block->instructions;
     ir_block_t* next;
-    ir_block_t* entry = blocks->block;
+    ir_block_t* entry = NULL;
+    ir_block_t* entry_next = blocks->block;
     while (current) {
         next = ir_interpret_instruction(entry, &current->instruction, state);
         if (next) {
-            entry = next;
+            entry = entry_next;
+            entry_next = next;
             current = next->instructions;
         } else {
             current = current->next;
