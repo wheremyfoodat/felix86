@@ -49,7 +49,6 @@ typedef enum : u16 {
     RM_MM_FLAG = 256, // rm is an mm register
     REG_EAX_OVERRIDE_FLAG = 512,
     DEFAULT_U64_FLAG = 1024,
-    CAN_USE_REP = 2048,
 } decoding_flags_e;
 
 typedef struct {
@@ -145,7 +144,7 @@ u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, bool rex_
     ERROR("Unreachable");
 }
 
-void frontend_compile_instruction(ir_emitter_state_t* state)
+void frontend_compile_instruction(frontend_state_t* state)
 {
     u8* data = (u8*)state->current_address;
 
@@ -347,7 +346,7 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         modrm_t modrm;
         modrm.raw = data[index++];
 
-        sib_t sib;
+        sib_t sib = {0};
         if (modrm.rm == 0b100 && modrm.mod != 0b11) {
             sib.raw = data[index++];
         }
@@ -355,13 +354,13 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
         u8 displacement_size = decode_modrm(&inst.operand_rm, &inst.operand_reg, rex_b, rex_x, rex_r, modrm, sib);
         switch (displacement_size) {
             case 1: {
-                inst.operand_rm.memory.displacement = (i32)(i8)data[index];
+                inst.operand_rm.memory.displacement = (i64)(i32)(i8)data[index];
                 index += 1;
                 break;
             }
             
             case 4: {
-                inst.operand_rm.memory.displacement = *(u32*)&data[index];
+                inst.operand_rm.memory.displacement = (i64)*(i32*)&data[index];
                 index += 4;
                 break;
             }
@@ -514,45 +513,94 @@ void frontend_compile_instruction(ir_emitter_state_t* state)
             inst.operand_rm.reg.ref = X86_REF_RAX + (reg_index & 0x3);
             inst.operand_rm.reg.high8 = high;
         }
+    } else if (inst.operand_rm.memory.base == X86_REF_RIP) {
+        inst.operand_rm.memory.displacement += state->current_address + index;
+        inst.operand_rm.memory.base = X86_REF_COUNT;
     }
 
     inst.length = index;
-    state->current_instruction_length = inst.length;
 
-    if (state->debug_info) {
-        ZydisDisassembledInstruction instruction;
-        if (ZYAN_SUCCESS(ZydisDisassembleIntel(
-        /* machine_mode:    */ ZYDIS_MACHINE_MODE_LONG_64,
-        /* runtime_address: */ state->current_address,
-        /* buffer:          */ data,
-        /* length:          */ inst.length,
-        /* instruction:     */ &instruction
-        )))
-        {
-            ir_emit_debug_info_compile_time(state, "0x%016llx: %s", state->current_address - state->base_address, instruction.text);
-        }
-    }
+    bool is_rep = prefixes.rep_nz_f2 || prefixes.rep_z_f3;
+    ir_block_t* rep_loop_block = NULL;
+    if (is_rep) {
+        rep_loop_block = ir_function_get_block(state->function, state->current_block, IR_NO_ADDRESS);
+        // Add as successor to itself
+        ir_add_successor(rep_loop_block, rep_loop_block);
+        ir_block_t* rep_exit_block = ir_function_get_block(state->function, state->current_block, state->current_address + inst.length);
+        ir_emit_get_flag(INSTS, X86_REF_ZF); // emitting this to make sure the flag is available before the loop
+        x86_operand_t rcx_reg = get_full_reg(X86_REF_RCX);
+        rcx_reg.size = inst.operand_reg.size;
+        ir_instruction_t* rcx = ir_emit_get_reg(INSTS, &rcx_reg);
+        ir_instruction_t* zero = ir_emit_immediate(INSTS, 0);
+        ir_instruction_t* condition = ir_emit_equal(INSTS, rcx, zero);
+        ir_emit_jump_conditional(INSTS, condition, rep_exit_block, rep_loop_block);
+        state->current_block->compiled = true;
 
-    bool can_use_rep = (decoding_flags & CAN_USE_REP) && (prefixes.rep_z_f3 || prefixes.rep_nz_f2);
-
-    if (can_use_rep) {
-        ir_emit_rep_start(state, inst.operand_reg.size);
+        // Write the instruction in the loop body
+        state->current_block = rep_loop_block;
     }
 
     fn(state, &inst);
 
-    if (can_use_rep) {
-        ir_emit_rep_end(state, prefixes.rep_nz_f2, inst.operand_reg.size);
+    if (is_rep) {
+        ir_block_t* rep_exit_block = ir_function_get_block(state->function, state->current_block, state->current_address + inst.length);
+        x86_operand_t rcx_reg = get_full_reg(X86_REF_RCX);
+        rcx_reg.size = inst.operand_reg.size;
+        ir_instruction_t* rcx = ir_emit_get_reg(INSTS, &rcx_reg);
+        ir_instruction_t* zero = ir_emit_immediate(INSTS, 0);
+        ir_instruction_t* one = ir_emit_immediate(INSTS, 1);
+        ir_instruction_t* sub = ir_emit_sub(INSTS, rcx, one);
+        ir_emit_set_reg(INSTS, &rcx_reg, sub);
+        ir_instruction_t* rcx_zero = ir_emit_equal(INSTS, rcx, zero);
+        ir_instruction_t* condition;
+        ir_instruction_t* zf = ir_emit_get_flag(INSTS, X86_REF_ZF);
+        if (prefixes.rep_nz_f2) {
+            condition = ir_emit_not_equal(INSTS, zf, zero);
+        } else {
+            condition = ir_emit_equal(INSTS, zf, zero);
+        }
+        ir_instruction_t* final_condition = ir_emit_or(INSTS, rcx_zero, condition);
+        ir_emit_jump_conditional(INSTS, final_condition, rep_exit_block, rep_loop_block);
+
+        state->exit = true;
+        state->current_block->compiled = true;
+        state->current_block = rep_exit_block;
     }
 
     state->current_address += inst.length;
 }
 
-void frontend_compile_block(ir_emitter_state_t* state)
+void frontend_compile_block(frontend_state_t* state)
 {
     while (!state->exit) {
         frontend_compile_instruction(state);
     }
 
-    state->block->compiled = true;
+    state->current_block->compiled = true;
+}
+
+void frontend_compile_function(ir_function_t* function) {
+    ir_block_list_t* current = function->first;
+    frontend_state_t state = {0};
+    state.function = function;
+
+    while (current) {
+        state.current_block = current->block;
+        state.current_address = current->block->start_address;
+        if (state.current_address != IR_NO_ADDRESS) {
+            frontend_compile_block(&state);
+        }
+        state.exit = false;
+        current = current->next;
+    }
+
+    // Verify they are all compiled
+    current = function->first;
+    while (current) {
+        if (!current->block->compiled) {
+            ERROR("Block not compiled");
+        }
+
+        current = current->next;
+    }
 }

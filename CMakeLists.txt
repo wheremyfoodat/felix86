@@ -5,7 +5,7 @@ project(felix86)
 # add_compile_options(-fsanitize=address)
 # add_link_options(-fsanitize=address)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=implicit-fallthrough")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=implicit-fallthrough -Werror=incompatible-pointer-types -Wall")
 
 add_compile_options($<$<COMPILE_LANGUAGE:CPP>:-fno-rtti> $<$<COMPILE_LANGUAGE:CPP>:-fno-exceptions>)
 
@@ -19,14 +19,14 @@ add_subdirectory(external/Catch2)
 add_subdirectory(external/xbyak)
 # add_subdirectory(external/riscv-disassembler)
 add_subdirectory(external/zydis)
-# add_subdirectory(external/ELFIO)
 
 set(FELIX86_FRONTEND_SOURCES
     src/felix86/frontend/frontend.c
 )
 
 set(FELIX86_IR_SOURCES
-    src/felix86/ir/block_metadata.cpp
+    src/felix86/ir/block.c
+    src/felix86/ir/function_cache.cpp
     src/felix86/ir/emitter.c
     src/felix86/ir/handlers_weak.c
     src/felix86/ir/handlers.c
@@ -74,7 +74,7 @@ target_include_directories(felix86_core PUBLIC ${FELIX86_INCLUDES})
 target_link_libraries(felix86_core PUBLIC Zydis)
 
 add_executable(felix86)
-target_sources(felix86 PRIVATE src/felix86/main.c)
+target_sources(felix86 PRIVATE src/felix86/main.c src/felix86/gui.cpp)
 target_link_libraries(felix86 PRIVATE felix86_core)
 
 set(FELIX86_TEST_SOURCES
@@ -84,9 +84,11 @@ set(FELIX86_TEST_SOURCES
     tests/mov.cpp
     tests/lea.cpp
     tests/special.cpp
+    tests/ir/control_flow.cpp
 )
 
 add_executable(felix86_test)
 target_sources(felix86_test PRIVATE ${FELIX86_TEST_SOURCES})
+target_include_directories(felix86_test PRIVATE tests)
 target_link_libraries(felix86_test PRIVATE felix86_core Catch2::Catch2WithMain xbyak)
 target_compile_options(felix86_test PRIVATE $<$<COMPILE_LANGUAGE:CPP>:-fno-operator-names>)

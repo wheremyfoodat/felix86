@@ -4,9 +4,18 @@
 extern "C" {
 #endif
 
-#include "felix86/ir/emitter.h"
+#include "felix86/common/utility.h"
+#include "felix86/ir/block.h"
 
-void frontend_compile_block(ir_emitter_state_t* state);
+typedef struct {
+	ir_function_t* function;
+	ir_block_t* current_block;
+	u64 current_address;
+	bool exit;
+} frontend_state_t;
+
+void frontend_compile_block(frontend_state_t* state);
+void frontend_compile_function(ir_function_t* function);
 
 #ifdef __cplusplus
 }

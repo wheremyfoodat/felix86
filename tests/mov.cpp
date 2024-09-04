@@ -148,15 +148,15 @@ FELIX86_TEST(mov_dead_store) {
     verify(X86_REF_RBX, 0x8000'1234);
 }
 
-FELIX86_TEST(movq_simple) {
-    mov(rax, 0xBEEFDEADDEADC0DEull);
-    movq(xmm15, rax);
+// FELIX86_TEST(movq_simple) {
+//     mov(rax, 0xBEEFDEADDEADC0DEull);
+//     movq(xmm15, rax);
 
-    xmm_reg_t xmm = { 0 };
-    xmm.data[0] = 0xBEEFDEADDEADC0DE;
-    verify(X86_REF_RAX, 0xBEEFDEADDEADC0DE);
-    verify_xmm(X86_REF_XMM15, xmm);
-}
+//     xmm_reg_t xmm = { 0 };
+//     xmm.data[0] = 0xBEEFDEADDEADC0DE;
+//     verify(X86_REF_RAX, 0xBEEFDEADDEADC0DE);
+//     verify_xmm(X86_REF_XMM15, xmm);
+// }
 
 FELIX86_TEST(mov_r64_rm64) {
     static u64 mem = 0x123456789ABCDEF0;

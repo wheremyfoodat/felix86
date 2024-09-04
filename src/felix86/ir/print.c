@@ -21,7 +21,12 @@ void print_guest(x86_ref_e guest) {
         case X86_REF_R13: printf("r13"); break;
         case X86_REF_R14: printf("r14"); break;
         case X86_REF_R15: printf("r15"); break;
-        case X86_REF_FLAGS: printf("flags"); break;
+        case X86_REF_CF: printf("cf"); break;
+        case X86_REF_PF: printf("pf"); break;
+        case X86_REF_AF: printf("af"); break;
+        case X86_REF_ZF: printf("zf"); break;
+        case X86_REF_SF: printf("sf"); break;
+        case X86_REF_OF: printf("of"); break;
         case X86_REF_RIP: printf("rip"); break;
         case X86_REF_FS: printf("fs"); break;
         case X86_REF_GS: printf("gs"); break;
@@ -30,26 +35,20 @@ void print_guest(x86_ref_e guest) {
     }
 }
 
-void print_flag(x86_flag_e flag) {
-    switch (flag) {
-        case X86_FLAG_CF: printf("CF"); break;
-        case X86_FLAG_PF: printf("PF"); break;
-        case X86_FLAG_AF: printf("AF"); break;
-        case X86_FLAG_ZF: printf("ZF"); break;
-        case X86_FLAG_SF: printf("SF"); break;
-        case X86_FLAG_OF: printf("OF"); break;
-    }
-}
-
 void print_one_op(ir_instruction_t* instruction, const char* op) {
-    printf("t%d = %s(t%d)", instruction->name, op, instruction->one_operand.source->name);
+    printf("t%d = %s t%d", instruction->name, op, instruction->one_operand.source->name);
 }
 
 void print_two_op(ir_instruction_t* instruction, const char* op) {
     printf("t%d = t%d %s t%d", instruction->name, instruction->two_operand.source1->name, op, instruction->two_operand.source2->name);
 }
 
-void ir_print_instruction(ir_instruction_t* instruction) {
+void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
+    if (instruction->opcode == IR_START_OF_BLOCK) {
+        return;
+    }
+
+    printf("\t");
     switch (instruction->opcode) {
         case IR_IMMEDIATE: {
             printf("t%d = 0x%0llx", instruction->name, (unsigned long long)instruction->load_immediate.immediate);
@@ -136,21 +135,21 @@ void ir_print_instruction(ir_instruction_t* instruction) {
             if (instruction->two_operand_immediates.source1) {
                 printf("t%d", instruction->two_operand_immediates.source1->name);
 
-                if (instruction->two_operand_immediates.source2 || instruction->two_operand_immediates.imm32_1 != 0) {
+                if (instruction->two_operand_immediates.source2 || instruction->two_operand_immediates.imm64_1 != 0) {
                     printf(" + ");
                 }
             }
 
             if (instruction->two_operand_immediates.source2) {
-                printf("t%d * %d", instruction->two_operand_immediates.source2->name, instruction->two_operand_immediates.imm32_2);
+                printf("t%d * %d", instruction->two_operand_immediates.source2->name, instruction->two_operand_immediates.imm64_2);
 
-                if (instruction->two_operand_immediates.imm32_1 != 0) {
+                if (instruction->two_operand_immediates.imm64_1 != 0) {
                     printf(" + ");
                 }
             }
 
-            if (instruction->two_operand_immediates.imm32_1 != 0) {
-                printf("%lld", (long long)(i64)(i32)instruction->two_operand_immediates.imm32_1);
+            if (instruction->two_operand_immediates.imm64_1 != 0) {
+                printf("%lld", (long long)instruction->two_operand_immediates.imm64_1);
             }
             
             printf("]");
@@ -158,27 +157,14 @@ void ir_print_instruction(ir_instruction_t* instruction) {
             break;
         }
         case IR_GET_GUEST: {
-            printf("t%d = get_guest(", instruction->name);
+            printf("t%d = get_guest ", instruction->name);
             print_guest(instruction->get_guest.ref);
-            printf(")");
             break;
         }
         case IR_SET_GUEST: {
-            printf("set_guest(");
+            printf("t%d = set_guest ", instruction->name);
             print_guest(instruction->set_guest.ref);
-            printf(", t%d)", instruction->set_guest.source->name);
-            break;
-        }
-        case IR_GET_FLAG: {
-            printf("t%d = get_flag(", instruction->name);
-            print_flag(instruction->get_flag.flag);
-            printf(")");
-            break;
-        }
-        case IR_SET_FLAG: {
-            printf("set_flag(");
-            print_flag(instruction->set_flag.flag);
-            printf(", t%d)", instruction->set_flag.source->name);
+            printf(", t%d", instruction->set_guest.source->name);
             break;
         }
         case IR_READ_BYTE: {
@@ -213,21 +199,6 @@ void ir_print_instruction(ir_instruction_t* instruction) {
             printf("qword[t%d] = t%d", instruction->two_operand.source1->name, instruction->two_operand.source2->name);
             break;
         }
-        case IR_START_OF_BLOCK: {
-            printf("start_of_block");
-            break;
-        }
-        case IR_TERNARY: {
-            printf("t%d = t%d ? t%d : t%d", instruction->name, instruction->ternary.condition->name, instruction->ternary.true_value->name, instruction->ternary.false_value->name);
-            break;
-        }
-        case IR_DEBUG_RUNTIME: {
-            break;
-        }
-        case IR_DEBUG_COMPILETIME: {
-            printf("## %s", instruction->debug.text);
-            break;
-        }
         case IR_SYSCALL: {
             printf("syscall");
             break;
@@ -236,8 +207,48 @@ void ir_print_instruction(ir_instruction_t* instruction) {
             printf("cpuid");
             break;
         }
+        case IR_JUMP: {
+            printf("jump %p", instruction->jump.target);
+            break;
+        }
+        case IR_EXIT: {
+            printf("exit");
+            break;
+        }
+        case IR_PHI: {
+            printf("t%d = φ<", instruction->name);
+            ir_phi_node_t* node = instruction->phi.list;
+            while (node) {
+                if (!node->value || !node->block) {
+                    printf("NULL");
+                } else {
+                    printf("t%d @ %p", node->value->name, node->block);
+                }
+                node = node->next;
+                if (node) {
+                    printf(", ");
+                }
+            }
+            printf(">");
+            break;
+        }
+        case IR_JUMP_CONDITIONAL: {
+            printf("jump t%d ? %p : %p", instruction->jump_conditional.condition->name, instruction->jump_conditional.target_true, instruction->jump_conditional.target_false);
+            break;
+        }
         case IR_INSERT_INTEGER_TO_VECTOR: {
-            printf("x%d = insert_integer_to_vector(t%d, index=%d, size=%d)", instruction->two_operand_immediates.source1->name, instruction->two_operand_immediates.source2->name, instruction->two_operand_immediates.imm32_1, instruction->two_operand_immediates.imm32_2);
+            printf("x%d = insert_integer_to_vector(t%d, index=%d, size=%d)", instruction->two_operand_immediates.source1->name, instruction->two_operand_immediates.source2->name, instruction->two_operand_immediates.imm64_1, instruction->two_operand_immediates.imm64_2);
+            break;
+        }
+        case IR_LOAD_GUEST_FROM_MEMORY: {
+            printf("t%d = load_guest_from_memory ", instruction->name);
+            print_guest(instruction->get_guest.ref);
+            break;
+        }
+        case IR_STORE_GUEST_TO_MEMORY: {
+            printf("store_guest_to_memory ");
+            print_guest(instruction->set_guest.ref);
+            printf(", t%d", instruction->set_guest.source->name);
             break;
         }
         default: {
@@ -246,14 +257,33 @@ void ir_print_instruction(ir_instruction_t* instruction) {
         }
     }
 
-    // printf("\t\t(uses: %d)", instruction->uses);
-    printf("\n");
+    // printf("\t\t\t\t(uses: %d)", instruction->uses);
+    printf("   (%p)\n", instruction);
 }
 
 void ir_print_block(ir_block_t* block) {
     ir_instruction_list_t* node = block->instructions;
     while (node) {
-        ir_print_instruction(&node->instruction);
+        ir_print_instruction(&node->instruction, block);
         node = node->next;
     }
+}
+
+void ir_print_function_uml(ir_function_t* function) {
+    printf("@startuml\n");
+    ir_block_list_t* block = function->first;
+    while (block) {
+        printf("class block_%p {\n", block->block);
+        ir_block_t* b = block->block;
+        ir_print_block(b);
+        printf("}\n");
+        ir_block_list_t* successor = b->successors;
+        while (successor) {
+            printf("block_%p --> block_%p\n", b, successor->block);
+            successor = successor->next;
+        }
+        block = block->next;
+    }
+    printf("hide class circle\n");
+    printf("@enduml\n");
 }
