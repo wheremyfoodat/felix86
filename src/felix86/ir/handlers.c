@@ -367,7 +367,7 @@ IR_HANDLE(mov_r32_rm32) { // mov r16/32/64, rm16/32/64 - 0x8b
 }
 
 IR_HANDLE(lea) { // lea r32/64, m - 0x8d
-    ir_instruction_t* address = ir_emit_lea(INSTS, &inst->operand_rm, inst->operand_rm.address_override);
+    ir_instruction_t* address = ir_emit_lea(INSTS, &inst->operand_rm);
     ir_emit_set_reg(INSTS, &inst->operand_reg, address);
 }
 
@@ -402,7 +402,7 @@ IR_HANDLE(stosd) { // stosd - 0xab
     x86_size_e size_e = inst->operand_reg.size;
 
     x86_operand_t rdi_reg = get_full_reg(X86_REF_RDI);
-    rdi_reg.size = inst->operand_rm.address_override ? X86_SIZE_DWORD : X86_SIZE_QWORD;
+    rdi_reg.size = inst->operand_rm.memory.address_override ? X86_SIZE_DWORD : X86_SIZE_QWORD;
 
     x86_operand_t rax_reg = get_full_reg(X86_REF_RAX);
     rax_reg.size = size_e;

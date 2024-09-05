@@ -6,7 +6,6 @@ extern "C" {
 
 #include "felix86/common/utility.h"
 #include "felix86/frontend/instruction.h"
-#include "felix86/ir/value.h"
 
 typedef enum : u8 {
 	IR_NULL,
@@ -40,8 +39,10 @@ typedef enum : u8 {
 	IR_LEFT_SHIFT,
 	IR_RIGHT_SHIFT,
 	IR_RIGHT_SHIFT_ARITHMETIC,
-	IR_LEFT_ROTATE,
-	IR_RIGHT_ROTATE,
+	IR_LEFT_ROTATE8,
+	IR_LEFT_ROTATE16,
+	IR_LEFT_ROTATE32,
+	IR_LEFT_ROTATE64,
 	IR_AND,
 	IR_OR,
 	IR_XOR,
@@ -66,15 +67,16 @@ typedef enum : u8 {
 
 typedef enum : u8 {
 	IR_TYPE_NULL,
-	IR_TYPE_TWO_OPERAND,
 	IR_TYPE_LOAD_IMMEDIATE,
+	IR_TYPE_NO_OPERANDS,
 	IR_TYPE_ONE_OPERAND,
-	IR_TYPE_TWO_OPERAND_IMMEDIATES,
+	IR_TYPE_TWO_OPERANDS,
+	IR_TYPE_THREE_OPERANDS,
+	IR_TYPE_FOUR_OPERANDS,
 	IR_TYPE_GET_GUEST,
 	IR_TYPE_SET_GUEST,
 	IR_TYPE_LOAD_GUEST_FROM_MEMORY,
 	IR_TYPE_STORE_GUEST_TO_MEMORY,
-	IR_TYPE_NO_OPERANDS,
 	IR_TYPE_JUMP,
 	IR_TYPE_JUMP_CONDITIONAL,
 	IR_TYPE_PHI,
@@ -89,24 +91,12 @@ typedef struct ir_phi_node_s {
 typedef struct ir_instruction_s {
 	union {
 		struct {
-			struct ir_instruction_s* source1;
-			struct ir_instruction_s* source2;
-		} two_operand;
+			struct ir_instruction_s* args[4];
+		} operands;
 
 		struct {
 			u64 immediate;
 		} load_immediate;
-
-		struct {
-			struct ir_instruction_s* source;
-		} one_operand;
-
-		struct {
-			struct ir_instruction_s* source1;
-			struct ir_instruction_s* source2;
-			u64 imm64_1;
-			u64 imm64_2;
-		} two_operand_immediates;
 
 		struct {
 			x86_ref_e ref;

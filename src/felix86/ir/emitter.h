@@ -17,8 +17,7 @@ ir_instruction_t* ir_emit_sub(ir_instruction_list_t* instructions, ir_instructio
 ir_instruction_t* ir_emit_left_shift(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_right_shift(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_right_shift_arithmetic(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
-ir_instruction_t* ir_emit_left_rotate(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2, x86_size_e size);
-ir_instruction_t* ir_emit_right_rotate(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2, x86_size_e size);
+ir_instruction_t* ir_emit_rotate(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2, x86_size_e size, bool right);
 ir_instruction_t* ir_emit_and(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_or(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_xor(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
@@ -30,7 +29,7 @@ ir_instruction_t* ir_emit_greater_than_signed(ir_instruction_list_t* instruction
 ir_instruction_t* ir_emit_less_than_signed(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_greater_than_unsigned(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_less_than_unsigned(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
-ir_instruction_t* ir_emit_lea(ir_instruction_list_t* instructions, x86_operand_t* rm_operand, bool address_override);
+ir_instruction_t* ir_emit_lea(ir_instruction_list_t* instructions, x86_operand_t* rm_operand);
 ir_instruction_t* ir_emit_sext8(ir_instruction_list_t* instructions, ir_instruction_t* source);
 ir_instruction_t* ir_emit_sext16(ir_instruction_list_t* instructions, ir_instruction_t* source);
 ir_instruction_t* ir_emit_sext32(ir_instruction_list_t* instructions, ir_instruction_t* source);
@@ -42,9 +41,9 @@ ir_instruction_t* ir_emit_jump_conditional(
 );
 ir_instruction_t* ir_emit_jump_register(ir_instruction_list_t* instructions, ir_instruction_t* target);
 ir_instruction_t* ir_emit_insert_integer_to_vector(
-	ir_instruction_list_t* instructions, ir_instruction_t* vector_dest, ir_instruction_t* source, u8 size, u8 index
+	ir_instruction_list_t* instructions, ir_instruction_t* dst, ir_instruction_t* source, u8 idx, x86_size_e sz
 );
-ir_instruction_t* ir_emit_extract_integer_from_vector(ir_instruction_list_t* instructions, ir_instruction_t* vector_src, u8 size, u8 index);
+ir_instruction_t* ir_emit_extract_integer_from_vector(ir_instruction_list_t* instructions, ir_instruction_t* src, u8 idx, x86_size_e sz);
 
 ir_instruction_t* ir_emit_get_guest(ir_instruction_list_t* instructions, x86_ref_e ref);
 ir_instruction_t* ir_emit_set_guest(ir_instruction_list_t* instructions, x86_ref_e ref, ir_instruction_t* source);

@@ -16,27 +16,38 @@ ir_instruction_t ir_copy_expression(ir_instruction_t* expression) {
     ret.opcode = expression->opcode;
 
     switch (ret.type) {
-        case IR_TYPE_TWO_OPERAND: {
-            ret.two_operand.source1 = expression->two_operand.source1;
-            ret.two_operand.source2 = expression->two_operand.source2;
+        case IR_TYPE_NO_OPERANDS: {
+            break;
+        }
+
+        case IR_TYPE_ONE_OPERAND: {
+            ret.operands.args[0] = expression->operands.args[0];
+            break;
+        }
+
+        case IR_TYPE_TWO_OPERANDS: {
+            ret.operands.args[0] = expression->operands.args[0];
+            ret.operands.args[1] = expression->operands.args[1];
+            break;
+        }
+
+        case IR_TYPE_THREE_OPERANDS: {
+            ret.operands.args[0] = expression->operands.args[0];
+            ret.operands.args[1] = expression->operands.args[1];
+            ret.operands.args[2] = expression->operands.args[2];
+            break;
+        }
+
+        case IR_TYPE_FOUR_OPERANDS: {
+            ret.operands.args[0] = expression->operands.args[0];
+            ret.operands.args[1] = expression->operands.args[1];
+            ret.operands.args[2] = expression->operands.args[2];
+            ret.operands.args[3] = expression->operands.args[3];
             break;
         }
 
         case IR_TYPE_LOAD_IMMEDIATE: {
             ret.load_immediate.immediate = expression->load_immediate.immediate;
-            break;
-        }
-
-        case IR_TYPE_ONE_OPERAND: {
-            ret.one_operand.source = expression->one_operand.source;
-            break;
-        }
-
-        case IR_TYPE_TWO_OPERAND_IMMEDIATES: {
-            ret.two_operand_immediates.source1 = expression->two_operand_immediates.source1;
-            ret.two_operand_immediates.source2 = expression->two_operand_immediates.source2;
-            ret.two_operand_immediates.imm64_1 = expression->two_operand_immediates.imm64_1;
-            ret.two_operand_immediates.imm64_2 = expression->two_operand_immediates.imm64_2;
             break;
         }
 
@@ -48,10 +59,6 @@ ir_instruction_t ir_copy_expression(ir_instruction_t* expression) {
         case IR_TYPE_SET_GUEST: {
             ret.set_guest.source = expression->set_guest.source;
             ret.set_guest.ref = expression->set_guest.ref;
-            break;
-        }
-
-        case IR_TYPE_NO_OPERANDS: {
             break;
         }
 

@@ -141,16 +141,17 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             break;
         }
         case IR_INSERT_INTEGER_TO_VECTOR: {
-            xmm_reg_t xmm = xmm_temps[instruction->two_operand_immediates.source1->name];
-            u32 index = instruction->two_operand_immediates.imm64_1;
-            switch (instruction->two_operand_immediates.imm64_2) {
+            xmm_reg_t xmm = xmm_temps[instruction->operands.args[0]->name];
+            u32 index = temps[instruction->operands.args[2]->name];
+            x86_size_e size = temps[instruction->operands.args[3]->name];
+            switch (size) {
                 case X86_SIZE_BYTE: {
                     if (index > 63) {
                         ERROR("Invalid index");
                     }
 
                     u8* data = (u8*)&xmm.data[index];
-                    *data = (u8)temps[instruction->two_operand_immediates.source2->name];
+                    *data = (u8)temps[instruction->operands.args[1]->name];
                     xmm_temps[instruction->name] = xmm;
                     break;
                 }
@@ -160,7 +161,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
                     }
 
                     u16* data = (u16*)&xmm.data[index];
-                    *data = (u16)temps[instruction->two_operand_immediates.source2->name];
+                    *data = (u16)temps[instruction->operands.args[1]->name];
                     xmm_temps[instruction->name] = xmm;
                     break;
                 }
@@ -170,7 +171,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
                     }
 
                     u32* data = (u32*)&xmm.data[index];
-                    *data = (u32)temps[instruction->two_operand_immediates.source2->name];
+                    *data = (u32)temps[instruction->operands.args[1]->name];
                     xmm_temps[instruction->name] = xmm;
                     break;
                 }
@@ -180,7 +181,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
                     }
 
                     u64* data = (u64*)&xmm.data[index];
-                    *data = temps[instruction->two_operand_immediates.source2->name];
+                    *data = temps[instruction->operands.args[1]->name];
                     xmm_temps[instruction->name] = xmm;
                     break;
                 }
@@ -189,9 +190,10 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             break;
         }
         case IR_EXTRACT_INTEGER_FROM_VECTOR: {
-            xmm_reg_t xmm = xmm_temps[instruction->two_operand_immediates.source1->name];
-            u32 index = instruction->two_operand_immediates.imm64_1;
-            switch (instruction->two_operand_immediates.imm64_2) {
+            xmm_reg_t xmm = xmm_temps[instruction->operands.args[0]->name];
+            u32 index = temps[instruction->operands.args[1]->name];
+            x86_size_e size = temps[instruction->operands.args[2]->name];
+            switch (size) {
                 case X86_SIZE_BYTE: {
                     if (index > 63) {
                         ERROR("Invalid index");
@@ -233,123 +235,123 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             break;
         }
         case IR_ADD: {
-            temps[instruction->name] = temps[instruction->two_operand.source1->name] + temps[instruction->two_operand.source2->name];
+            temps[instruction->name] = temps[instruction->operands.args[0]->name] + temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_SUB: {
-            temps[instruction->name] = temps[instruction->two_operand.source1->name] - temps[instruction->two_operand.source2->name];
+            temps[instruction->name] = temps[instruction->operands.args[0]->name] - temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_AND: {
-            temps[instruction->name] = temps[instruction->two_operand.source1->name] & temps[instruction->two_operand.source2->name];
+            temps[instruction->name] = temps[instruction->operands.args[0]->name] & temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_OR: {
-            temps[instruction->name] = temps[instruction->two_operand.source1->name] | temps[instruction->two_operand.source2->name];
+            temps[instruction->name] = temps[instruction->operands.args[0]->name] | temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_XOR: {
-            temps[instruction->name] = temps[instruction->two_operand.source1->name] ^ temps[instruction->two_operand.source2->name];
+            temps[instruction->name] = temps[instruction->operands.args[0]->name] ^ temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_LEFT_SHIFT: {
-            temps[instruction->name] = temps[instruction->two_operand.source1->name] << temps[instruction->two_operand.source2->name];
+            temps[instruction->name] = temps[instruction->operands.args[0]->name] << temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_RIGHT_SHIFT: {
-            temps[instruction->name] = temps[instruction->two_operand.source1->name] >> temps[instruction->two_operand.source2->name];
+            temps[instruction->name] = temps[instruction->operands.args[0]->name] >> temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_RIGHT_SHIFT_ARITHMETIC: {
-            temps[instruction->name] = (i64)temps[instruction->two_operand.source1->name] >> temps[instruction->two_operand.source2->name];
+            temps[instruction->name] = (i64)temps[instruction->operands.args[0]->name] >> temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_EQUAL: {
-            temps[instruction->name] = temps[instruction->two_operand.source1->name] == temps[instruction->two_operand.source2->name];
+            temps[instruction->name] = temps[instruction->operands.args[0]->name] == temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_NOT_EQUAL: {
-            temps[instruction->name] = temps[instruction->two_operand.source1->name] != temps[instruction->two_operand.source2->name];
+            temps[instruction->name] = temps[instruction->operands.args[0]->name] != temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_GREATER_THAN_SIGNED: {
-            temps[instruction->name] = (i64)temps[instruction->two_operand.source1->name] > (i64)temps[instruction->two_operand.source2->name];
+            temps[instruction->name] = (i64)temps[instruction->operands.args[0]->name] > (i64)temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_LESS_THAN_SIGNED: {
-            temps[instruction->name] = (i64)temps[instruction->two_operand.source1->name] < (i64)temps[instruction->two_operand.source2->name];
+            temps[instruction->name] = (i64)temps[instruction->operands.args[0]->name] < (i64)temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_GREATER_THAN_UNSIGNED: {
-            temps[instruction->name] = temps[instruction->two_operand.source1->name] > temps[instruction->two_operand.source2->name];
+            temps[instruction->name] = temps[instruction->operands.args[0]->name] > temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_LESS_THAN_UNSIGNED: {
-            temps[instruction->name] = temps[instruction->two_operand.source1->name] < temps[instruction->two_operand.source2->name];
+            temps[instruction->name] = temps[instruction->operands.args[0]->name] < temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_LEA: {
-            u64 base = instruction->two_operand_immediates.source1 ? temps[instruction->two_operand_immediates.source1->name] : 0;
-            u64 index = instruction->two_operand_immediates.source2 ? temps[instruction->two_operand_immediates.source2->name] : 0;
-            u64 displacement = instruction->two_operand_immediates.imm64_1;
-            u64 scale = instruction->two_operand_immediates.imm64_2;
+            u64 base = temps[instruction->operands.args[0]->name];
+            u64 index = temps[instruction->operands.args[1]->name];
+            u64 displacement = temps[instruction->operands.args[2]->name];
+            u64 scale = temps[instruction->operands.args[3]->name];
             temps[instruction->name] = base + index * scale + displacement;
             break;
         }
         case IR_READ_BYTE: {
-            temps[instruction->name] = *(u8*)(temps[instruction->one_operand.source->name]);
+            temps[instruction->name] = *(u8*)(temps[instruction->operands.args[0]->name]);
             break;
         }
         case IR_READ_WORD: {
-            temps[instruction->name] = *(u16*)(temps[instruction->one_operand.source->name]);
+            temps[instruction->name] = *(u16*)(temps[instruction->operands.args[0]->name]);
             break;
         }
         case IR_READ_DWORD: {
-            temps[instruction->name] = *(u32*)(temps[instruction->one_operand.source->name]);
+            temps[instruction->name] = *(u32*)(temps[instruction->operands.args[0]->name]);
             break;
         }
         case IR_READ_QWORD: {
-            temps[instruction->name] = *(u64*)(temps[instruction->one_operand.source->name]);
+            temps[instruction->name] = *(u64*)(temps[instruction->operands.args[0]->name]);
             break;
         }
         case IR_WRITE_BYTE: {
-            *(u8*)(temps[instruction->two_operand.source1->name]) = temps[instruction->two_operand.source2->name];
+            *(u8*)(temps[instruction->operands.args[0]->name]) = temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_WRITE_WORD: {
-            *(u16*)(temps[instruction->two_operand.source1->name]) = temps[instruction->two_operand.source2->name];
+            *(u16*)(temps[instruction->operands.args[0]->name]) = temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_WRITE_DWORD: {
-            *(u32*)(temps[instruction->two_operand.source1->name]) = temps[instruction->two_operand.source2->name];
+            *(u32*)(temps[instruction->operands.args[0]->name]) = temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_WRITE_QWORD: {
-            *(u64*)(temps[instruction->two_operand.source1->name]) = temps[instruction->two_operand.source2->name];
+            *(u64*)(temps[instruction->operands.args[0]->name]) = temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_START_OF_BLOCK: {
             break;
         }
         case IR_SEXT_GPR8: {
-            temps[instruction->name] = (i64)(i8)temps[instruction->one_operand.source->name];
+            temps[instruction->name] = (i64)(i8)temps[instruction->operands.args[0]->name];
             break;
         }
         case IR_SEXT_GPR16: {
-            temps[instruction->name] = (i64)(i16)temps[instruction->one_operand.source->name];
+            temps[instruction->name] = (i64)(i16)temps[instruction->operands.args[0]->name];
             break;
         }
         case IR_SEXT_GPR32: {
-            temps[instruction->name] = (i64)(i32)temps[instruction->one_operand.source->name];
+            temps[instruction->name] = (i64)(i32)temps[instruction->operands.args[0]->name];
             break;
         }
         case IR_POPCOUNT: {
-            temps[instruction->name] = __builtin_popcountll(temps[instruction->one_operand.source->name]);
+            temps[instruction->name] = __builtin_popcountll(temps[instruction->operands.args[0]->name]);
             break;
         }
         case IR_MOV: {
             WARN("Interpreting MOV, this should not happen");
-            temps[instruction->name] = temps[instruction->one_operand.source->name];
+            temps[instruction->name] = temps[instruction->operands.args[0]->name];
             break;
         }
         case IR_IMMEDIATE: {
@@ -393,7 +395,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             break;
         }
         case IR_NOT: {
-            temps[instruction->name] = ~temps[instruction->one_operand.source->name];
+            temps[instruction->name] = ~temps[instruction->operands.args[0]->name];
             break;
         }
         case IR_JUMP: {
@@ -403,7 +405,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             return NULL;
         }
         case IR_JUMP_REGISTER: {
-            state->rip = temps[instruction->one_operand.source->name];
+            state->rip = temps[instruction->operands.args[0]->name];
             return NULL;
         }
         case IR_JUMP_CONDITIONAL: {

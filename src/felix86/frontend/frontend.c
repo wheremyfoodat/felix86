@@ -156,6 +156,7 @@ void frontend_compile_instruction(frontend_state_t* state)
     bool rex_b = false;
     bool rex_x = false;
     bool rex_r = false;
+    bool address_override = false;
     instruction_metadata_t* primary_map = primary_table;
     x86_prefixes_t prefixes;
     prefixes.raw = 0;
@@ -203,7 +204,7 @@ void frontend_compile_instruction(frontend_state_t* state)
             }
 
             case 0x67: {
-                inst.operand_rm.address_override = true;
+                address_override = true;
                 prefix = true;
                 index += 1;
                 break;
@@ -513,9 +514,14 @@ void frontend_compile_instruction(frontend_state_t* state)
             inst.operand_rm.reg.ref = X86_REF_RAX + (reg_index & 0x3);
             inst.operand_rm.reg.high8 = high;
         }
-    } else if (inst.operand_rm.memory.base == X86_REF_RIP) {
-        inst.operand_rm.memory.displacement += state->current_address + index;
-        inst.operand_rm.memory.base = X86_REF_COUNT;
+    } else if (inst.operand_rm.type == X86_OP_TYPE_MEMORY) {
+        inst.operand_rm.memory.address_override = address_override;
+        if (inst.operand_rm.memory.base == X86_REF_RIP) {
+            inst.operand_rm.memory.displacement += state->current_address + index;
+            inst.operand_rm.memory.base = X86_REF_COUNT;
+        }
+    } else if (inst.operand_rm.type != X86_OP_TYPE_NONE) {
+        ERROR("Invalid operand type");
     }
 
     inst.length = index;

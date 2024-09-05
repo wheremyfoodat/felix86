@@ -102,7 +102,6 @@ inline ir_instruction_t* read_variable_recursive(ir_function_t* function, ssa_st
 		ret->phi.list = nullptr;
 		write_variable(state, variable, block, ret);
 		ret = add_phi_operands(function, state, block, variable, ret, current);
-		printf("creating phi!\n");
 	} else if (predecessor_count == 0) {
 		// The search has reached our empty entry block without finding a definition
 		// Which means we actually need to read the guest from memory
@@ -125,11 +124,11 @@ void ir_ssa_pass_impl(ir_function_t* function, ssa_state_t& state, ir_block_t* b
 		switch(current->instruction.opcode) {
 			case IR_SET_GUEST: {
 				write_variable(state, current->instruction.set_guest.ref, block, &current->instruction);
-				// ir_instruction_t* source = current->instruction.set_guest.source;
-				// ir_clear_instruction(&current->instruction);
-				// current->instruction.type = IR_TYPE_ONE_OPERAND;
-				// current->instruction.opcode = IR_MOV;
-				// current->instruction.one_operand.source = source;
+				ir_instruction_t* source = current->instruction.set_guest.source;
+				ir_clear_instruction(&current->instruction);
+				current->instruction.type = IR_TYPE_ONE_OPERAND;
+				current->instruction.opcode = IR_MOV;
+				current->instruction.operands.args[0] = source;
 				break;
 			}
 			case IR_GET_GUEST: {
@@ -137,7 +136,7 @@ void ir_ssa_pass_impl(ir_function_t* function, ssa_state_t& state, ir_block_t* b
 				ir_clear_instruction(&current->instruction);
 				current->instruction.type = IR_TYPE_ONE_OPERAND;
 				current->instruction.opcode = IR_MOV;
-				current->instruction.one_operand.source = value;
+				current->instruction.operands.args[0] = value;
 				value->uses++;
 				break;
 			}
@@ -182,10 +181,18 @@ extern "C" void ir_ssa_pass(ir_function_t* function) {
 	ssa_state_t state = {};
 	ir_block_list_t* current = function->first;
 	while (current) {
-		printf("ssa passing: %p\n", current->block);
 		ir_ssa_pass_impl(function, state, current->block);
 		current = current->next;
 	}
+}
+
+extern "C" void ir_naming_pass(ir_function_t* function) {
+    int name = 0;
+    for (ir_block_list_t* current = function->first; current; current = current->next) {
+        for (ir_instruction_list_t* current_instruction = current->block->instructions->next; current_instruction; current_instruction = current_instruction->next) {
+            current_instruction->instruction.name = name++;
+        }
+    }
 }
 
 bool operator<(const ir_instruction_t& a1, const ir_instruction_t& a2) {
@@ -225,7 +232,7 @@ extern "C" void ir_local_common_subexpression_elimination_pass_v2(ir_block_t* bl
 				ir_clear_instruction(&current->instruction);
 				current->instruction.type = IR_TYPE_ONE_OPERAND;
 				current->instruction.opcode = IR_MOV;
-				current->instruction.one_operand.source = expressions[expression];
+				current->instruction.operands.args[0] = expressions[expression];
 			} else {
 				expressions[expression] = &current->instruction;
 			}
@@ -244,7 +251,7 @@ extern "C" void ir_local_common_subexpression_elimination_pass_v2(ir_block_t* bl
 						ir_clear_instruction(&current->instruction);
 						current->instruction.type = IR_TYPE_ONE_OPERAND;
 						current->instruction.opcode = IR_MOV;
-						current->instruction.one_operand.source = new_source;
+						current->instruction.operands.args[0] = new_source;
 					} else {
 						registers[current->instruction.get_guest.ref] = &current->instruction;
 					}
@@ -283,10 +290,10 @@ extern "C" void ir_copy_propagation_pass_block(std::map<ir_instruction_t*, ir_in
 	while (current) {
 		ir_instruction_t* instruction = &current->instruction;
 		if (instruction->opcode == IR_MOV) {
-			if (copies.find(instruction->one_operand.source) != copies.end()) {
-				copies[instruction] = copies[instruction->one_operand.source];
+			if (copies.find(instruction->operands.args[0]) != copies.end()) {
+				copies[instruction] = copies[instruction->operands.args[0]];
 			} else {
-				copies[instruction] = instruction->one_operand.source;
+				copies[instruction] = instruction->operands.args[0];
 			}
 
 			ir_instruction_list_t* next = current->next;
@@ -295,22 +302,56 @@ extern "C" void ir_copy_propagation_pass_block(std::map<ir_instruction_t*, ir_in
 			current = next;
 		} else {
 			switch (instruction->type) {
-				case IR_TYPE_TWO_OPERAND: {
-					if (copies.find(instruction->two_operand.source1) != copies.end()) {
-						instruction->two_operand.source1 = copies[instruction->two_operand.source1];
-						instruction->two_operand.source1->uses++;
-					}
-					if (copies.find(instruction->two_operand.source2) != copies.end()) {
-						instruction->two_operand.source2 = copies[instruction->two_operand.source2];
-						instruction->two_operand.source2->uses++;
+				case IR_TYPE_JUMP:
+				case IR_TYPE_ONE_OPERAND: {
+					if (copies.find(instruction->operands.args[0]) != copies.end()) {
+						instruction->operands.args[0] = copies[instruction->operands.args[0]];
+						instruction->operands.args[0]->uses++;
 					}
 					break;
 				}
-				case IR_TYPE_JUMP:
-				case IR_TYPE_ONE_OPERAND: {
-					if (copies.find(instruction->one_operand.source) != copies.end()) {
-						instruction->one_operand.source = copies[instruction->one_operand.source];
-						instruction->one_operand.source->uses++;
+				case IR_TYPE_TWO_OPERANDS: {
+					if (copies.find(instruction->operands.args[0]) != copies.end()) {
+						instruction->operands.args[0] = copies[instruction->operands.args[0]];
+						instruction->operands.args[0]->uses++;
+					}
+					if (copies.find(instruction->operands.args[1]) != copies.end()) {
+						instruction->operands.args[1] = copies[instruction->operands.args[1]];
+						instruction->operands.args[1]->uses++;
+					}
+					break;
+				}
+				case IR_TYPE_THREE_OPERANDS: {
+					if (copies.find(instruction->operands.args[0]) != copies.end()) {
+						instruction->operands.args[0] = copies[instruction->operands.args[0]];
+						instruction->operands.args[0]->uses++;
+					}
+					if (copies.find(instruction->operands.args[1]) != copies.end()) {
+						instruction->operands.args[1] = copies[instruction->operands.args[1]];
+						instruction->operands.args[1]->uses++;
+					}
+					if (copies.find(instruction->operands.args[2]) != copies.end()) {
+						instruction->operands.args[2] = copies[instruction->operands.args[2]];
+						instruction->operands.args[2]->uses++;
+					}
+					break;
+				}
+				case IR_TYPE_FOUR_OPERANDS: {
+					if (copies.find(instruction->operands.args[0]) != copies.end()) {
+						instruction->operands.args[0] = copies[instruction->operands.args[0]];
+						instruction->operands.args[0]->uses++;
+					}
+					if (copies.find(instruction->operands.args[1]) != copies.end()) {
+						instruction->operands.args[1] = copies[instruction->operands.args[1]];
+						instruction->operands.args[1]->uses++;
+					}
+					if (copies.find(instruction->operands.args[2]) != copies.end()) {
+						instruction->operands.args[2] = copies[instruction->operands.args[2]];
+						instruction->operands.args[2]->uses++;
+					}
+					if (copies.find(instruction->operands.args[3]) != copies.end()) {
+						instruction->operands.args[3] = copies[instruction->operands.args[3]];
+						instruction->operands.args[3]->uses++;
 					}
 					break;
 				}
@@ -326,17 +367,6 @@ extern "C" void ir_copy_propagation_pass_block(std::map<ir_instruction_t*, ir_in
 					if (copies.find(instruction->jump_conditional.condition) != copies.end()) {
 						instruction->jump_conditional.condition = copies[instruction->jump_conditional.condition];
 						instruction->jump_conditional.condition->uses++;
-					}
-					break;
-				}
-				case IR_TYPE_TWO_OPERAND_IMMEDIATES: {
-					if (copies.find(instruction->two_operand_immediates.source1) != copies.end()) {
-						instruction->two_operand_immediates.source1 = copies[instruction->two_operand_immediates.source1];
-						instruction->two_operand_immediates.source1->uses++;
-					}
-					if (copies.find(instruction->two_operand_immediates.source2) != copies.end()) {
-						instruction->two_operand_immediates.source2 = copies[instruction->two_operand_immediates.source2];
-						instruction->two_operand_immediates.source2->uses++;
 					}
 					break;
 				}

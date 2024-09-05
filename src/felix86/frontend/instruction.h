@@ -160,6 +160,7 @@ typedef struct {
 			x86_ref_e base;
 			x86_ref_e index;
 			u8 scale;
+			bool address_override;
 		} memory;
 
 		struct {
@@ -174,7 +175,6 @@ typedef struct {
 
 	x86_size_e size;
 	x86_operand_type_e type;
-	bool address_override;
 } x86_operand_t;
 
 typedef struct {
