@@ -36,7 +36,6 @@ ir_instruction_t* read_variable_recursive(ir_function_t* function, ssa_state_t& 
 
 inline void write_variable(ssa_state_t& state, x86_ref_e variable, ir_block_t* block, ir_instruction_t* value) {
 	state.def[variable][block] = value;
-	printf("block[%p] variable[%d] = %p (%d)\n", block, variable, value, value->name);
 }
 
 inline ir_instruction_t* read_variable(ir_function_t* function, ssa_state_t& state, x86_ref_e variable, ir_block_t* block, ir_instruction_list_t* current) {

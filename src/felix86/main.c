@@ -62,9 +62,6 @@ static error_t parse_opt (int key, char* arg, struct argp_state* state)
             break;
         }
         case ARGP_KEY_END: {
-            if (config->argc < 1) {
-                argp_usage (state);
-            }
             break;
         }
 
@@ -83,10 +80,11 @@ int main(int argc, char* argv[]) {
 
     argp_parse(&argp, argc, argv, 0, 0, &config);
 
-    if (argc == 0) {
+    if (argc == 1) {
         felix86_gui();
     } else {
         loader_run_elf(&config);
     }
+
     return 0;
 }

@@ -232,7 +232,7 @@ void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
     }
 
     // printf("\t\t\t\t(uses: %d)", instruction->uses);
-    printf("   (%p)\n", instruction);
+    printf("\n");
 }
 
 void ir_print_block(ir_block_t* block) {

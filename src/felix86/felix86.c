@@ -200,7 +200,6 @@ felix86_exit_reason_e felix86_recompiler_run_v2(felix86_recompiler_t* recompiler
     ir_ssa_pass(function);
     ir_copy_propagation_pass(function);
     ir_naming_pass(function);
-    ir_print_function_uml(function);
 
     ir_interpret_function(function, &recompiler->state);
 

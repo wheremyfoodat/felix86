@@ -47,7 +47,7 @@ void loader_run_elf(loader_config_t* config) {
 
     elf_t* elf = elf_load(path, NULL);
     if (!elf) {
-        ERROR("Failed to load ELF\n");
+        ERROR("Failed to load ELF");
         return;
     }
 
