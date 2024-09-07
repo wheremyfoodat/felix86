@@ -210,6 +210,7 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler) {
                 ir_print_function_graphviz(recompiler->base_address, function);
         }
 
+        printf("function base: %016lx\n", recompiler->state.rip - g_base_address);
         ir_interpret_function(function, &recompiler->state);
 
         if (recompiler->testing)

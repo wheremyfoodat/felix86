@@ -81,7 +81,11 @@ void felix86_cpuid(x86_state_t* state) {
             break;
         }
         default: {
-            ERROR("CPUID %08x not implemented", eax);
+            WARN("CPUID %08x not implemented", eax);
+            eax = 0;
+            ebx = 0;
+            ecx = 0;
+            edx = 0;
             break;
         }
     }

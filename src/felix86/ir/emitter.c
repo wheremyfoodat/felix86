@@ -105,6 +105,13 @@ void ir_emit_hint_outputs(ir_instruction_list_t* instructions, x86_ref_e* refs, 
     ir_emit_side_effect(instructions, IR_HINT_OUTPUTS, refs, count);
 }
 
+void ir_emit_hint_full(ir_instruction_list_t* instructions)
+{
+    ir_instruction_t* instruction = ir_ilist_push_back(instructions);
+    instruction->opcode = IR_HINT_FULL;
+    instruction->type = IR_TYPE_NO_OPERANDS;
+}
+
 ir_instruction_t* ir_emit_add(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
 {
     return ir_emit_two_operands(instructions, IR_ADD, source1, source2);
@@ -147,6 +154,29 @@ ir_instruction_t* ir_emit_rotate(ir_instruction_list_t* instructions, ir_instruc
 ir_instruction_t* ir_emit_select(ir_instruction_list_t* instructions, ir_instruction_t* condition, ir_instruction_t* source1, ir_instruction_t* source2)
 {
     return ir_emit_three_operands(instructions, IR_SELECT, condition, source1, source2);
+}
+
+ir_instruction_t* ir_emit_imul(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    return ir_emit_two_operands(instructions, IR_IMUL, source1, source2);
+}
+
+ir_instruction_t* ir_emit_idiv(ir_instruction_list_t* instructions, x86_size_e size, ir_instruction_t* source)
+{
+    ir_opcode_e opcode;
+    switch (size) {
+        case X86_SIZE_BYTE: opcode = IR_IDIV8; break;
+        case X86_SIZE_WORD: opcode = IR_IDIV16; break;
+        case X86_SIZE_DWORD: opcode = IR_IDIV32; break;
+        case X86_SIZE_QWORD: opcode = IR_IDIV64; break;
+        default: ERROR("Invalid size"); break;
+    }
+    return ir_emit_one_operand(instructions, opcode, source);
+}
+
+ir_instruction_t* ir_emit_clz(ir_instruction_list_t* instructions, ir_instruction_t* source)
+{
+    return ir_emit_one_operand(instructions, IR_CLZ, source);
 }
 
 ir_instruction_t* ir_emit_udiv(ir_instruction_list_t* instructions, x86_size_e size, ir_instruction_t* source)
@@ -259,6 +289,17 @@ ir_instruction_t* ir_emit_sext16(ir_instruction_list_t* instructions, ir_instruc
 ir_instruction_t* ir_emit_sext32(ir_instruction_list_t* instructions, ir_instruction_t* source)
 {
     return ir_emit_one_operand(instructions, IR_SEXT32, source);
+}
+
+ir_instruction_t* ir_emit_sext(ir_instruction_list_t* instructions, ir_instruction_t* source, x86_size_e size)
+{
+    switch (size) {
+        case X86_SIZE_BYTE: return ir_emit_sext8(instructions, source);
+        case X86_SIZE_WORD: return ir_emit_sext16(instructions, source);
+        case X86_SIZE_DWORD: return ir_emit_sext32(instructions, source);
+        case X86_SIZE_QWORD: return source;
+        default: ERROR("Invalid size");
+    }
 }
 
 ir_instruction_t* ir_emit_syscall(ir_instruction_list_t* instructions)
@@ -1050,7 +1091,11 @@ void ir_emit_group3(ir_instruction_list_t* instructions, x86_instruction_t* inst
             break;
         }
         case X86_GROUP3_IDIV: {
-            ERROR("Unimplemented");
+            x86_ref_e inputs[] = {X86_REF_RAX, X86_REF_RDX};
+            x86_ref_e outputs[] = {X86_REF_RAX, X86_REF_RDX};
+            ir_emit_hint_inputs(instructions, inputs, 2);
+            ir_emit_idiv(instructions, inst->operand_rm.size, rm);
+            ir_emit_hint_outputs(instructions, outputs, 2);
             break;
         }
     }

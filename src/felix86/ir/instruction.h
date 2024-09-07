@@ -14,6 +14,7 @@ typedef enum : u16 {
 	IR_PHI,
 	IR_HINT_INPUTS,  // tells the recompiler that the registers listed are used as inputs so they aren't optimized away
 	IR_HINT_OUTPUTS, // tells the recompiler that the registers listed are used as outputs so they aren't optimized away
+	IR_HINT_FULL, // tells the recompiler that everything could be used as an input or output, an optimization barrier essentially
 
 	IR_MOV,
 	IR_IMMEDIATE,
@@ -34,10 +35,16 @@ typedef enum : u16 {
 
 	IR_ADD,
 	IR_SUB,
+	IR_IMUL,
+	IR_IDIV8,
+	IR_IDIV16,
+	IR_IDIV32,
+	IR_IDIV64,
 	IR_UDIV8,
 	IR_UDIV16,
 	IR_UDIV32,
 	IR_UDIV64,
+	IR_CLZ,
 	IR_SHIFT_LEFT,
 	IR_SHIFT_RIGHT,
 	IR_SHIFT_RIGHT_ARITHMETIC,

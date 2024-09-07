@@ -80,3 +80,72 @@ FELIX86_TEST(rep_stosq) {
 
     verify(X86_REF_RDI, (u64)memory.getAddress() + 8 * 6);
 }
+
+FELIX86_TEST(cwd_sign) {
+    mov(ax, 0x8123);
+    cwd();
+
+    verify(X86_REF_RAX, 0x8123);
+    verify(X86_REF_RDX, 0xffff);
+}
+
+FELIX86_TEST(cwd_no_sign) {
+    mov(ax, 0x0123);
+    cwd();
+
+    verify(X86_REF_RAX, 0x0123);
+    verify(X86_REF_RDX, 0);
+}
+
+FELIX86_TEST(cdq_sign) {
+    mov(eax, 0x81234567);
+    cdq();
+
+    verify(X86_REF_RAX, 0x81234567);
+    verify(X86_REF_RDX, 0xffffffff);
+}
+
+FELIX86_TEST(cdq_no_sign) {
+    mov(eax, 0x01234567);
+    cdq();
+
+    verify(X86_REF_RAX, 0x01234567);
+    verify(X86_REF_RDX, 0);
+}
+
+FELIX86_TEST(cqo_sign) {
+    mov(rax, 0x8123456789abcdef);
+    cqo();
+
+    verify(X86_REF_RAX, 0x8123456789abcdef);
+    verify(X86_REF_RDX, 0xffffffffffffffff);
+}
+
+FELIX86_TEST(cqo_no_sign) {
+    mov(rax, 0x0123456789abcdef);
+    cqo();
+
+    verify(X86_REF_RAX, 0x0123456789abcdef);
+    verify(X86_REF_RDX, 0);
+}
+
+FELIX86_TEST(bsr_word) {
+    mov(ax, 0x0801);
+    bsr(cx, ax);
+
+    verify(X86_REF_RCX, 11);
+}
+
+FELIX86_TEST(bsr_dword) {
+    mov(eax, 0x08080000);
+    bsr(ecx, eax);
+
+    verify(X86_REF_RCX, 27);
+}
+
+FELIX86_TEST(bsr_qword) {
+    mov(rax, 0x0800080000000000);
+    bsr(rcx, rax);
+
+    verify(X86_REF_RCX, 59);
+}

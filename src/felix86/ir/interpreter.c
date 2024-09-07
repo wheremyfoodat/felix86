@@ -1,5 +1,6 @@
 #include "felix86/ir/interpreter.h"
 #include "felix86/common/cpuid.h"
+#include "felix86/common/global.h"
 #include "felix86/common/log.h"
 #include "felix86/common/utility.h"
 #include "felix86/ir/print.h"
@@ -459,6 +460,74 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             xmm_temps[instruction->name] = result;
             break;
         }
+        case IR_IDIV8: {
+            i16 dividend = (u16)state->gprs[X86_REF_RAX];
+            i16 divisor = temps[instruction->operands.args[0]->name];
+            if (divisor == 0) {
+                ERROR("Division by zero");
+            }
+
+            i16 quotient = dividend / divisor;
+            if (quotient > 0x7F || quotient < -0x80) {
+                ERROR("Quotient overflow");
+            }
+
+            u16 remainder = dividend % divisor;
+            state->gprs[X86_REF_RAX] &= ~0xFFFF;
+            state->gprs[X86_REF_RAX] |= quotient & 0xFF;
+            state->gprs[X86_REF_RAX] |= (remainder & 0xFF) << 8;
+            break;
+        }
+        case IR_IDIV16: {
+            i32 dividend = (u32)(u16)state->gprs[X86_REF_RDX] << 16 | (u16)state->gprs[X86_REF_RAX];
+            i32 divisor = temps[instruction->operands.args[0]->name];
+            if (divisor == 0) {
+                ERROR("Division by zero");
+            }
+
+            i32 quotient = dividend / divisor;
+            if (quotient > 0x7FFF || quotient < -0x8000) {
+                ERROR("Quotient overflow");
+            }
+
+            u32 remainder = dividend % divisor;
+
+            state->gprs[X86_REF_RAX] &= ~0xFFFF;
+            state->gprs[X86_REF_RDX] &= ~0xFFFF;
+            state->gprs[X86_REF_RAX] |= quotient & 0xFFFF;
+            state->gprs[X86_REF_RDX] |= remainder & 0xFFFF;
+            break;
+        }
+        case IR_IDIV32: {
+            i64 dividend = (u64)(u32)state->gprs[X86_REF_RDX] << 32 | (u32)state->gprs[X86_REF_RAX];
+            i64 divisor = temps[instruction->operands.args[0]->name];
+            if (divisor == 0) {
+                ERROR("Division by zero");
+            }
+
+            i64 quotient = dividend / divisor;
+            if (quotient > 0x7FFFFFFFll || quotient < -0x80000000ll) {
+                ERROR("Quotient overflow");
+            }
+
+            u64 remainder = dividend % divisor;
+            state->gprs[X86_REF_RAX] = quotient;
+            state->gprs[X86_REF_RDX] = remainder;
+            break;
+        }
+        case IR_IDIV64: {
+            __int128_t dividend = ((__int128_t)(state->gprs[X86_REF_RDX]) << 64) | state->gprs[X86_REF_RAX];
+            __int128_t divisor = temps[instruction->operands.args[0]->name];
+            if (divisor == 0) {
+                ERROR("Division by zero");
+            }
+
+            __int128_t quotient = dividend / divisor;
+            __int128_t remainder = dividend % divisor;
+            state->gprs[X86_REF_RAX] = quotient;
+            state->gprs[X86_REF_RDX] = remainder;
+            break;
+        }
         case IR_UDIV8: {
             u16 dividend = (u16)state->gprs[X86_REF_RAX];
             u16 divisor = temps[instruction->operands.args[0]->name];
@@ -526,6 +595,15 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             state->gprs[X86_REF_RDX] = remainder;
             break;
         }
+        case IR_CLZ: {
+            temps[instruction->name] = __builtin_clzll(temps[instruction->operands.args[0]->name]);
+            break;
+        }
+        case IR_IMUL: {
+            state->gprs[instruction->name] = (i64)temps[instruction->operands.args[0]->name] * (i64)temps[instruction->operands.args[1]->name];
+            break;
+        }
+        case IR_HINT_FULL:
         case IR_HINT_INPUTS:
         case IR_HINT_OUTPUTS: {
             // Doesn't mean anything to the interpreter, shouldn't exist past optimizations anyway
@@ -552,6 +630,7 @@ void ir_interpret_function(ir_function_t* function, x86_state_t* state) {
             entry = entry_next;
             entry_next = next;
             current = next->instructions;
+            printf("next blocK: %016lx\n", next->start_address - g_base_address);
         } else {
             current = current->next;
         }

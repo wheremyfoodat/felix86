@@ -157,6 +157,21 @@ IR_HANDLE(or_eax_imm32) { // add ax/eax/rax, imm16/32/64 - 0x0D
     ir_emit_set_cpazso(INSTS, zero, p, NULL, z, s, zero);
 }
 
+IR_HANDLE(and_rm32_r32) { // and rm16/32/64, r16/32/64 - 0x21
+    x86_size_e size_e = inst->operand_reg.size;
+    ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
+    ir_instruction_t* reg = ir_emit_get_reg(INSTS, &inst->operand_reg);
+    ir_instruction_t* result = ir_emit_and(INSTS, rm, reg);
+    ir_emit_set_rm(INSTS, &inst->operand_rm, result);
+
+    ir_instruction_t* zero = ir_emit_immediate(INSTS, 0);
+    ir_instruction_t* p = ir_emit_get_parity(INSTS, result);
+    ir_instruction_t* z = ir_emit_get_zero(INSTS, result);
+    ir_instruction_t* s = ir_emit_get_sign(INSTS, result, size_e);
+
+    ir_emit_set_cpazso(INSTS, zero, p, NULL, z, s, zero);
+}
+
 IR_HANDLE(and_eax_imm32) { // and ax/eax/rax, imm16/32/64 - 0x25
     x86_size_e size_e = inst->operand_reg.size;
     ir_instruction_t* eax = ir_emit_get_reg(INSTS, &inst->operand_reg);
@@ -206,6 +221,21 @@ IR_HANDLE(sub_rm32_r32) { // sub rm16/32/64, r16/32/64 - 0x29
     ir_emit_set_cpazso(INSTS, c, p, a, z, s, o);
 }
 
+IR_HANDLE(xor_rm8_r8) { // xor rm8, r8 - 0x30
+    x86_size_e size_e = inst->operand_reg.size;
+    ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
+    ir_instruction_t* reg = ir_emit_get_reg(INSTS, &inst->operand_reg);
+    ir_instruction_t* result = ir_emit_xor(INSTS, rm, reg);
+    ir_emit_set_rm(INSTS, &inst->operand_rm, result);
+
+    ir_instruction_t* zero = ir_emit_immediate(INSTS, 0);
+    ir_instruction_t* p = ir_emit_get_parity(INSTS, result);
+    ir_instruction_t* z = ir_emit_get_zero(INSTS, result);
+    ir_instruction_t* s = ir_emit_get_sign(INSTS, result, size_e);
+
+    ir_emit_set_cpazso(INSTS, zero, p, NULL, z, s, zero);
+}
+
 IR_HANDLE(xor_rm32_r32) { // xor rm16/32/64, r16/32/64 - 0x31
     x86_size_e size_e = inst->operand_reg.size;
     ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
@@ -249,6 +279,22 @@ IR_HANDLE(cmp_rm32_r32) { // cmp rm16/32/64, r16/32/64 - 0x39
     ir_instruction_t* z = ir_emit_get_zero(INSTS, result);
     ir_instruction_t* s = ir_emit_get_sign(INSTS, result, size_e);
     ir_instruction_t* o = ir_emit_get_overflow_sub(INSTS, rm, reg, result, size_e);
+
+    ir_emit_set_cpazso(INSTS, c, p, a, z, s, o);
+}
+
+IR_HANDLE(cmp_r8_rm8) { // cmp r8, rm8 - 0x3a
+    x86_size_e size_e = inst->operand_reg.size;
+    ir_instruction_t* reg = ir_emit_get_reg(INSTS, &inst->operand_reg);
+    ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
+    ir_instruction_t* result = ir_emit_sub(INSTS, reg, rm);
+
+    ir_instruction_t* c = ir_emit_get_carry_sub(INSTS, reg, rm, result, size_e);
+    ir_instruction_t* p = ir_emit_get_parity(INSTS, result);
+    ir_instruction_t* a = ir_emit_get_aux_sub(INSTS, reg, rm);
+    ir_instruction_t* z = ir_emit_get_zero(INSTS, result);
+    ir_instruction_t* s = ir_emit_get_sign(INSTS, result, size_e);
+    ir_instruction_t* o = ir_emit_get_overflow_sub(INSTS, reg, rm, result, size_e);
 
     ir_emit_set_cpazso(INSTS, c, p, a, z, s, o);
 }
@@ -409,6 +455,20 @@ IR_HANDLE(xchg_reg_eax) { // xchg reg, eax - 0x91-0x97
     ir_emit_set_reg(INSTS, &eax_reg, reg);
 }
 
+IR_HANDLE(cdq) { // cwd/cdq/cqo - 0x99
+    x86_size_e size_e = inst->operand_reg.size;
+    ir_instruction_t* reg = ir_emit_get_reg(INSTS, &inst->operand_reg);
+    ir_instruction_t* sign = ir_emit_get_sign(INSTS, reg, size_e);
+    ir_instruction_t* zero = ir_emit_immediate(INSTS, 0);
+    ir_instruction_t* condition = ir_emit_not_equal(INSTS, sign, zero);
+
+    // if condition bit is 1, set rdx to all ones, else 0
+    ir_instruction_t* mask = ir_emit_sub(INSTS, zero, condition);
+    x86_operand_t rdx_reg = get_full_reg(X86_REF_RDX);
+    rdx_reg.size = size_e;
+    ir_emit_set_reg(INSTS, &rdx_reg, mask);
+}
+
 IR_HANDLE(test_al_imm8) { // test al, imm8 - 0xa8
     x86_size_e size_e = inst->operand_reg.size;
     ir_instruction_t* reg = ir_emit_get_reg(INSTS, &inst->operand_reg);
@@ -519,6 +579,13 @@ IR_HANDLE(group2_rm8_1) { // rol/ror/rcl/rcr/shl/shr/sal/sar rm8, 1 - 0xd0
 
 IR_HANDLE(group2_rm32_1) { // rol/ror/rcl/rcr/shl/shr/sal/sar rm16/32/64, 1 - 0xd1
     ir_emit_group2(INSTS, inst, ir_emit_immediate(INSTS, 1));
+}
+
+IR_HANDLE(group2_rm32_cl) { // rol/ror/rcl/rcr/shl/shr/sal/sar rm16/32/64, cl - 0xd3
+    x86_operand_t cl_reg = get_full_reg(X86_REF_RCX);
+    cl_reg.size = X86_SIZE_BYTE;
+    ir_instruction_t* cl = ir_emit_get_reg(INSTS, &cl_reg);
+    ir_emit_group2(INSTS, inst, cl);
 }
 
 IR_HANDLE(call_rel32) { // call rel32 - 0xe8
@@ -720,6 +787,14 @@ IR_HANDLE(bt) { // bt - 0x0f 0xa3
     ir_emit_set_flag(INSTS, X86_REF_CF, ir_emit_equal(INSTS, result, mask));
 }
 
+IR_HANDLE(imul_r32_rm32) { // imul r32/64, rm32/64 - 0x0f 0xaf
+    x86_size_e size_e = inst->operand_reg.size;
+    ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
+    ir_instruction_t* reg = ir_emit_get_reg(INSTS, &inst->operand_reg);
+    ir_instruction_t* result = ir_emit_imul(INSTS, ir_emit_sext(INSTS, reg, size_e), ir_emit_sext(INSTS, rm, size_e));
+    ir_emit_set_reg(INSTS, &inst->operand_reg, result);
+}
+
 IR_HANDLE(movzx_r32_rm8) { // movzx r32/64, rm8 - 0x0f 0xb6
     ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
     ir_emit_set_gpr64(INSTS, inst->operand_reg.reg.ref, rm);
@@ -728,6 +803,16 @@ IR_HANDLE(movzx_r32_rm8) { // movzx r32/64, rm8 - 0x0f 0xb6
 IR_HANDLE(movzx_r32_rm16) { // movzx r32/64, rm16 - 0x0f 0xb7
     ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
     ir_emit_set_gpr64(INSTS, inst->operand_reg.reg.ref, rm);
+}
+
+IR_HANDLE(bsr) { // bsr - 0x0f 0xbd
+    ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
+    ir_instruction_t* zero = ir_emit_get_zero(INSTS, rm);
+    ir_instruction_t* clz = ir_emit_clz(INSTS, rm);
+    // CLZ always deals on 64-bit values, so we need to subtract the result from 63
+    ir_instruction_t* sub = ir_emit_sub(INSTS, ir_emit_immediate(INSTS, 63), clz);
+    ir_emit_set_reg(INSTS, &inst->operand_reg, sub);
+    ir_emit_set_flag(INSTS, X86_REF_ZF, zero);
 }
 
 // ███████ ███████  ██████  ██████  ███    ██ ██████   █████  ██████  ██    ██      ██████   ██████  
