@@ -1,10 +1,12 @@
 #include "felix86/ir/interpreter.h"
+#include "felix86/common/cpuid.h"
 #include "felix86/common/log.h"
 #include "felix86/common/utility.h"
 #include "felix86/ir/print.h"
 #include <string.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#include <cpuid.h>
 
 static u64 temps[4096] = {0};
 static xmm_reg_t xmm_temps[256] = {0};
@@ -226,15 +228,15 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
         case IR_START_OF_BLOCK: {
             break;
         }
-        case IR_SEXT_GPR8: {
+        case IR_SEXT8: {
             temps[instruction->name] = (i64)(i8)temps[instruction->operands.args[0]->name];
             break;
         }
-        case IR_SEXT_GPR16: {
+        case IR_SEXT16: {
             temps[instruction->name] = (i64)(i16)temps[instruction->operands.args[0]->name];
             break;
         }
-        case IR_SEXT_GPR32: {
+        case IR_SEXT32: {
             temps[instruction->name] = (i64)(i32)temps[instruction->operands.args[0]->name];
             break;
         }
@@ -283,8 +285,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             break;
         }
         case IR_CPUID: {
-            u64 eax = state->gprs[X86_REF_RAX];
-            WARN("Interpreting CPUID, unimplemented");
+            felix86_cpuid(state);
             break;
         }
         case IR_NOT: {
@@ -456,6 +457,73 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             result.data[0] = xmm_dest.data[0] & xmm_src.data[0];
             result.data[1] = xmm_dest.data[1] & xmm_src.data[1];
             xmm_temps[instruction->name] = result;
+            break;
+        }
+        case IR_UDIV8: {
+            u16 dividend = (u16)state->gprs[X86_REF_RAX];
+            u16 divisor = temps[instruction->operands.args[0]->name];
+            if (divisor == 0) {
+                ERROR("Division by zero");
+            }
+
+            u16 quotient = dividend / divisor;
+            u16 remainder = dividend % divisor;
+            state->gprs[X86_REF_RAX] &= ~0xFFFF;
+            state->gprs[X86_REF_RAX] |= quotient & 0xFF;
+            state->gprs[X86_REF_RAX] |= (remainder & 0xFF) << 8;
+            break;
+        }
+        case IR_UDIV16: {
+            u32 dividend = (u32)(u16)state->gprs[X86_REF_RDX] << 16 | (u16)state->gprs[X86_REF_RAX];
+            u32 divisor = temps[instruction->operands.args[0]->name];
+            if (divisor == 0) {
+                ERROR("Division by zero");
+            }
+
+            u32 quotient = dividend / divisor;
+            u32 remainder = dividend % divisor;
+            if (quotient > 0xFFFF) {
+                ERROR("Quotient overflow");
+            }
+
+            state->gprs[X86_REF_RAX] &= ~0xFFFF;
+            state->gprs[X86_REF_RDX] &= ~0xFFFF;
+            state->gprs[X86_REF_RAX] |= quotient & 0xFFFF;
+            state->gprs[X86_REF_RDX] |= remainder & 0xFFFF;
+            break;
+        }
+        case IR_UDIV32: {
+            u64 dividend = (u64)(u32)state->gprs[X86_REF_RDX] << 32 | (u32)state->gprs[X86_REF_RAX];
+            u64 divisor = temps[instruction->operands.args[0]->name];
+            if (divisor == 0) {
+                ERROR("Division by zero");
+            }
+
+            u64 quotient = dividend / divisor;
+            u64 remainder = dividend % divisor;
+            if (quotient > 0xFFFFFFFF) {
+                ERROR("Quotient overflow");
+            }
+
+            state->gprs[X86_REF_RAX] = quotient;
+            state->gprs[X86_REF_RDX] = remainder;
+            break;
+        }
+        case IR_UDIV64: {
+            __uint128_t dividend = ((__uint128_t)(state->gprs[X86_REF_RDX]) << 64) | state->gprs[X86_REF_RAX];
+            __uint128_t divisor = temps[instruction->operands.args[0]->name];
+            if (divisor == 0) {
+                ERROR("Division by zero");
+            }
+
+            __uint128_t quotient = dividend / divisor;
+            __uint128_t remainder = dividend % divisor;
+            if (quotient > 0xFFFFFFFFFFFFFFFF) {
+                ERROR("Quotient overflow");
+            }
+
+            state->gprs[X86_REF_RAX] = quotient;
+            state->gprs[X86_REF_RDX] = remainder;
             break;
         }
         case IR_HINT_INPUTS:

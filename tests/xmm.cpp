@@ -17,5 +17,5 @@ FELIX86_TEST(punpckldq) {
         punpckldq(dst, src); \
         verify_xmm((x86_ref_e)(X86_REF_XMM0 + dst.getIdx()), {vres0, vres1})
     
-    TEST(xmm0, xmm1, 0x6b8b4567327b23c6, 0x643c986966334873, 0x66334873327b23c6, 0x643c98616b8b4567);
+    TEST(xmm0, xmm1, 0x6b8b4567327b23c6, 0x643c986966334873, 0x66334873327b23c6, 0x643c98696b8b4567);
 }

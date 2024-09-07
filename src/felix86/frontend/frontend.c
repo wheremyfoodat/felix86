@@ -106,7 +106,7 @@ u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, bool rex_
                 operand_rm->memory.base = X86_REF_RIP;
                 return 4;
             } else {
-                operand_rm->memory.base = X86_REF_RAX + modrm.rm | (rex_b << 3);
+                operand_rm->memory.base = X86_REF_RAX + (modrm.rm | (rex_b << 3));
                 return 0;
             }
         }
@@ -120,7 +120,7 @@ u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, bool rex_
                     operand_rm->memory.scale = 1 << sib.scale;
                 }
             } else {
-                operand_rm->memory.base = X86_REF_RAX + modrm.rm | (rex_b << 3);
+                operand_rm->memory.base = X86_REF_RAX + (modrm.rm | (rex_b << 3));
             }
             return 1;
         }
@@ -134,7 +134,7 @@ u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, bool rex_
                     operand_rm->memory.scale = 1 << sib.scale;
                 }
             } else {
-                operand_rm->memory.base = X86_REF_RAX + modrm.rm | (rex_b << 3);
+                operand_rm->memory.base = X86_REF_RAX + (modrm.rm | (rex_b << 3));
             }
             return 4;
         }
@@ -171,6 +171,15 @@ void frontend_compile_instruction(frontend_state_t* state)
     prefixes.raw = 0;
     do {
         switch (data[index]) {
+            case 0x26:
+            case 0x2E:
+            case 0x36:
+            case 0x3E: {
+                // Null prefixes
+                index += 1;
+                break;
+            }
+
             case 0x40 ... 0x4F: {
                 rex = true;
                 u8 opcode = data[index];

@@ -467,11 +467,11 @@ IR_HANDLE(mov_r32_imm32) { // mov r16/32/64, imm16/32/64 - 0xb8-0xbf
 }
 
 IR_HANDLE(group2_rm8_imm8) { // rol/ror/rcl/rcr/shl/shr/sal/sar rm8, imm8 - 0xc0
-    ir_emit_group2_imm(INSTS, inst);
+    ir_emit_group2(INSTS, inst, ir_emit_immediate(INSTS, inst->operand_imm.immediate.data));
 }
 
 IR_HANDLE(group2_rm32_imm8) { // rol/ror/rcl/rcr/shl/shr/sal/sar rm16/32/64, imm8 - 0xc1
-    ir_emit_group2_imm(INSTS, inst);
+    ir_emit_group2(INSTS, inst, ir_emit_immediate(INSTS, inst->operand_imm.immediate.data));
 }
 
 IR_HANDLE(ret) { // ret - 0xc3
@@ -513,16 +513,24 @@ IR_HANDLE(leave) { // leave - 0xc9
     ir_emit_set_reg(INSTS, &rsp_reg, rbp_add);
 }
 
+IR_HANDLE(group2_rm8_1) { // rol/ror/rcl/rcr/shl/shr/sal/sar rm8, 1 - 0xd0
+    ir_emit_group2(INSTS, inst, ir_emit_immediate(INSTS, 1));
+}
+
+IR_HANDLE(group2_rm32_1) { // rol/ror/rcl/rcr/shl/shr/sal/sar rm16/32/64, 1 - 0xd1
+    ir_emit_group2(INSTS, inst, ir_emit_immediate(INSTS, 1));
+}
+
 IR_HANDLE(call_rel32) { // call rel32 - 0xe8
     u64 displacement = (i64)(i32)inst->operand_imm.immediate.data;
     u64 jump_address = state->current_address + inst->length + displacement;
-    u64 returnAddress = state->current_address + inst->length;
+    u64 return_address = state->current_address + inst->length;
     ir_instruction_t* rip = ir_emit_immediate(INSTS, jump_address);
-    ir_instruction_t* returnRip = ir_emit_immediate(INSTS, returnAddress);
+    ir_instruction_t* return_rip = ir_emit_immediate(INSTS, return_address);
     ir_instruction_t* rsp = ir_emit_get_guest(INSTS, X86_REF_RSP);
     ir_instruction_t* size = ir_emit_immediate(INSTS, 8);
     ir_instruction_t* rsp_sub = ir_emit_sub(INSTS, rsp, size);
-    ir_emit_write_qword(INSTS, rsp_sub, returnRip);
+    ir_emit_write_qword(INSTS, rsp_sub, return_rip);
     ir_emit_set_guest(INSTS, X86_REF_RSP, rsp_sub);
     ir_emit_jump_register(INSTS, rip);
 
@@ -596,6 +604,21 @@ IR_HANDLE(inc_dec_rm8) { // inc/dec rm8 - 0xfe
 IR_HANDLE(group4) { // inc/dec/call/jmp/push rm32
     x86_group3_e opcode = inst->operand_reg.reg.ref - X86_REF_RAX;
     switch (opcode) {
+        case X86_GROUP4_CALL: {
+            x86_operand_t rm_op = inst->operand_rm;
+            rm_op.size = X86_SIZE_QWORD;
+            u64 return_address = state->current_address + inst->length;
+            ir_instruction_t* rip = ir_emit_get_rm(INSTS, &rm_op);
+            ir_instruction_t* return_rip = ir_emit_immediate(INSTS, return_address);
+            ir_instruction_t* rsp = ir_emit_get_guest(INSTS, X86_REF_RSP);
+            ir_instruction_t* size = ir_emit_immediate(INSTS, 8);
+            ir_instruction_t* rsp_sub = ir_emit_sub(INSTS, rsp, size);
+            ir_emit_write_qword(INSTS, rsp_sub, return_rip);
+            ir_emit_set_guest(INSTS, X86_REF_RSP, rsp_sub);
+            ir_emit_jump_register(INSTS, rip);
+            state->exit = true;
+            break;
+        }
         case X86_GROUP4_JMP: {
             x86_operand_t rm_op = inst->operand_rm;
             rm_op.size = X86_SIZE_QWORD;

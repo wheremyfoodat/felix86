@@ -39,6 +39,7 @@ set(FELIX86_IR_SOURCES
 
 set(FELIX86_COMMON_SOURCES
     src/felix86/common/allocator.c
+    src/felix86/common/cpuid.c
     src/felix86/common/file.c
     src/felix86/common/global.c
     src/felix86/common/log.c
@@ -83,6 +84,7 @@ set(FELIX86_TEST_SOURCES
     tests/sub.cpp
     tests/mov.cpp
     tests/lea.cpp
+    tests/shift.cpp
     tests/special.cpp
     tests/xmm.cpp
     tests/ir/control_flow.cpp

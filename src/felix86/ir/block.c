@@ -26,7 +26,7 @@ ir_function_t* ir_function_create(u64 address)
 
     list->block->predecessors = entry;
 
-    ir_function_t* function = malloc(sizeof(ir_function_t));
+    ir_function_t* function = calloc(sizeof(ir_function_t), 1);
     function->entry = entry;
     function->first = list;
     function->last = list;

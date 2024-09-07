@@ -132,15 +132,15 @@ void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
             printf(VAR EQUALS VAR, instruction->name, instruction->operands.args[0]->name);
             break;
         }
-        case IR_SEXT_GPR8: {
+        case IR_SEXT8: {
             print_one_op(instruction, "sext8");
             break;
         }
-        case IR_SEXT_GPR16: {
+        case IR_SEXT16: {
             print_one_op(instruction, "sext16");
             break;
         }
-        case IR_SEXT_GPR32: {
+        case IR_SEXT32: {
             print_one_op(instruction, "sext32");
             break;
         }
@@ -257,10 +257,8 @@ extern "C" void ir_print_function_graphviz(u64 program_entrypoint, ir_function_t
     {
         ir_block_list_t* blocks = function->first;
         while (blocks) {
-            printf("block: %p\n", blocks->block);
             ir_instruction_list_t* node = blocks->block->instructions;
             while (node) {
-                printf("\tinstruction: %p\n", &node->instruction);
                 node = node->next;
             }
             blocks = blocks->next;

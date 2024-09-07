@@ -22,7 +22,7 @@ ir_instruction_t* ir_emit_shift_right(ir_instruction_list_t* instructions, ir_in
 ir_instruction_t* ir_emit_shift_right_arithmetic(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_rotate(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2, x86_size_e size, bool right);
 ir_instruction_t* ir_emit_select(ir_instruction_list_t* instructions, ir_instruction_t* condition, ir_instruction_t* source1, ir_instruction_t* source2);
-ir_instruction_t* ir_emit_udiv(ir_instruction_list_t* instructions, ir_instruction_t* source);
+ir_instruction_t* ir_emit_udiv(ir_instruction_list_t* instructions, x86_size_e opcode, ir_instruction_t* source);
 ir_instruction_t* ir_emit_and(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_or(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_xor(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
@@ -129,7 +129,7 @@ ir_instruction_t* ir_emit_debug_info_compile_time(ir_instruction_list_t* instruc
 ir_instruction_t* ir_emit_get_cc(ir_instruction_list_t* instructions, u8 opcode);
 
 void ir_emit_group1_imm(ir_instruction_list_t* instructions, x86_instruction_t* inst);
-void ir_emit_group2_imm(ir_instruction_list_t* instructions, x86_instruction_t* inst);
+void ir_emit_group2(ir_instruction_list_t* instructions, x86_instruction_t* inst, ir_instruction_t* shift_amount);
 void ir_emit_group3(ir_instruction_list_t* instructions, x86_instruction_t* inst);
 
 void ir_emit_rep_start(ir_instruction_list_t* instructions, x86_size_e size);
