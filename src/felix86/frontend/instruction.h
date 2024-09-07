@@ -47,6 +47,16 @@ typedef enum : u8 {
 } x86_group3_e;
 
 typedef enum : u8 {
+	X86_GROUP4_INC = 0,
+	X86_GROUP4_DEC = 1,
+	X86_GROUP4_CALL = 2,
+	X86_GROUP4_CALLF = 3,
+	X86_GROUP4_JMP = 4,
+	X86_GROUP4_JMPF = 5,
+	X86_GROUP4_PUSH = 6,
+} x86_group4_e;
+
+typedef enum : u8 {
 	X86_REF_RAX,
 	X86_REF_RCX,
 	X86_REF_RDX,
@@ -87,22 +97,6 @@ typedef enum : u8 {
 	X86_REF_XMM13,
 	X86_REF_XMM14,
 	X86_REF_XMM15,
-	X86_REF_XMM16,
-	X86_REF_XMM17,
-	X86_REF_XMM18,
-	X86_REF_XMM19,
-	X86_REF_XMM20,
-	X86_REF_XMM21,
-	X86_REF_XMM22,
-	X86_REF_XMM23,
-	X86_REF_XMM24,
-	X86_REF_XMM25,
-	X86_REF_XMM26,
-	X86_REF_XMM27,
-	X86_REF_XMM28,
-	X86_REF_XMM29,
-	X86_REF_XMM30,
-	X86_REF_XMM31,
 	X86_REF_RIP,
 	X86_REF_CF,
 	X86_REF_PF,
@@ -137,17 +131,13 @@ typedef enum : u8 {
 typedef union {
 	struct {
 		u16 rex_w : 1;
-		u16 address_override : 1;
-		u16 operand_override : 1;
 		u16 lock : 1;
-		u16 rep_nz_f2 : 1;
-		u16 rep_z_f3 : 1;
 		u16 segment_override : 2;
 		u16 byte_override : 1;
 		u16 vex_l : 1;  // 0 for 128-bit, 1 for 256-bit
 		u16 vex : 1;    // the presence of vex can mean instructions are treated differently, such
 						// as how their top bits are treated
-		u16 : 4;
+		u16 : 6;
 	};
 
 	u16 raw;
@@ -160,7 +150,12 @@ typedef struct {
 			x86_ref_e base;
 			x86_ref_e index;
 			u8 scale;
-			bool address_override;
+			struct {
+				u8 address_override : 1;
+				u8 fs_override : 1;
+				u8 gs_override : 1;
+				u8 : 5;
+			};
 		} memory;
 
 		struct {

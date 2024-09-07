@@ -16,128 +16,16 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             ERROR("Interpreting null, this should not happen\n");
             break;
         }
-        case IR_LOAD_GUEST_FROM_MEMORY: {
-            switch (instruction->get_guest.ref) {
-                case X86_REF_RAX ... X86_REF_R15: {
-                    temps[instruction->name] = state->gprs[instruction->get_guest.ref - X86_REF_RAX];
-                    break;
-                }
-                case X86_REF_XMM0 ... X86_REF_XMM31: {
-                    xmm_temps[instruction->name] = state->xmm[instruction->get_guest.ref - X86_REF_XMM0];
-                    break;
-                }
-                case X86_REF_RIP: {
-                    temps[instruction->name] = state->rip;
-                    break;
-                }
-                case X86_REF_FS: {
-                    temps[instruction->name] = state->fs;
-                    break;
-                }
-                case X86_REF_GS: {
-                    temps[instruction->name] = state->gs;
-                    break;
-                }
-                case X86_REF_CF: {
-                    temps[instruction->name] = state->cf;
-                    break;
-                }
-                case X86_REF_PF: {
-                    temps[instruction->name] = state->pf;
-                    break;
-                }
-                case X86_REF_AF: {
-                    temps[instruction->name] = state->af;
-                    break;
-                }
-                case X86_REF_ZF: {
-                    temps[instruction->name] = state->zf;
-                    break;
-                }
-                case X86_REF_SF: {
-                    temps[instruction->name] = state->sf;
-                    break;
-                }
-                case X86_REF_OF: {
-                    temps[instruction->name] = state->of;
-                    break;
-                }
-                default: {
-                    ERROR("Invalid GPR reference");
-                    break;
-                }
-            }
+        case IR_VECTOR_FROM_INTEGER: {
+            u64 value = temps[instruction->operands.args[0]->name];
+            xmm_reg_t xmm = {0};
+            xmm.data[0] = value;
+            xmm_temps[instruction->name] = xmm;
             break;
         }
-        case IR_STORE_GUEST_TO_MEMORY: {
-            switch (instruction->set_guest.ref) {
-                case X86_REF_RAX ... X86_REF_R15: {
-                    state->gprs[instruction->set_guest.ref - X86_REF_RAX] = temps[instruction->set_guest.source->name];
-                    break;
-                }
-                case X86_REF_XMM0 ... X86_REF_XMM31: {
-                    state->xmm[instruction->set_guest.ref - X86_REF_XMM0] = xmm_temps[instruction->set_guest.source->name];
-                    break;
-                }
-                case X86_REF_RIP: {
-                    state->rip = temps[instruction->set_guest.source->name];
-                    break;
-                }
-                case X86_REF_FS: {
-                    state->fs = temps[instruction->set_guest.source->name];
-                    break;
-                }
-                case X86_REF_GS: {
-                    state->gs = temps[instruction->set_guest.source->name];
-                    break;
-                }
-                case X86_REF_CF: {
-                    if (temps[instruction->set_guest.source->name] > 1) {
-                        ERROR("Invalid value for CF");
-                    }
-                    state->cf = temps[instruction->set_guest.source->name];
-                    break;
-                }
-                case X86_REF_PF: {
-                    if (temps[instruction->set_guest.source->name] > 1) {
-                        ERROR("Invalid value for PF");
-                    }
-                    state->pf = temps[instruction->set_guest.source->name];
-                    break;
-                }
-                case X86_REF_AF: {
-                    if (temps[instruction->set_guest.source->name] > 1) {
-                        ERROR("Invalid value for AF");
-                    }
-                    state->af = temps[instruction->set_guest.source->name];
-                    break;
-                }
-                case X86_REF_ZF: {
-                    if (temps[instruction->set_guest.source->name] > 1) {
-                        ERROR("Invalid value for ZF");
-                    }
-                    state->zf = temps[instruction->set_guest.source->name];
-                    break;
-                }
-                case X86_REF_SF: {
-                    if (temps[instruction->set_guest.source->name] > 1) {
-                        ERROR("Invalid value for SF");
-                    }
-                    state->sf = temps[instruction->set_guest.source->name];
-                    break;
-                }
-                case X86_REF_OF: {
-                    if (temps[instruction->set_guest.source->name] > 1) {
-                        ERROR("Invalid value for OF");
-                    }
-                    state->of = temps[instruction->set_guest.source->name];
-                    break;
-                }
-                default: {
-                    ERROR("Invalid GPR reference");
-                    break;
-                }
-            }
+        case IR_INTEGER_FROM_VECTOR: {
+            xmm_reg_t xmm = xmm_temps[instruction->operands.args[0]->name];
+            temps[instruction->name] = xmm.data[0];
             break;
         }
         case IR_INSERT_INTEGER_TO_VECTOR: {
@@ -146,7 +34,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             x86_size_e size = temps[instruction->operands.args[3]->name];
             switch (size) {
                 case X86_SIZE_BYTE: {
-                    if (index > 63) {
+                    if (index > 15) {
                         ERROR("Invalid index");
                     }
 
@@ -156,7 +44,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
                     break;
                 }
                 case X86_SIZE_WORD: {
-                    if (index > 31) {
+                    if (index > 7) {
                         ERROR("Invalid index");
                     }
 
@@ -166,7 +54,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
                     break;
                 }
                 case X86_SIZE_DWORD: {
-                    if (index > 15) {
+                    if (index > 3) {
                         ERROR("Invalid index");
                     }
 
@@ -176,7 +64,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
                     break;
                 }
                 case X86_SIZE_QWORD: {
-                    if (index > 7) {
+                    if (index > 1) {
                         ERROR("Invalid index");
                     }
 
@@ -195,7 +83,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             x86_size_e size = temps[instruction->operands.args[2]->name];
             switch (size) {
                 case X86_SIZE_BYTE: {
-                    if (index > 63) {
+                    if (index > 15) {
                         ERROR("Invalid index");
                     }
 
@@ -204,7 +92,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
                     break;
                 }
                 case X86_SIZE_WORD: {
-                    if (index > 31) {
+                    if (index > 7) {
                         ERROR("Invalid index");
                     }
 
@@ -213,7 +101,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
                     break;
                 }
                 case X86_SIZE_DWORD: {
-                    if (index > 15) {
+                    if (index > 3) {
                         ERROR("Invalid index");
                     }
 
@@ -222,7 +110,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
                     break;
                 }
                 case X86_SIZE_QWORD: {
-                    if (index > 7) {
+                    if (index > 1) {
                         ERROR("Invalid index");
                     }
 
@@ -254,15 +142,15 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             temps[instruction->name] = temps[instruction->operands.args[0]->name] ^ temps[instruction->operands.args[1]->name];
             break;
         }
-        case IR_LEFT_SHIFT: {
+        case IR_SHIFT_LEFT: {
             temps[instruction->name] = temps[instruction->operands.args[0]->name] << temps[instruction->operands.args[1]->name];
             break;
         }
-        case IR_RIGHT_SHIFT: {
+        case IR_SHIFT_RIGHT: {
             temps[instruction->name] = temps[instruction->operands.args[0]->name] >> temps[instruction->operands.args[1]->name];
             break;
         }
-        case IR_RIGHT_SHIFT_ARITHMETIC: {
+        case IR_SHIFT_RIGHT_ARITHMETIC: {
             temps[instruction->name] = (i64)temps[instruction->operands.args[0]->name] >> temps[instruction->operands.args[1]->name];
             break;
         }
@@ -293,8 +181,8 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
         case IR_LEA: {
             u64 base = temps[instruction->operands.args[0]->name];
             u64 index = temps[instruction->operands.args[1]->name];
-            u64 displacement = temps[instruction->operands.args[2]->name];
-            u64 scale = temps[instruction->operands.args[3]->name];
+            u64 scale = temps[instruction->operands.args[2]->name];
+            u64 displacement = temps[instruction->operands.args[3]->name];
             temps[instruction->name] = base + index * scale + displacement;
             break;
         }
@@ -312,6 +200,11 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
         }
         case IR_READ_QWORD: {
             temps[instruction->name] = *(u64*)(temps[instruction->operands.args[0]->name]);
+            break;
+        }
+        case IR_READ_XMMWORD: {
+            xmm_temps[instruction->name].data[0] = *(u64*)(temps[instruction->operands.args[0]->name]);
+            xmm_temps[instruction->name].data[1] = *(u64*)(temps[instruction->operands.args[0]->name] + 8);
             break;
         }
         case IR_WRITE_BYTE: {
@@ -417,11 +310,157 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             break;
         }
         case IR_SET_GUEST: {
-            ERROR("Interpreting set_guest, this should not happen");
+            switch (instruction->set_guest.ref) {
+                case X86_REF_RAX ... X86_REF_R15: {
+                    state->gprs[instruction->set_guest.ref - X86_REF_RAX] = temps[instruction->set_guest.source->name];
+                    break;
+                }
+                case X86_REF_CF: {
+                    if (temps[instruction->set_guest.source->name] > 1) {
+                        ERROR("Invalid value for CF");
+                    }
+                    state->cf = temps[instruction->set_guest.source->name];
+                    break;
+                }
+                case X86_REF_PF: {
+                    if (temps[instruction->set_guest.source->name] > 1) {
+                        ERROR("Invalid value for PF");
+                    }
+                    state->pf = temps[instruction->set_guest.source->name];
+                    break;
+                }
+                case X86_REF_AF: {
+                    if (temps[instruction->set_guest.source->name] > 1) {
+                        ERROR("Invalid value for AF");
+                    }
+                    state->af = temps[instruction->set_guest.source->name];
+                    break;
+                }
+                case X86_REF_ZF: {
+                    if (temps[instruction->set_guest.source->name] > 1) {
+                        ERROR("Invalid value for ZF");
+                    }
+                    state->zf = temps[instruction->set_guest.source->name];
+                    break;
+                }
+                case X86_REF_SF: {
+                    if (temps[instruction->set_guest.source->name] > 1) {
+                        ERROR("Invalid value for SF");
+                    }
+                    state->sf = temps[instruction->set_guest.source->name];
+                    break;
+                }
+                case X86_REF_OF: {
+                    if (temps[instruction->set_guest.source->name] > 1) {
+                        ERROR("Invalid value for OF");
+                    }
+                    state->of = temps[instruction->set_guest.source->name];
+                    break;
+                }
+                case X86_REF_RIP: {
+                    WARN("Setting RIP to %016lx", temps[instruction->set_guest.source->name]);
+                    state->rip = temps[instruction->set_guest.source->name];
+                    break;
+                }
+                case X86_REF_XMM0 ... X86_REF_XMM15: {
+                    state->xmm[instruction->set_guest.ref - X86_REF_XMM0] = xmm_temps[instruction->set_guest.source->name];
+                    break;
+                }
+                default: {
+                    ERROR("Invalid reg reference: %d", instruction->set_guest.ref);
+                    break;
+                }
+            }
             break;
         }
         case IR_GET_GUEST: {
-            ERROR("Interpreting get_guest, this should not happen");
+            switch (instruction->get_guest.ref) {
+                case X86_REF_RAX ... X86_REF_R15: {
+                    temps[instruction->name] = state->gprs[instruction->get_guest.ref - X86_REF_RAX];
+                    break;
+                }
+                case X86_REF_CF: {
+                    temps[instruction->name] = state->cf;
+                    break;
+                }
+                case X86_REF_PF: {
+                    temps[instruction->name] = state->pf;
+                    break;
+                }
+                case X86_REF_AF: {
+                    temps[instruction->name] = state->af;
+                    break;
+                }
+                case X86_REF_ZF: {
+                    temps[instruction->name] = state->zf;
+                    break;
+                }
+                case X86_REF_SF: {
+                    temps[instruction->name] = state->sf;
+                    break;
+                }
+                case X86_REF_OF: {
+                    temps[instruction->name] = state->of;
+                    break;
+                }
+                case X86_REF_RIP: {
+                    temps[instruction->name] = state->rip;
+                    break;
+                }
+                case X86_REF_FS: {
+                    temps[instruction->name] = state->fs;
+                    break;
+                }
+                case X86_REF_GS: {
+                    temps[instruction->name] = state->gs;
+                    break;
+                }
+                case X86_REF_XMM0 ... X86_REF_XMM15: {
+                    xmm_temps[instruction->name] = state->xmm[instruction->get_guest.ref - X86_REF_XMM0];
+                    break;
+                }
+                default: {
+                    ERROR("Invalid reg reference: %d", instruction->get_guest.ref);
+                    break;
+                }
+            }
+            break;
+        }
+        case IR_SELECT: {
+            if (temps[instruction->operands.args[0]->name] & ~1) {
+                ERROR("Invalid select condition");
+            }
+
+            if (temps[instruction->operands.args[0]->name]) {
+                temps[instruction->name] = temps[instruction->operands.args[1]->name];
+            } else {
+                temps[instruction->name] = temps[instruction->operands.args[2]->name];
+            }
+            break;
+        }
+        case IR_VECTOR_UNPACK_DWORD_LOW: {
+            xmm_reg_t xmm_dest = xmm_temps[instruction->operands.args[0]->name];
+            xmm_reg_t xmm_src = xmm_temps[instruction->operands.args[1]->name];
+            xmm_reg_t result = {0};
+            u64 first = (u32)xmm_dest.data[0] | ((u64)(u32)xmm_src.data[0] << 32);
+            u64 second = (xmm_dest.data[0] >> 32) | (xmm_src.data[0] & 0xFFFFFFFF00000000);
+            result.data[0] = first;
+            result.data[1] = second;
+            xmm_temps[instruction->name] = result;
+            break;
+        }
+        case IR_VECTOR_PACKED_AND: {
+            xmm_reg_t xmm_dest = xmm_temps[instruction->operands.args[0]->name];
+            xmm_reg_t xmm_src = xmm_temps[instruction->operands.args[1]->name];
+            xmm_reg_t result = {0};
+            result.data[0] = xmm_dest.data[0] & xmm_src.data[0];
+            result.data[1] = xmm_dest.data[1] & xmm_src.data[1];
+            xmm_temps[instruction->name] = result;
+            break;
+        }
+        case IR_HINT_INPUTS:
+        case IR_HINT_OUTPUTS: {
+            // Doesn't mean anything to the interpreter, shouldn't exist past optimizations anyway
             break;
         }
         default: {

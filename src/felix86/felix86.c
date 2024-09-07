@@ -1,9 +1,9 @@
 #include "felix86/felix86.h"
+#include "felix86/common/global.h"
 #include "felix86/common/log.h"
 #include "felix86/common/state.h"
 #include "felix86/frontend/frontend.h"
 #include "felix86/ir/function_cache.h"
-#include "felix86/ir/emitter.h"
 #include "felix86/ir/passes.h"
 #include "felix86/ir/print.h"
 #include "felix86/ir/interpreter.h"
@@ -27,6 +27,8 @@ felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* con
     recompiler->print_blocks = config->print_blocks;
     recompiler->base_address = config->base_address;
     recompiler->use_interpreter = config->use_interpreter;
+
+    g_base_address = recompiler->base_address;
 
     return recompiler;
 }
@@ -176,7 +178,7 @@ void felix86_set_guest(felix86_recompiler_t* recompiler, x86_ref_e ref, u64 valu
 }
 
 xmm_reg_t felix86_get_guest_xmm(felix86_recompiler_t* recompiler, x86_ref_e ref) {
-    if (ref < X86_REF_XMM0 || ref > X86_REF_XMM31) {
+    if (ref < X86_REF_XMM0 || ref > X86_REF_XMM15) {
         ERROR("Invalid XMM reference");
     }
 
@@ -184,26 +186,11 @@ xmm_reg_t felix86_get_guest_xmm(felix86_recompiler_t* recompiler, x86_ref_e ref)
 }
 
 void felix86_set_guest_xmm(felix86_recompiler_t* recompiler, x86_ref_e ref, xmm_reg_t value) {
-    if (ref < X86_REF_XMM0 || ref > X86_REF_XMM31) {
+    if (ref < X86_REF_XMM0 || ref > X86_REF_XMM15) {
         ERROR("Invalid XMM reference");
     }
 
     recompiler->state.xmm[ref - X86_REF_XMM0] = value;
-}
-
-felix86_exit_reason_e felix86_recompiler_run_v2(felix86_recompiler_t* recompiler) {
-        u64 address = recompiler->state.rip;
-    ir_function_t* function = ir_function_cache_get_function(recompiler->function_cache, address);
-
-    frontend_compile_function(function);
-
-    ir_ssa_pass(function);
-    ir_copy_propagation_pass(function);
-    ir_naming_pass(function);
-
-    ir_interpret_function(function, &recompiler->state);
-
-    return DoneTesting;
 }
 
 felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler) {
@@ -211,45 +198,25 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler) {
         ERROR("Interpreter not enabled");
     }
 
-    return felix86_recompiler_run_v2(recompiler);
+    while (true) {
+        u64 address = recompiler->state.rip;
+        ir_function_t* function = ir_function_cache_get_function(recompiler->function_cache, address);
 
-    // TODO: check for backend block? needs asm dispatcher
-    // while (true) {
-    //     ir_block_t* block = ir_function_cache_get_block(recompiler->block_metadata, recompiler->state.rip);
+        if (!function->compiled) {
+            frontend_compile_function(function);
+            ir_naming_pass(function);
 
-    //     if (!block->compiled) {
-    //         frontend_state_t state = {0};
-    //         state.block = block;
-    //         state.current_address = recompiler->state.rip;
-    //         state.base_address = recompiler->base_address;
-    //         state.exit = false;
-    //         state.testing = recompiler->testing;
-    //         state.debug_info = recompiler->print_blocks;
-    //         frontend_compile_block(&state);
+            if (recompiler->print_blocks)
+                ir_print_function_graphviz(recompiler->base_address, function);
+        }
 
-    //         if (recompiler->optimize) {
-    //             ir_const_propagation_pass(block);
-    //             ir_local_common_subexpression_elimination_pass_v2(block);
-    //             ir_copy_propagation_pass(block);
-    //             ir_dead_code_elimination_pass(block);
-    //             ir_verifier_pass(block);
-    //         }
-            
-    //         ir_naming_pass(block);
-            
-    //         if (recompiler->print_blocks) {
-    //             ir_print_block(block);
-    //         }
-    //     }
+        ir_interpret_function(function, &recompiler->state);
 
-    //     ir_interpret_block(block, &recompiler->state);
+        if (recompiler->testing)
+            break;
+    }
 
-    //     if(recompiler->testing) {
-    //         return OutOfCycles;
-    //     }
-    // }
-
-    // return OutOfCycles;
+    return DoneTesting;
 }
 
 ir_function_t* felix86_get_function(felix86_recompiler_t* recompiler, u64 address) {

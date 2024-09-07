@@ -7,11 +7,13 @@ extern "C" {
 #include "felix86/common/utility.h"
 #include "felix86/frontend/instruction.h"
 
-typedef enum : u8 {
+typedef enum : u16 {
 	IR_NULL,
 
 	IR_START_OF_BLOCK,
 	IR_PHI,
+	IR_HINT_INPUTS,  // tells the recompiler that the registers listed are used as inputs so they aren't optimized away
+	IR_HINT_OUTPUTS, // tells the recompiler that the registers listed are used as outputs so they aren't optimized away
 
 	IR_MOV,
 	IR_IMMEDIATE,
@@ -22,12 +24,8 @@ typedef enum : u8 {
 	IR_SYSCALL,
 	IR_CPUID,
 
-	IR_LOAD_GUEST_FROM_MEMORY,
-	IR_STORE_GUEST_TO_MEMORY,
 	IR_GET_GUEST,
 	IR_SET_GUEST,
-	IR_INSERT_INTEGER_TO_VECTOR,
-	IR_EXTRACT_INTEGER_FROM_VECTOR,
 
 	IR_EXIT,
 	IR_JUMP,
@@ -36,13 +34,15 @@ typedef enum : u8 {
 
 	IR_ADD,
 	IR_SUB,
-	IR_LEFT_SHIFT,
-	IR_RIGHT_SHIFT,
-	IR_RIGHT_SHIFT_ARITHMETIC,
+	IR_UDIV,
+	IR_SHIFT_LEFT,
+	IR_SHIFT_RIGHT,
+	IR_SHIFT_RIGHT_ARITHMETIC,
 	IR_LEFT_ROTATE8,
 	IR_LEFT_ROTATE16,
 	IR_LEFT_ROTATE32,
 	IR_LEFT_ROTATE64,
+	IR_SELECT,
 	IR_AND,
 	IR_OR,
 	IR_XOR,
@@ -59,10 +59,19 @@ typedef enum : u8 {
 	IR_READ_WORD,
 	IR_READ_DWORD,
 	IR_READ_QWORD,
+	IR_READ_XMMWORD,
 	IR_WRITE_BYTE,
 	IR_WRITE_WORD,
 	IR_WRITE_DWORD,
 	IR_WRITE_QWORD,
+	IR_WRITE_XMMWORD,
+
+	IR_INSERT_INTEGER_TO_VECTOR,
+	IR_EXTRACT_INTEGER_FROM_VECTOR,
+	IR_VECTOR_FROM_INTEGER,
+	IR_INTEGER_FROM_VECTOR,
+	IR_VECTOR_UNPACK_DWORD_LOW,
+	IR_VECTOR_PACKED_AND,
 } ir_opcode_e;
 
 typedef enum : u8 {
@@ -73,10 +82,9 @@ typedef enum : u8 {
 	IR_TYPE_TWO_OPERANDS,
 	IR_TYPE_THREE_OPERANDS,
 	IR_TYPE_FOUR_OPERANDS,
+	IR_TYPE_SIDE_EFFECTS,
 	IR_TYPE_GET_GUEST,
 	IR_TYPE_SET_GUEST,
-	IR_TYPE_LOAD_GUEST_FROM_MEMORY,
-	IR_TYPE_STORE_GUEST_TO_MEMORY,
 	IR_TYPE_JUMP,
 	IR_TYPE_JUMP_CONDITIONAL,
 	IR_TYPE_PHI,
@@ -120,6 +128,11 @@ typedef struct ir_instruction_s {
 		struct {
 			ir_phi_node_t* list;
 		} phi;
+
+		struct {
+			x86_ref_e registers_affected[16];
+			u8 count;
+		} side_effect;
 
 		u64 raw_data[4];
 	};
