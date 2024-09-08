@@ -1,4 +1,5 @@
 #include "felix86/loader/loader.h"
+#include "felix86/common/global.h"
 #include "felix86/common/version.h"
 #include "felix86/loader/elf.h"
 #include "felix86/common/log.h"
@@ -56,6 +57,7 @@ void loader_run_elf(loader_config_t* config) {
     if (elf->interpreter) {
         interpreter = elf_load(elf->interpreter, NULL);
         entry = (u64)interpreter->program + interpreter->entry;
+        g_interpreter_address = (u64)interpreter->program;
     } else {
         entry = (u64)elf->program + elf->entry;
     }

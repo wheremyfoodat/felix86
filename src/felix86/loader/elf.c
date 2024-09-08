@@ -204,6 +204,7 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
         switch (phdr->p_type) {
             case PT_LOAD: {
                 if (phdr->p_filesz == 0) {
+                    WARN("Loadable segment has no data in file %s", path);
                     break;
                 }
 
@@ -229,7 +230,7 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
                     WARN("Failed to allocate memory for segment in file %s", path);
                     goto cleanup;
                 } else {
-                    VERBOSE("Mapping segment with vaddr %p to %p-%p", (void*)phdr->p_vaddr, addr, addr + segment_size);
+                    VERBOSE("Mapping segment with vaddr %p (%d) to %p-%p", (void*)phdr->p_vaddr, segment_size, addr, addr + segment_size);
                 }
 
                 if (phdr->p_filesz > 0) {
@@ -266,6 +267,9 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
                 mprotect(addr, phdr->p_memsz, prot);
                 break;
             }
+            default: {
+                break;
+            }
         }
     }
 
@@ -274,7 +278,6 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
     elf.phent = ehdr.e_phentsize;
 
     g_base_address = (u64)elf.program;
-    g_interpreter_address = (u64)elf.interpreter;
 
     // Allocate it last so we don't have to free it if we fail
     elf_t* pelf = malloc(sizeof(elf_t));

@@ -112,6 +112,13 @@ void ir_emit_hint_full(ir_instruction_list_t* instructions)
     instruction->type = IR_TYPE_NO_OPERANDS;
 }
 
+void ir_emit_runtime_comment(ir_instruction_list_t* instructions, const char* comment) {
+    ir_instruction_t* instruction = ir_ilist_push_back(instructions);
+    instruction->type = IR_TYPE_NO_OPERANDS;
+    instruction->opcode = IR_RUNTIME_COMMENT;
+    instruction->runtime_comment.comment = comment;
+}
+
 ir_instruction_t* ir_emit_add(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
 {
     return ir_emit_two_operands(instructions, IR_ADD, source1, source2);
@@ -386,6 +393,21 @@ ir_instruction_t* ir_emit_vector_packed_and(ir_instruction_list_t* instructions,
 ir_instruction_t* ir_emit_vector_packed_xor(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
 {
     return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_XOR, source1, source2);
+}
+
+ir_instruction_t* ir_emit_vector_packed_shift_right(ir_instruction_list_t* instructions, ir_instruction_t* source, ir_instruction_t* imm)
+{
+    return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_SHIFT_RIGHT, source, imm);
+}
+
+ir_instruction_t* ir_emit_vector_packed_shift_left(ir_instruction_list_t* instructions, ir_instruction_t* source, ir_instruction_t* imm)
+{
+    return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_SHIFT_LEFT, source, imm);
+}
+
+ir_instruction_t* ir_emit_vector_packed_add_qword(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_ADD_QWORD, source1, source2);
 }
 
 ir_instruction_t* ir_emit_get_guest(ir_instruction_list_t* instructions, x86_ref_e ref)

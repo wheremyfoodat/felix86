@@ -12,6 +12,7 @@ typedef enum : u16 {
 
 	IR_START_OF_BLOCK,
 	IR_PHI,
+	IR_RUNTIME_COMMENT,
 	IR_HINT_INPUTS,  // tells the recompiler that the registers listed are used as inputs so they aren't optimized away
 	IR_HINT_OUTPUTS, // tells the recompiler that the registers listed are used as outputs so they aren't optimized away
 	IR_HINT_FULL, // tells the recompiler that everything could be used as an input or output, an optimization barrier essentially
@@ -85,8 +86,9 @@ typedef enum : u16 {
 	IR_VECTOR_UNPACK_QWORD_LOW,
 	IR_VECTOR_PACKED_AND,
 	IR_VECTOR_PACKED_XOR,
-	IR_VECTOR_PACKED_LOGICAL_SHIFT_RIGHT,
-	IR_VECTOR_PACKED_LOGICAL_SHIFT_LEFT,
+	IR_VECTOR_PACKED_SHIFT_RIGHT,
+	IR_VECTOR_PACKED_SHIFT_LEFT,
+	IR_VECTOR_PACKED_ADD_QWORD,
 	IR_VECTOR_ZEXT64, // zero extend the bottom 64-bits of a vector
 } ir_opcode_e;
 
@@ -149,6 +151,10 @@ typedef struct ir_instruction_s {
 			x86_ref_e registers_affected[16];
 			u8 count;
 		} side_effect;
+
+		struct {
+			const char* comment;
+		} runtime_comment;
 
 		u64 raw_data[4];
 	};

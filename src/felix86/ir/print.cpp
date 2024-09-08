@@ -1,4 +1,5 @@
 #include "felix86/ir/print.h"
+#include "felix86/common/global.h"
 #include "felix86/common/log.h"
 
 #include <stdio.h>
@@ -64,6 +65,10 @@ void ir_print_instruction(ir_instruction_t* instruction, ir_block_t* block) {
     }
 
     switch (instruction->opcode) {
+        case IR_RUNTIME_COMMENT: {
+            printf("%s", instruction->runtime_comment.comment);
+            break;
+        }
         case IR_IMMEDIATE: {
             printf(VAR EQUALS IMM, instruction->name, (unsigned long long)instruction->load_immediate.immediate);
             break;
@@ -253,7 +258,7 @@ void ir_print_block(ir_block_t* block) {
     }
 }
 
-extern "C" void ir_print_function_graphviz(u64 program_entrypoint, ir_function_t* function) {
+extern "C" void ir_print_function_graphviz(ir_function_t* function) {
     {
         ir_block_list_t* blocks = function->first;
         while (blocks) {
@@ -284,11 +289,15 @@ extern "C" void ir_print_function_graphviz(u64 program_entrypoint, ir_function_t
     
     ir_block_list_t* blocks = function->first;
     while (blocks) {
+        u64 address = blocks->block->start_address - g_base_address;
+        if (address & (1ull << 63)) {
+            address = blocks->block->start_address - g_interpreter_address;
+        }
         printf("\tblock_%p [", blocks->block);
         printf("\t\tfontcolor=\"#ffffff\"");
         printf("\t\tfillcolor=\"#1e1e1e\"");
         printf("\t\tlabel=<<table border=\"0\" cellborder=\"1\" cellspacing=\"0\" cellpadding=\"3\">\n");
-        printf("\t\t<tr><td port=\"top\"><b>%016lx</b></td> </tr>\n", (u64)(blocks->block->start_address - program_entrypoint));
+        printf("\t\t<tr><td port=\"top\"><b>%016lx</b></td> </tr>\n", (u64)(address));
         
         ir_instruction_list_t* node = blocks->block->instructions;
         ir_instruction_t* last = NULL;

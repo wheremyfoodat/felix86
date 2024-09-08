@@ -9,8 +9,8 @@
 #include <unistd.h>
 #include <cpuid.h>
 
-static u64 temps[4096] = {0};
-static xmm_reg_t xmm_temps[256] = {0};
+static u64 temps[16384] = {0};
+static xmm_reg_t xmm_temps[16384] = {0};
 
 ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instruction, x86_state_t* state)
 {
@@ -187,6 +187,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             u64 scale = temps[instruction->operands.args[2]->name];
             u64 displacement = temps[instruction->operands.args[3]->name];
             temps[instruction->name] = base + index * scale + displacement;
+            printf("Lea: %016lx + %016lx * %016lx + %016lx = %016lx\n", base, index, scale, displacement, temps[instruction->name]);
             break;
         }
         case IR_READ_BYTE: {
@@ -224,6 +225,11 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
         }
         case IR_WRITE_QWORD: {
             *(u64*)(temps[instruction->operands.args[0]->name]) = temps[instruction->operands.args[1]->name];
+            break;
+        }
+        case IR_WRITE_XMMWORD: {
+            *(u64*)(temps[instruction->operands.args[0]->name]) = xmm_temps[instruction->operands.args[1]->name].data[0];
+            *(u64*)(temps[instruction->operands.args[0]->name] + 8) = xmm_temps[instruction->operands.args[1]->name].data[1];
             break;
         }
         case IR_START_OF_BLOCK: {
@@ -298,6 +304,13 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
         }
         case IR_EXIT: {
             return NULL;
+        }
+        case IR_RDTSC: {
+            u64 tsc = 0;
+            __asm__ __volatile__("rdtsc" : "=A"(tsc));
+            temps[instruction->name] = tsc;
+            WARN("Interpreting RDTSC");
+            break;
         }
         case IR_JUMP_REGISTER: {
             state->rip = temps[instruction->operands.args[0]->name];
@@ -621,6 +634,39 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             state->gprs[instruction->name] = (i64)temps[instruction->operands.args[0]->name] * (i64)temps[instruction->operands.args[1]->name];
             break;
         }
+        case IR_VECTOR_PACKED_SHIFT_RIGHT: {
+            xmm_reg_t xmm = xmm_temps[instruction->operands.args[0]->name];
+            u64 count = temps[instruction->operands.args[1]->name];
+            __uint128_t data = ((__uint128_t)xmm.data[1] << 64) | xmm.data[0];
+            data >>= count;
+            xmm.data[0] = data & 0xFFFFFFFFFFFFFFFF;
+            xmm.data[1] = data >> 64;
+            xmm_temps[instruction->name] = xmm;
+            break;
+        }
+        case IR_VECTOR_PACKED_SHIFT_LEFT: {
+            xmm_reg_t xmm = xmm_temps[instruction->operands.args[0]->name];
+            u64 count = temps[instruction->operands.args[1]->name];
+            __uint128_t data = ((__uint128_t)xmm.data[1] << 64) | xmm.data[0];
+            data <<= count;
+            xmm.data[0] = data & 0xFFFFFFFFFFFFFFFF;
+            xmm.data[1] = data >> 64;
+            xmm_temps[instruction->name] = xmm;
+            break;
+        }
+        case IR_VECTOR_PACKED_ADD_QWORD: {
+            xmm_reg_t xmm_dest = xmm_temps[instruction->operands.args[0]->name];
+            xmm_reg_t xmm_src = xmm_temps[instruction->operands.args[1]->name];
+            xmm_reg_t result = {0};
+            result.data[0] = xmm_dest.data[0] + xmm_src.data[0];
+            result.data[1] = xmm_dest.data[1] + xmm_src.data[1];
+            xmm_temps[instruction->name] = result;
+            break;
+        }
+        case IR_RUNTIME_COMMENT: {
+            VERBOSE("Runtime comment: %s", instruction->runtime_comment.comment);
+            break;
+        }
         case IR_HINT_FULL:
         case IR_HINT_INPUTS:
         case IR_HINT_OUTPUTS: {
@@ -648,7 +694,6 @@ void ir_interpret_function(ir_function_t* function, x86_state_t* state) {
             entry = entry_next;
             entry_next = next;
             current = next->instructions;
-            printf("next blocK: %016lx\n", next->start_address - g_base_address);
         } else {
             current = current->next;
         }

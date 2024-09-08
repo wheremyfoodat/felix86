@@ -871,6 +871,13 @@ IR_HANDLE(punpckldq_xmm_xmm128) { // punpckldq xmm, xmm/m128 - 0x66 0x0f 0x62
 IR_HANDLE(group14_xmm) { // group14 xmm - 0x66 0x0f 0x73
     x86_group14_e opcode = inst->operand_reg.reg.ref - X86_REF_RAX;
     switch(opcode) {
+        case X86_GROUP14_PSRLDQ: {
+            ir_instruction_t* reg = ir_emit_get_reg(INSTS, &inst->operand_reg);
+            ir_instruction_t* imm = ir_emit_immediate(INSTS, inst->operand_imm.immediate.data);
+            ir_instruction_t* shifted = ir_emit_vector_packed_shift_right(INSTS, reg, imm);
+            ir_emit_set_reg(INSTS, &inst->operand_reg, shifted);
+            break;
+        }
         default: {
             ERROR("Unimplemented group 14 opcode: %02x during %016lx", opcode, state->current_address - g_base_address);
             break;
@@ -904,6 +911,13 @@ IR_HANDLE(movq_rm32_xmm) { // movq rm32, xmm - 0x66 0x0f 0x7e
 
 IR_HANDLE(movq_xmm64_xmm) { // movq xmm64, xmm - 0x66 0x0f 0xd6
     ERROR("Unimplemented instruction: movq xmm64, xmm - 0x66 0x0f 0xd6 during %016lx", state->current_address - g_base_address);
+}
+
+IR_HANDLE(paddq_xmm_xmm128) { // paddq xmm, xmm/m128 - 0x66 0x0f 0xd4
+    ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
+    ir_instruction_t* reg = ir_emit_get_reg(INSTS, &inst->operand_reg);
+    ir_instruction_t* result = ir_emit_vector_packed_add_qword(INSTS, reg, rm);
+    ir_emit_set_reg(INSTS, &inst->operand_reg, result);
 }
 
 IR_HANDLE(pand_xmm_xmm128) { // pand xmm, xmm/m128 - 0x66 0x0f 0xdb

@@ -205,7 +205,7 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler) {
             ir_naming_pass(function);
 
             if (recompiler->print_blocks)
-                ir_print_function_graphviz(recompiler->base_address, function);
+                ir_print_function_graphviz(function);
         }
 
         ir_interpret_function(function, &recompiler->state);

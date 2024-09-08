@@ -587,6 +587,19 @@ void frontend_compile_instruction(frontend_state_t* state)
 
     inst.length = index;
 
+    ZydisDisassembledInstruction zydis_inst;
+    if (ZYAN_SUCCESS(ZydisDisassembleIntel(
+        /* machine_mode:    */ ZYDIS_MACHINE_MODE_LONG_64,
+        /* runtime_address: */ state->current_address - g_interpreter_address,
+        /* buffer:          */ data,
+        /* length:          */ 15,
+        /* instruction:     */ &zydis_inst
+    ))) {
+        char* buffer = (char*)malloc(256);
+        snprintf(buffer, 256, "%016llx  %s", (unsigned long long)(state->current_address - g_interpreter_address), zydis_inst.text);
+        ir_emit_runtime_comment(INSTS, buffer);
+    }
+
     bool is_rep = rep_type != NONE;
     ir_block_t* rep_loop_block = NULL;
     if (is_rep) {
