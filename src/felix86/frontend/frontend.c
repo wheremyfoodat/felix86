@@ -590,13 +590,13 @@ void frontend_compile_instruction(frontend_state_t* state)
     ZydisDisassembledInstruction zydis_inst;
     if (ZYAN_SUCCESS(ZydisDisassembleIntel(
         /* machine_mode:    */ ZYDIS_MACHINE_MODE_LONG_64,
-        /* runtime_address: */ state->current_address - g_interpreter_address,
+        /* runtime_address: */ state->current_address - g_base_address,
         /* buffer:          */ data,
         /* length:          */ 15,
         /* instruction:     */ &zydis_inst
     ))) {
         char* buffer = (char*)malloc(256);
-        snprintf(buffer, 256, "%016llx  %s", (unsigned long long)(state->current_address - g_interpreter_address), zydis_inst.text);
+        snprintf(buffer, 256, "%016llx  %s", (unsigned long long)(state->current_address - g_base_address), zydis_inst.text);
         ir_emit_runtime_comment(INSTS, buffer);
     }
 

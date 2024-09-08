@@ -62,9 +62,6 @@ void loader_run_elf(loader_config_t* config) {
         entry = (u64)elf->program + elf->entry;
     }
 
-    VERBOSE("Program entry: %p", (void*)elf->entry);
-    VERBOSE("Interpreter entry: %p", (void*)interpreter->entry);
-
     // Initial process stack according to System V AMD64 ABI
     u64 rsp = (u64)elf->stackPointer;
 

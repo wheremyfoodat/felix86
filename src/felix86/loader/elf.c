@@ -230,11 +230,15 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
                     WARN("Failed to allocate memory for segment in file %s", path);
                     goto cleanup;
                 } else {
-                    VERBOSE("Mapping segment with vaddr %p (%d) to %p-%p", (void*)phdr->p_vaddr, segment_size, addr, addr + segment_size);
+                    VERBOSE("Mapping segment with vaddr %p to %p-%p (file offset: %08x)", (void*)phdr->p_vaddr, addr, addr + segment_size, phdr->p_offset);
+                    if (addr != (void*)segment_base) {
+                        WARN("Failed to allocate memory at requested address for segment in file %s", path);
+                        goto cleanup;
+                    }
                 }
 
                 if (phdr->p_filesz > 0) {
-                    result = fread(file, addr, phdr->p_offset, phdr->p_filesz, user_data);
+                    result = fread(file, elf.program + phdr->p_vaddr, phdr->p_offset, phdr->p_filesz, user_data);
                     if (!result) {
                         WARN("Failed to read segment from file %s", path);
                         goto cleanup;

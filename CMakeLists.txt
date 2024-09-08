@@ -43,6 +43,7 @@ set(FELIX86_COMMON_SOURCES
     src/felix86/common/file.c
     src/felix86/common/global.c
     src/felix86/common/log.c
+    src/felix86/common/print.c
 )
 
 set(FELIX86_BACKEND_SOURCES

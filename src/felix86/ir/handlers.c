@@ -869,7 +869,7 @@ IR_HANDLE(punpckldq_xmm_xmm128) { // punpckldq xmm, xmm/m128 - 0x66 0x0f 0x62
 }
 
 IR_HANDLE(group14_xmm) { // group14 xmm - 0x66 0x0f 0x73
-    x86_group14_e opcode = inst->operand_reg.reg.ref - X86_REF_RAX;
+    x86_group14_e opcode = inst->operand_reg.reg.ref - X86_REF_XMM0;
     switch(opcode) {
         case X86_GROUP14_PSRLDQ: {
             ir_instruction_t* reg = ir_emit_get_reg(INSTS, &inst->operand_reg);

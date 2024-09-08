@@ -1,6 +1,7 @@
 #include "felix86/ir/interpreter.h"
 #include "felix86/common/cpuid.h"
 #include "felix86/common/global.h"
+#include "felix86/common/print.h"
 #include "felix86/common/log.h"
 #include "felix86/common/utility.h"
 #include "felix86/ir/print.h"
@@ -187,7 +188,6 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             u64 scale = temps[instruction->operands.args[2]->name];
             u64 displacement = temps[instruction->operands.args[3]->name];
             temps[instruction->name] = base + index * scale + displacement;
-            printf("Lea: %016lx + %016lx * %016lx + %016lx = %016lx\n", base, index, scale, displacement, temps[instruction->name]);
             break;
         }
         case IR_READ_BYTE: {
@@ -665,6 +665,9 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
         }
         case IR_RUNTIME_COMMENT: {
             VERBOSE("Runtime comment: %s", instruction->runtime_comment.comment);
+            fflush(stdout);
+            printf("RCX: %016lx\n", state->gprs[X86_REF_RCX - X86_REF_RAX]);
+            // print_state(state);
             break;
         }
         case IR_HINT_FULL:
