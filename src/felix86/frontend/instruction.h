@@ -49,12 +49,24 @@ typedef enum : u8 {
 typedef enum : u8 {
 	X86_GROUP4_INC = 0,
 	X86_GROUP4_DEC = 1,
-	X86_GROUP4_CALL = 2,
-	X86_GROUP4_CALLF = 3,
-	X86_GROUP4_JMP = 4,
-	X86_GROUP4_JMPF = 5,
-	X86_GROUP4_PUSH = 6,
 } x86_group4_e;
+
+typedef enum : u8 {
+	X86_GROUP5_INC = 0,
+	X86_GROUP5_DEC = 1,
+	X86_GROUP5_CALL = 2,
+	X86_GROUP5_CALLF = 3,
+	X86_GROUP5_JMP = 4,
+	X86_GROUP5_JMPF = 5,
+	X86_GROUP5_PUSH = 6,
+} x86_group5_e;
+
+typedef enum : u8 {
+	X86_GROUP14_PSRLQ = 2,
+	X86_GROUP14_PSRLDQ = 3,
+	X86_GROUP14_PSLLQ = 6,
+	X86_GROUP14_PSLLDQ = 7,
+} x86_group14_e;
 
 typedef enum : u8 {
 	X86_REF_RAX,

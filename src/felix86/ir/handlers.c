@@ -18,6 +18,10 @@ u64 sext_if_64(u64 value, x86_size_e size_e) {
 #define IR_HANDLE(name) void ir_handle_##name(frontend_state_t* state, x86_instruction_t* inst)
 
 IR_HANDLE(error) {
+    u64 address = state->current_address - g_base_address;
+    if (address & (1ull << 63)) {
+        address = state->current_address - g_interpreter_address;
+    }
     ERROR("Hit error instruction during: %016lx - Opcode: %02x", state->current_address - g_base_address, inst->opcode);
 }
 
@@ -220,6 +224,24 @@ IR_HANDLE(sub_rm32_r32) { // sub rm16/32/64, r16/32/64 - 0x29
 
     ir_emit_set_cpazso(INSTS, c, p, a, z, s, o);
 }
+
+IR_HANDLE(sub_eax_imm32) { // sub ax/eax/rax, imm16/32/64 - 0x2d
+    x86_size_e size_e = inst->operand_reg.size;
+    ir_instruction_t* eax = ir_emit_get_reg(INSTS, &inst->operand_reg);
+    ir_instruction_t* imm = ir_emit_immediate(INSTS, sext_if_64(inst->operand_imm.immediate.data, size_e));
+    ir_instruction_t* result = ir_emit_sub(INSTS, eax, imm);
+    ir_emit_set_reg(INSTS, &inst->operand_reg, result);
+
+    ir_instruction_t* c = ir_emit_get_carry_sub(INSTS, eax, imm, result, size_e);
+    ir_instruction_t* p = ir_emit_get_parity(INSTS, result);
+    ir_instruction_t* a = ir_emit_get_aux_sub(INSTS, eax, imm);
+    ir_instruction_t* z = ir_emit_get_zero(INSTS, result);
+    ir_instruction_t* s = ir_emit_get_sign(INSTS, result, size_e);
+    ir_instruction_t* o = ir_emit_get_overflow_sub(INSTS, eax, imm, result, size_e);
+
+    ir_emit_set_cpazso(INSTS, c, p, a, z, s, o);
+}
+
 
 IR_HANDLE(xor_rm8_r8) { // xor rm8, r8 - 0x30
     x86_size_e size_e = inst->operand_reg.size;
@@ -637,9 +659,9 @@ IR_HANDLE(group3_rm32) { // test/not/neg/mul/imul/div/idiv rm16/32/64, imm32 - 0
     ir_emit_group3(INSTS, inst);
 }
 
-IR_HANDLE(inc_dec_rm8) { // inc/dec rm8 - 0xfe
+IR_HANDLE(group4) { // inc/dec rm8 - 0xfe
     x86_size_e size_e = inst->operand_reg.size;
-    u8 opcode = inst->operand_reg.reg.ref - X86_REF_RAX;
+    x86_group4_e opcode = inst->operand_reg.reg.ref - X86_REF_RAX;
 
     ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
     ir_instruction_t* one = ir_emit_immediate(INSTS, 1);
@@ -648,16 +670,23 @@ IR_HANDLE(inc_dec_rm8) { // inc/dec rm8 - 0xfe
     ir_instruction_t* o = NULL;
     ir_instruction_t* a = NULL;
 
-    if (opcode == 0) {
-        result = ir_emit_add(INSTS, rm, one);
-        o = ir_emit_get_overflow_add(INSTS, rm, one, result, size_e);
-        a = ir_emit_get_aux_add(INSTS, rm, one);
-    } else if (opcode == 1) {
-        result = ir_emit_sub(INSTS, rm, one);
-        o = ir_emit_get_overflow_sub(INSTS, rm, one, result, size_e);
-        a = ir_emit_get_aux_sub(INSTS, rm, one);
-    } else {
-        ERROR("Unknown opcode for inc_dec_rm8: %02x", opcode);
+    switch (opcode) {
+        case X86_GROUP4_INC: {
+            result = ir_emit_add(INSTS, rm, one);
+            o = ir_emit_get_overflow_add(INSTS, rm, one, result, size_e);
+            a = ir_emit_get_aux_add(INSTS, rm, one);
+            break;
+        }
+        case X86_GROUP4_DEC: {
+            result = ir_emit_sub(INSTS, rm, one);
+            o = ir_emit_get_overflow_sub(INSTS, rm, one, result, size_e);
+            a = ir_emit_get_aux_sub(INSTS, rm, one);
+            break;
+        }
+        default: {
+            ERROR("Unknown opcode for group4: %02x", opcode);
+            break;
+        }
     }
 
     ir_instruction_t* p = ir_emit_get_parity(INSTS, result);
@@ -668,10 +697,10 @@ IR_HANDLE(inc_dec_rm8) { // inc/dec rm8 - 0xfe
     ir_emit_set_rm(INSTS, &inst->operand_rm, result);
 }
 
-IR_HANDLE(group4) { // inc/dec/call/jmp/push rm32
+IR_HANDLE(group5) { // inc/dec/call/jmp/push rm32
     x86_group3_e opcode = inst->operand_reg.reg.ref - X86_REF_RAX;
     switch (opcode) {
-        case X86_GROUP4_CALL: {
+        case X86_GROUP5_CALL: {
             x86_operand_t rm_op = inst->operand_rm;
             rm_op.size = X86_SIZE_QWORD;
             u64 return_address = state->current_address + inst->length;
@@ -686,7 +715,7 @@ IR_HANDLE(group4) { // inc/dec/call/jmp/push rm32
             state->exit = true;
             break;
         }
-        case X86_GROUP4_JMP: {
+        case X86_GROUP5_JMP: {
             x86_operand_t rm_op = inst->operand_rm;
             rm_op.size = X86_SIZE_QWORD;
             ir_instruction_t* rm = ir_emit_get_rm(INSTS, &rm_op);
@@ -748,9 +777,20 @@ IR_HANDLE(syscall) { // syscall - 0x0f 0x05
     ir_emit_hint_outputs(INSTS, outputs, 1);
 }
 
-IR_HANDLE(movups_xmm_xmm128) { // movups - 0x0f 0x11
+IR_HANDLE(movups_xmm_xmm128) { // movups xmm, xmm128 - 0x0f 0x11
     ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
     ir_emit_set_reg(INSTS, &inst->operand_reg, rm);
+}
+
+IR_HANDLE(movaps_xmm128_xmm) { // movaps xmm128, xmm - 0x0f 0x29
+    ir_instruction_t* reg = ir_emit_get_reg(INSTS, &inst->operand_reg);
+    ir_emit_set_rm(INSTS, &inst->operand_rm, reg);
+}
+
+IR_HANDLE(rdtsc) { // rdtsc - 0x0f 0x31
+    x86_ref_e outputs[] = { X86_REF_RAX, X86_REF_RDX };
+    ir_emit_rdtsc(INSTS);
+    ir_emit_hint_outputs(INSTS, outputs, 2);
 }
 
 IR_HANDLE(cmovcc) { // cmovcc - 0x0f 0x40-0x4f
@@ -828,6 +868,23 @@ IR_HANDLE(punpckldq_xmm_xmm128) { // punpckldq xmm, xmm/m128 - 0x66 0x0f 0x62
     ir_emit_set_reg(INSTS, &inst->operand_reg, result);
 }
 
+IR_HANDLE(group14_xmm) { // group14 xmm - 0x66 0x0f 0x73
+    x86_group14_e opcode = inst->operand_reg.reg.ref - X86_REF_RAX;
+    switch(opcode) {
+        default: {
+            ERROR("Unimplemented group 14 opcode: %02x during %016lx", opcode, state->current_address - g_base_address);
+            break;
+        }
+    }
+}
+
+IR_HANDLE(punpcklqdq_xmm_xmm128) { // punpcklqdq xmm, xmm/m128 - 0x66 0x0f 0x6c
+    ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
+    ir_instruction_t* reg = ir_emit_get_reg(INSTS, &inst->operand_reg);
+    ir_instruction_t* result = ir_emit_vector_unpack_qword_low(INSTS, reg, rm);
+    ir_emit_set_reg(INSTS, &inst->operand_reg, result);
+}
+
 IR_HANDLE(movq_xmm_rm32) { // movq xmm, rm32 - 0x66 0x0f 0x6e
     ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
     ir_instruction_t* vector = ir_emit_vector_from_integer(INSTS, rm);
@@ -839,16 +896,27 @@ IR_HANDLE(movdqa_xmm_xmm128) { // movdqa xmm, xmm128 - 0x66 0x0f 0x6f
     ir_emit_set_reg(INSTS, &inst->operand_reg, rm);
 }
 
-IR_HANDLE(movq_rm32_xmm) { // movq rm32, xmm - 0x66 0x0f 0xd6
+IR_HANDLE(movq_rm32_xmm) { // movq rm32, xmm - 0x66 0x0f 0x7e
     ir_instruction_t* xmm = ir_emit_get_reg(INSTS, &inst->operand_reg);
     ir_instruction_t* rm = ir_emit_integer_from_vector(INSTS, xmm);
     ir_emit_set_rm(INSTS, &inst->operand_rm, rm);
+}
+
+IR_HANDLE(movq_xmm64_xmm) { // movq xmm64, xmm - 0x66 0x0f 0xd6
+    ERROR("Unimplemented instruction: movq xmm64, xmm - 0x66 0x0f 0xd6 during %016lx", state->current_address - g_base_address);
 }
 
 IR_HANDLE(pand_xmm_xmm128) { // pand xmm, xmm/m128 - 0x66 0x0f 0xdb
     ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
     ir_instruction_t* reg = ir_emit_get_reg(INSTS, &inst->operand_reg);
     ir_instruction_t* result = ir_emit_vector_packed_and(INSTS, reg, rm);
+    ir_emit_set_reg(INSTS, &inst->operand_reg, result);
+}
+
+IR_HANDLE(pxor_xmm_xmm128) { // pxor xmm, xmm/m128 - 0x66 0x0f 0xef
+    ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
+    ir_instruction_t* reg = ir_emit_get_reg(INSTS, &inst->operand_reg);
+    ir_instruction_t* result = ir_emit_vector_packed_xor(INSTS, reg, rm);
     ir_emit_set_reg(INSTS, &inst->operand_reg, result);
 }
 

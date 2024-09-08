@@ -55,9 +55,11 @@ ir_instruction_t* ir_emit_insert_integer_to_vector(
 );
 ir_instruction_t* ir_emit_extract_integer_from_vector(ir_instruction_list_t* instructions, ir_instruction_t* src, u8 idx, x86_size_e sz);
 ir_instruction_t* ir_emit_vector_unpack_dword_low(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
+ir_instruction_t* ir_emit_vector_unpack_qword_low(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_vector_from_integer(ir_instruction_list_t* instructions, ir_instruction_t* source);
 ir_instruction_t* ir_emit_integer_from_vector(ir_instruction_list_t* instructions, ir_instruction_t* source);
 ir_instruction_t* ir_emit_vector_packed_and(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
+ir_instruction_t* ir_emit_vector_packed_xor(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 
 ir_instruction_t* ir_emit_get_guest(ir_instruction_list_t* instructions, x86_ref_e ref);
 void ir_emit_set_guest(ir_instruction_list_t* instructions, x86_ref_e ref, ir_instruction_t* source);
@@ -74,10 +76,13 @@ void ir_emit_write_byte(ir_instruction_list_t* instructions, ir_instruction_t* a
 void ir_emit_write_word(ir_instruction_list_t* instructions, ir_instruction_t* address, ir_instruction_t* source);
 void ir_emit_write_dword(ir_instruction_list_t* instructions, ir_instruction_t* address, ir_instruction_t* source);
 void ir_emit_write_qword(ir_instruction_list_t* instructions, ir_instruction_t* address, ir_instruction_t* source);
+void ir_emit_write_xmmword(ir_instruction_list_t* instructions, ir_instruction_t* address, ir_instruction_t* source);
 
-ir_instruction_t* ir_emit_cpuid(ir_instruction_list_t* instructions);
 
 void ir_emit_setcc(ir_instruction_list_t* instructions, x86_instruction_t* inst);
+
+void ir_emit_cpuid(ir_instruction_list_t* instructions);
+void ir_emit_rdtsc(ir_instruction_list_t* instructions);
 
 // Helpers
 ir_instruction_t* ir_emit_immediate(ir_instruction_list_t* instructions, u64 value);

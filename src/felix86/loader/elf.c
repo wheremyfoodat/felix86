@@ -1,4 +1,5 @@
 #include "felix86/loader/elf.h"
+#include "felix86/common/global.h"
 #include "felix86/common/log.h"
 #include "felix86/common/file.h"
 #include <elf.h>
@@ -271,6 +272,9 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
     elf.phdr = elf.program + ehdr.e_phoff;
     elf.phnum = ehdr.e_phnum;
     elf.phent = ehdr.e_phentsize;
+
+    g_base_address = (u64)elf.program;
+    g_interpreter_address = (u64)elf.interpreter;
 
     // Allocate it last so we don't have to free it if we fail
     elf_t* pelf = malloc(sizeof(elf_t));

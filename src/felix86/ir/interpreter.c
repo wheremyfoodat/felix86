@@ -451,12 +451,30 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             xmm_temps[instruction->name] = result;
             break;
         }
+        case IR_VECTOR_UNPACK_QWORD_LOW: {
+            xmm_reg_t xmm_dest = xmm_temps[instruction->operands.args[0]->name];
+            xmm_reg_t xmm_src = xmm_temps[instruction->operands.args[1]->name];
+            xmm_reg_t result = {0};
+            result.data[0] = xmm_dest.data[0];
+            result.data[1] = xmm_src.data[0];
+            xmm_temps[instruction->name] = result;
+            break;
+        }
         case IR_VECTOR_PACKED_AND: {
             xmm_reg_t xmm_dest = xmm_temps[instruction->operands.args[0]->name];
             xmm_reg_t xmm_src = xmm_temps[instruction->operands.args[1]->name];
             xmm_reg_t result = {0};
             result.data[0] = xmm_dest.data[0] & xmm_src.data[0];
             result.data[1] = xmm_dest.data[1] & xmm_src.data[1];
+            xmm_temps[instruction->name] = result;
+            break;
+        }
+        case IR_VECTOR_PACKED_XOR: {
+            xmm_reg_t xmm_dest = xmm_temps[instruction->operands.args[0]->name];
+            xmm_reg_t xmm_src = xmm_temps[instruction->operands.args[1]->name];
+            xmm_reg_t result = {0};
+            result.data[0] = xmm_dest.data[0] ^ xmm_src.data[0];
+            result.data[1] = xmm_dest.data[1] ^ xmm_src.data[1];
             xmm_temps[instruction->name] = result;
             break;
         }

@@ -363,6 +363,11 @@ ir_instruction_t* ir_emit_vector_unpack_dword_low(ir_instruction_list_t* instruc
     return ir_emit_two_operands(instructions, IR_VECTOR_UNPACK_DWORD_LOW, source1, source2);
 }
 
+ir_instruction_t* ir_emit_vector_unpack_qword_low(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    return ir_emit_two_operands(instructions, IR_VECTOR_UNPACK_QWORD_LOW, source1, source2);
+}
+
 ir_instruction_t* ir_emit_vector_from_integer(ir_instruction_list_t* instructions, ir_instruction_t* source)
 {
     return ir_emit_one_operand(instructions, IR_VECTOR_FROM_INTEGER, source);
@@ -376,6 +381,11 @@ ir_instruction_t* ir_emit_integer_from_vector(ir_instruction_list_t* instruction
 ir_instruction_t* ir_emit_vector_packed_and(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
 {
     return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_AND, source1, source2);
+}
+
+ir_instruction_t* ir_emit_vector_packed_xor(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_XOR, source1, source2);
 }
 
 ir_instruction_t* ir_emit_get_guest(ir_instruction_list_t* instructions, x86_ref_e ref)
@@ -469,12 +479,23 @@ void ir_emit_write_qword(ir_instruction_list_t* instructions, ir_instruction_t* 
     ir_emit_two_operands(instructions, IR_WRITE_QWORD, address, source);
 }
 
-ir_instruction_t* ir_emit_cpuid(ir_instruction_list_t* instructions)
+void ir_emit_write_xmmword(ir_instruction_list_t* instructions, ir_instruction_t* address, ir_instruction_t* source)
+{
+    ir_emit_two_operands(instructions, IR_WRITE_XMMWORD, address, source);
+}
+
+void ir_emit_cpuid(ir_instruction_list_t* instructions)
 {
     ir_instruction_t* instruction = ir_ilist_push_back(instructions);
     instruction->opcode = IR_CPUID;
     instruction->type = IR_TYPE_NO_OPERANDS;
-    return instruction;
+}
+
+void ir_emit_rdtsc(ir_instruction_list_t* instructions)
+{
+    ir_instruction_t* instruction = ir_ilist_push_back(instructions);
+    instruction->opcode = IR_RDTSC;
+    instruction->type = IR_TYPE_NO_OPERANDS;
 }
 
 ir_instruction_t* ir_emit_immediate(ir_instruction_list_t* instructions, u64 value)
@@ -577,6 +598,7 @@ void ir_emit_write_memory(ir_instruction_list_t* instructions, ir_instruction_t*
         case X86_SIZE_WORD: return ir_emit_write_word(instructions, address, value);
         case X86_SIZE_DWORD: return ir_emit_write_dword(instructions, address, value);
         case X86_SIZE_QWORD: return ir_emit_write_qword(instructions, address, value);
+        case X86_SIZE_XMM: return ir_emit_write_xmmword(instructions, address, value);
         default: ERROR("Invalid memory size"); return;
     }
 }
@@ -987,7 +1009,12 @@ void ir_emit_group2(ir_instruction_list_t* instructions, x86_instruction_t* inst
             break;
         }
         case X86_GROUP2_ROR: {
-            ERROR("Unimplemented");
+            ir_instruction_t* size = ir_emit_get_size(instructions, size_e);
+            ir_instruction_t* shift_mask = ir_emit_sub(instructions, size, ir_emit_immediate(instructions, 1));
+            ir_instruction_t* shift_masked = ir_emit_and(instructions, shift_value, shift_mask);
+            result = ir_emit_rotate(instructions, rm, shift_masked, size_e, true);
+            c = ir_emit_get_sign(instructions, result, size_e);
+            WARN("ROR OF unimplemented");
             break;
         }
         case X86_GROUP2_RCL: {

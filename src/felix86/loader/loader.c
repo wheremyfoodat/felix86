@@ -60,7 +60,8 @@ void loader_run_elf(loader_config_t* config) {
         entry = (u64)elf->program + elf->entry;
     }
 
-    VERBOSE("Entrypoint: %p", (void*)elf->entry);
+    VERBOSE("Program entry: %p", (void*)elf->entry);
+    VERBOSE("Interpreter entry: %p", (void*)interpreter->entry);
 
     // Initial process stack according to System V AMD64 ABI
     u64 rsp = (u64)elf->stackPointer;
@@ -107,22 +108,22 @@ void loader_run_elf(loader_config_t* config) {
 
     auxv_t auxv_entries[16] =
     {
-        [0] = { AT_PAGESZ, 4096 },
-        [1] = { AT_EXECFN, (u64)program_name },
-        [2] = { AT_CLKTCK, 100 },
-        [3] = { AT_ENTRY, elf->entry },
-        [4] = { AT_PLATFORM, (u64)platform_name },
-        [5] = { AT_BASE, (u64)elf->program },
-        [6] = { AT_FLAGS, 0 },
-        [7] = { AT_UID, 1000 },
-        [8] = { AT_EUID, 1000 },
-        [9] = { AT_GID, 1000 },
-        [10] = { AT_EGID, 1000 },
-        [11] = { AT_SECURE, 0 },
-        [12] = { AT_PHDR, (u64)elf->phdr },
-        [13] = { AT_PHENT, elf->phent },
-        [14] = { AT_PHNUM, elf->phnum },
-        [15] = { AT_NULL, 0 } // null terminator
+        [0] = { AT_PAGESZ, { 4096 } },
+        [1] = { AT_EXECFN, { (u64)program_name } },
+        [2] = { AT_CLKTCK, { 100 } },
+        [3] = { AT_ENTRY, { elf->entry } },
+        [4] = { AT_PLATFORM, { (u64)platform_name } },
+        [5] = { AT_BASE, { (u64)elf->program } },
+        [6] = { AT_FLAGS, { 0 } },
+        [7] = { AT_UID, { 1000 } },
+        [8] = { AT_EUID, { 1000 } },
+        [9] = { AT_GID, { 1000 } },
+        [10] = { AT_EGID, { 1000 } },
+        [11] = { AT_SECURE, { 0 } },
+        [12] = { AT_PHDR, { (u64)elf->phdr } },
+        [13] = { AT_PHENT, { elf->phent } },
+        [14] = { AT_PHNUM, { elf->phnum } },
+        [15] = { AT_NULL, { 0 } } // null terminator
     };
 
     u16 auxv_count = sizeof(auxv_entries) / sizeof(auxv_t);

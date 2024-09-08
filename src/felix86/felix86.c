@@ -28,8 +28,6 @@ felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* con
     recompiler->base_address = config->base_address;
     recompiler->use_interpreter = config->use_interpreter;
 
-    g_base_address = recompiler->base_address;
-
     return recompiler;
 }
 
@@ -210,7 +208,6 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler) {
                 ir_print_function_graphviz(recompiler->base_address, function);
         }
 
-        printf("function base: %016lx\n", recompiler->state.rip - g_base_address);
         ir_interpret_function(function, &recompiler->state);
 
         if (recompiler->testing)
