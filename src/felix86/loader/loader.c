@@ -180,7 +180,8 @@ void loader_run_elf(loader_config_t* config) {
         .optimize = !config->dont_optimize,
         .use_interpreter = config->use_interpreter,
         .print_blocks = config->print_blocks,
-        .base_address = (u64)elf->program
+        .base_address = (u64)elf->program,
+        .verify = config->verify,
     };
     felix86_recompiler_t* recompiler = felix86_recompiler_create(&fconfig);
     felix86_set_guest(recompiler, X86_REF_RIP, entry);

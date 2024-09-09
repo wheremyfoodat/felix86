@@ -659,6 +659,11 @@ IR_HANDLE(group3_rm32) { // test/not/neg/mul/imul/div/idiv rm16/32/64, imm32 - 0
     ir_emit_group3(INSTS, inst);
 }
 
+IR_HANDLE(stc) { // stc - 0xf9
+    ir_instruction_t* one = ir_emit_immediate(INSTS, 1);
+    ir_emit_set_flag(INSTS, X86_REF_CF, one);
+}
+
 IR_HANDLE(group4) { // inc/dec rm8 - 0xfe
     x86_size_e size_e = inst->operand_reg.size;
     x86_group4_e opcode = inst->operand_reg.reg.ref - X86_REF_RAX;

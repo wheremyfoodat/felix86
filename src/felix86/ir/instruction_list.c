@@ -58,10 +58,13 @@ void ir_ilist_free(ir_instruction_list_t* ilist) {
     free(ilist);
 }
 
-void ir_ilist_free_all(ir_instruction_list_t* ilist) {
+void ir_ilist_destroy(ir_instruction_list_t* ilist) {
     ir_instruction_list_t* current = ilist;
     while (current) {
         ir_instruction_list_t* next = current->next;
+        if (current->instruction.opcode == IR_RUNTIME_COMMENT) {
+            free((void*)current->instruction.runtime_comment.comment);
+        }
         ir_ilist_free(current);
         current = next;
     }

@@ -17,6 +17,7 @@ struct felix86_recompiler_s {
     bool print_blocks;
     bool use_interpreter;
     u64 base_address;
+    bool verify;
 };
 
 felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* config) {
@@ -27,12 +28,13 @@ felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* con
     recompiler->print_blocks = config->print_blocks;
     recompiler->base_address = config->base_address;
     recompiler->use_interpreter = config->use_interpreter;
+    recompiler->verify = config->verify;
 
     return recompiler;
 }
 
 void felix86_recompiler_destroy(felix86_recompiler_t* recompiler) {
-    // ir_function_cache_destroy(recompiler->function_cache);
+    ir_function_cache_destroy(recompiler->function_cache);
     free(recompiler);
 }
 

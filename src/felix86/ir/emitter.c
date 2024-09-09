@@ -5,6 +5,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 
 u16 get_bit_size(x86_size_e size) {
     switch (size) {

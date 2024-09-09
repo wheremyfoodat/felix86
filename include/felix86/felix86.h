@@ -14,6 +14,7 @@ typedef struct {
 	bool print_blocks;
 	bool use_interpreter;
 	u64 base_address;
+	bool verify;
 } felix86_recompiler_config_t;
 
 typedef enum : u8 {

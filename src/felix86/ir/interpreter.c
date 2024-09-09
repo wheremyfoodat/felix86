@@ -666,7 +666,6 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
         case IR_RUNTIME_COMMENT: {
             VERBOSE("Runtime comment: %s", instruction->runtime_comment.comment);
             fflush(stdout);
-            printf("RCX: %016lx\n", state->gprs[X86_REF_RCX - X86_REF_RAX]);
             // print_state(state);
             break;
         }

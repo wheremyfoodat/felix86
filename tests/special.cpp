@@ -149,3 +149,9 @@ FELIX86_TEST(bsr_qword) {
 
     verify(X86_REF_RCX, 59);
 }
+
+FELIX86_TEST(stc) {
+    stc();
+
+    verify_c(true);
+}

@@ -13,6 +13,7 @@ static char args_doc[] = "BINARY [ARGS...]";
 
 static struct argp_option options[] = {
   { "verbose", 'v', 0, 0, "Produce verbose output" },
+  { "verify", 'V', 0, 0, "Verify each instruction, only works on x86-64 host" },
   { "quiet", 'q', 0, 0, "Don't produce any output" },
   { "interpreter", 'i', 0, 0, "Run in interpreter mode" },
   { "host-envs", 'e', 0, 0, "Pass host environment variables to the guest" },
@@ -37,6 +38,15 @@ static error_t parse_opt (int key, char* arg, struct argp_state* state)
     }
 
     switch (key) {
+        case 'V': {
+#ifdef __x86_64__
+            config->verify = true;
+#else
+            WARN("Verification only works on x86-64 hosts");
+            return ARGP_ERR_UNKNOWN;
+#endif
+            break;
+        }
         case 'v': {
             enable_verbose();
             break;

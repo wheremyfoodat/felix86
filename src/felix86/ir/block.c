@@ -34,6 +34,23 @@ ir_function_t* ir_function_create(u64 address)
     return function;
 }
 
+void ir_function_destroy(ir_function_t* function)
+{
+    ir_block_list_t* current = function->first;
+    while (current) {
+        ir_block_list_t* next = current->next;
+        ir_ilist_destroy(current->block->instructions);
+        free(current->block);
+        free(current);
+        current = next;
+    }
+
+    ir_ilist_destroy(function->entry->block->instructions);
+    free(function->entry->block);
+    free(function->entry);
+    free(function);
+}
+
 ir_block_t* ir_function_get_block(ir_function_t* function, ir_block_t* predecessor, u64 address) {
     if (address != IR_NO_ADDRESS) {
         for (ir_block_list_t* current = function->first; current; current = current->next) {
