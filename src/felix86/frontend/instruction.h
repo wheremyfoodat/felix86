@@ -188,7 +188,6 @@ typedef struct {
 	x86_operand_t operand_rm;
 	x86_operand_t operand_reg;
 	x86_operand_t operand_imm;
-	x86_operand_t operand_vex;
 	u8 opcode;
 	u8 length;
 } x86_instruction_t;

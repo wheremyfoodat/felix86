@@ -1117,7 +1117,7 @@ void ir_emit_group3(ir_instruction_list_t* instructions, x86_instruction_t* inst
             ir_instruction_t* zero = ir_emit_immediate(instructions, 0);
             result = ir_emit_sub(instructions, zero, rm);
             z = ir_emit_get_zero(instructions, result);
-            c = ir_emit_not(instructions, z);
+            c = ir_emit_equal(instructions, z, zero);
             s = ir_emit_get_sign(instructions, result, size_e);
             o = ir_emit_get_overflow_sub(instructions, zero, rm, result, size_e);
             a = ir_emit_get_aux_sub(instructions, zero, rm);

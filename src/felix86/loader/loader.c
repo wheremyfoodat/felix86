@@ -63,7 +63,7 @@ void loader_run_elf(loader_config_t* config) {
     }
 
     // Initial process stack according to System V AMD64 ABI
-    u64 rsp = (u64)elf->stackPointer;
+    u64 rsp = (u64)elf->stack_pointer;
 
     // To hold the addresses of the arguments for later pushing
     u64* argv_addresses = malloc(config->argc * sizeof(u64));
@@ -125,6 +125,7 @@ void loader_run_elf(loader_config_t* config) {
         [15] = { AT_NULL, { 0 } } // null terminator
     };
 
+    VERBOSE("AT_PHDR: %p", auxv_entries[12].a_un.a_ptr);
     u16 auxv_count = sizeof(auxv_entries) / sizeof(auxv_t);
 
     // This is the varying amount of space needed for the stack

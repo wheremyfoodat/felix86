@@ -24,6 +24,7 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
     u8* phdrtable = NULL;
     u8* shdrtable = NULL;
     void* file = NULL;
+    u64 lowest_vaddr = 0xFFFFFFFFFFFFFFFF;
     u64 highest_vaddr = 0;
     u64 max_stack_size = 0;
 
@@ -153,6 +154,10 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
                 if (phdr->p_vaddr + phdr->p_memsz > highest_vaddr) {
                     highest_vaddr = phdr->p_vaddr + phdr->p_memsz;
                 }
+
+                if (phdr->p_vaddr < lowest_vaddr) {
+                    lowest_vaddr = phdr->p_vaddr;
+                }
                 break;
             }
         }
@@ -175,27 +180,34 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
         max_stack_size = 128 * 1024 * 1024;
     }
 
-    u64 hint = 0x7FFFFFFFF000 - max_stack_size;
+    u64 stack_hint = 0x7FFFFFFFF000 - max_stack_size;
 
-    elf.stackBase = mmap((void*)hint, max_stack_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK | MAP_GROWSDOWN | MAP_NORESERVE, -1, 0);
-    if (elf.stackBase == MAP_FAILED) {
+    elf.stack_base = mmap((void*)stack_hint, max_stack_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK | MAP_GROWSDOWN | MAP_NORESERVE, -1, 0);
+    if (elf.stack_base == MAP_FAILED) {
         WARN("Failed to allocate stack for ELF file %s", path);
         goto cleanup;
     }
 
-    elf.stackPointer = mmap(elf.stackBase + max_stack_size - stack_size, stack_size, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK | MAP_GROWSDOWN, -1, 0);
-    if (elf.stackPointer == MAP_FAILED) {
+    elf.stack_pointer = mmap(elf.stack_base + max_stack_size - stack_size, stack_size, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK | MAP_GROWSDOWN, -1, 0);
+    if (elf.stack_pointer == MAP_FAILED) {
         WARN("Failed to allocate stack for ELF file %s", path);
         goto cleanup;
     }
-    VERBOSE("Allocated stack at %p", elf.stackBase);
-    elf.stackPointer += stack_size;
-    VERBOSE("Stack pointer at %p", elf.stackPointer);
+    VERBOSE("Allocated stack at %p", elf.stack_base);
+    elf.stack_pointer += stack_size;
+    VERBOSE("Stack pointer at %p", elf.stack_pointer);
 
-    elf.program = mmap(NULL, highest_vaddr, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (elf.program == MAP_FAILED) {
-        WARN("Failed to allocate memory for ELF file %s", path);
-        goto cleanup;
+    u64 base_address = 0;
+    if (ehdr.e_type == ET_DYN) {
+        elf.program = mmap((void*)0, highest_vaddr, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        base_address = (u64)elf.program;
+        if (elf.program == MAP_FAILED) {
+            WARN("Failed to allocate memory for ELF file %s", path);
+            goto cleanup;
+        }
+    } else {
+        elf.program = NULL;
+        base_address = 0;
     }
     VERBOSE("Allocated program at %p", elf.program);
 
@@ -221,7 +233,7 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
                     prot |= PROT_EXEC;
                 }
 
-                u64 segment_base = (u64)elf.program + PAGE_START(phdr->p_vaddr);
+                u64 segment_base = base_address + PAGE_START(phdr->p_vaddr);
                 u64 segment_size = phdr->p_filesz + PAGE_OFFSET(phdr->p_vaddr);
 
                 // TODO: instead of reading the segment, we should file map it and remove the fopen stuff
@@ -238,7 +250,7 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
                 }
 
                 if (phdr->p_filesz > 0) {
-                    result = fread(file, elf.program + phdr->p_vaddr, phdr->p_offset, phdr->p_filesz, user_data);
+                    result = fread(file, (void*)(base_address + phdr->p_vaddr), phdr->p_offset, phdr->p_filesz, user_data);
                     if (!result) {
                         WARN("Failed to read segment from file %s", path);
                         goto cleanup;
@@ -248,9 +260,9 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
                 mprotect(addr, segment_size, prot);
 
                 if (phdr->p_memsz > phdr->p_filesz) {
-                    u64 bss_start = (u64)elf.program + phdr->p_vaddr + phdr->p_filesz;
+                    u64 bss_start = (u64)base_address + phdr->p_vaddr + phdr->p_filesz;
                     u64 bss_page_start = PAGE_ALIGN(bss_start);
-                    u64 bss_page_end = PAGE_ALIGN((u64)elf.program + phdr->p_vaddr + phdr->p_memsz);
+                    u64 bss_page_end = PAGE_ALIGN((u64)base_address + phdr->p_vaddr + phdr->p_memsz);
 
                     // Only clear padding bytes if the section is writable (why does FEX-Emu do this?)
                     if (phdr->p_flags & PF_W) {
@@ -263,6 +275,8 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
                             WARN("Failed to allocate memory for BSS in file %s", path);
                             goto cleanup;
                         }
+
+                        VERBOSE("BSS segment at %p-%p", (void*)bss_page_start, (void*)bss_page_end);
 
                         memset(bss, 0, bss_page_end - bss_page_start);
                     }
@@ -277,7 +291,7 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
         }
     }
 
-    elf.phdr = elf.program + ehdr.e_phoff;
+    elf.phdr = (void*)(base_address + lowest_vaddr + ehdr.e_phoff);
     elf.phnum = ehdr.e_phnum;
     elf.phent = ehdr.e_phentsize;
 
@@ -296,7 +310,7 @@ cleanup:
     if (shdrtable) free(shdrtable);
     if (elf.interpreter) free(elf.interpreter);
     if (elf.program) munmap(elf.program, highest_vaddr);
-    if (elf.stackBase) munmap(elf.stackBase, max_stack_size);
+    if (elf.stack_base) munmap(elf.stack_base, max_stack_size);
     if (file) fclose(file, user_data);
     return NULL;
 }
@@ -304,6 +318,6 @@ cleanup:
 void elf_destroy(elf_t* elf) {
     if (elf->interpreter) free(elf->interpreter);
     if (elf->program) munmap(elf->program, 0);
-    if (elf->stackBase) munmap(elf->stackBase, 0);
+    if (elf->stack_base) munmap(elf->stack_base, 0);
     free(elf);
 }

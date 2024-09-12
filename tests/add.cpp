@@ -39,7 +39,7 @@ FELIX86_TEST(add_sign_extend) {
     verify(X86_REF_RAX, (uint64_t)-1337);
 }
 
-FELIX86_TEST(add_eax_imm32) {
+FELIX86_TEST(add_eax_imm) {
     mov(eax, 0x12345678);
     add(eax, 0x87654321);
 

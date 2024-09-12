@@ -288,7 +288,8 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             VERBOSE("Syscall argument 4: %016lx", arg4);
             VERBOSE("Syscall argument 5: %016lx", arg5);
             VERBOSE("Syscall argument 6: %016lx", arg6);
-            syscall(opcode, arg1, arg2, arg3, arg4, arg5, arg6);
+            u64 result = syscall(opcode, arg1, arg2, arg3, arg4, arg5, arg6);
+            state->gprs[0] = result;
             break;
         }
         case IR_CPUID: {
@@ -631,7 +632,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             break;
         }
         case IR_IMUL: {
-            state->gprs[instruction->name] = (i64)temps[instruction->operands.args[0]->name] * (i64)temps[instruction->operands.args[1]->name];
+            temps[instruction->name] = (i64)temps[instruction->operands.args[0]->name] * (i64)temps[instruction->operands.args[1]->name];
             break;
         }
         case IR_VECTOR_PACKED_SHIFT_RIGHT: {

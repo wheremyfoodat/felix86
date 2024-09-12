@@ -228,70 +228,70 @@ void frontend_compile_instruction(frontend_state_t* state)
             case 0xC4: {
                 ERROR("VEX prefix not supported, TODO: needs vector size prefix on instructions");
                 // Three-byte VEX prefix
-                u8 vex1 = data[index + 1];
-                u8 vex2 = data[index + 2];
-                prefixes.vex = true;
-                rex_r = ~((vex1 >> 7) & 0x1);
-                rex_x = ~((vex1 >> 6) & 0x1);
-                rex_b = ~((vex1 >> 5) & 0x1);
-                prefixes.rex_w = (vex2 >> 7) & 0x1;
-                prefixes.vex_l = (vex2 >> 2) & 0x1;
+                // u8 vex1 = data[index + 1];
+                // u8 vex2 = data[index + 2];
+                // prefixes.vex = true;
+                // rex_r = ~((vex1 >> 7) & 0x1);
+                // rex_x = ~((vex1 >> 6) & 0x1);
+                // rex_b = ~((vex1 >> 5) & 0x1);
+                // prefixes.rex_w = (vex2 >> 7) & 0x1;
+                // prefixes.vex_l = (vex2 >> 2) & 0x1;
 
-                u8 map_select = vex1 & 0x1F;
-                switch (map_select) {
-                    case 1: { // this means implicit 0F prefix
-                        primary_map = secondary_table;
-                        break;
-                    }
-                    case 2: { // this means implicit 0F 38 prefix
-                        ERROR("VEX map select 2 not supported");
-                        break;
-                    }
-                    case 3: { // this means implicit 0F 3A prefix
-                        ERROR("VEX map select 3 not supported");
-                        break;
-                    }
-                }
+                // u8 map_select = vex1 & 0x1F;
+                // switch (map_select) {
+                //     case 1: { // this means implicit 0F prefix
+                //         primary_map = secondary_table;
+                //         break;
+                //     }
+                //     case 2: { // this means implicit 0F 38 prefix
+                //         ERROR("VEX map select 2 not supported");
+                //         break;
+                //     }
+                //     case 3: { // this means implicit 0F 3A prefix
+                //         ERROR("VEX map select 3 not supported");
+                //         break;
+                //     }
+                // }
 
-                u8 operand_vex = ~((vex2 >> 3) & 0b1111);
-                inst.operand_vex.type = X86_OP_TYPE_REGISTER;
-                inst.operand_vex.reg.ref = X86_REF_XMM0 + operand_vex;
-                inst.operand_vex.size = prefixes.vex_l ? X86_SIZE_YMM : X86_SIZE_XMM;
+                // u8 operand_vex = ~((vex2 >> 3) & 0b1111);
+                // inst.operand_vex.type = X86_OP_TYPE_REGISTER;
+                // inst.operand_vex.reg.ref = X86_REF_XMM0 + operand_vex;
+                // inst.operand_vex.size = prefixes.vex_l ? X86_SIZE_YMM : X86_SIZE_XMM;
 
-                // specifies implicit mandatory prefix
-                u8 pp = vex2 & 0b11;
-                switch (pp) {
-                    case 0b01: operand_override = true; break;
-                    case 0b10: rep_z_f3 = true; break;
-                    case 0b11: rep_nz_f2 = true; break;
-                }
+                // // specifies implicit mandatory prefix
+                // u8 pp = vex2 & 0b11;
+                // switch (pp) {
+                //     case 0b01: operand_override = true; break;
+                //     case 0b10: rep_z_f3 = true; break;
+                //     case 0b11: rep_nz_f2 = true; break;
+                // }
 
-                index += 3;
+                // index += 3;
                 break;
             }
 
             case 0xC5: {
                 ERROR("VEX prefix not supported, TODO: needs vector size prefix on instructions");
                 // Two-byte VEX prefix
-                u8 vex = data[index + 1];
-                prefixes.vex = true;
-                rex_r = ~((vex >> 7) & 0x1);
-                prefixes.vex_l = (vex >> 2) & 0x1;
+                // u8 vex = data[index + 1];
+                // prefixes.vex = true;
+                // rex_r = ~((vex >> 7) & 0x1);
+                // prefixes.vex_l = (vex >> 2) & 0x1;
 
-                u8 operand_vex = ~((vex >> 3) & 0b1111);
-                inst.operand_vex.type = X86_OP_TYPE_REGISTER;
-                inst.operand_vex.reg.ref = X86_REF_XMM0 + operand_vex;
-                inst.operand_vex.size = prefixes.vex_l ? X86_SIZE_YMM : X86_SIZE_XMM;
+                // u8 operand_vex = ~((vex >> 3) & 0b1111);
+                // inst.operand_vex.type = X86_OP_TYPE_REGISTER;
+                // inst.operand_vex.reg.ref = X86_REF_XMM0 + operand_vex;
+                // inst.operand_vex.size = prefixes.vex_l ? X86_SIZE_YMM : X86_SIZE_XMM;
 
-                // specifies implicit mandatory prefix
-                u8 pp = vex & 0b11;
-                switch (pp) {
-                    case 0b01: operand_override = true; break;
-                    case 0b10: rep_z_f3 = true; break;
-                    case 0b11: rep_nz_f2 = true; break;
-                }
+                // // specifies implicit mandatory prefix
+                // u8 pp = vex & 0b11;
+                // switch (pp) {
+                //     case 0b01: operand_override = true; break;
+                //     case 0b10: rep_z_f3 = true; break;
+                //     case 0b11: rep_nz_f2 = true; break;
+                // }
 
-                index += 2;
+                // index += 2;
                 break;
             }
 

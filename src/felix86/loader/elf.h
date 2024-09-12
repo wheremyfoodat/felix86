@@ -11,9 +11,8 @@ typedef struct {
 	void* program;
 	u64 entry;
 	char* interpreter;
-	void* stackBase;
-	void* stackPointer;
-	bool executableStack;
+	void* stack_base;
+	void* stack_pointer;
 
 	void* phdr;
 	u64 phnum;
