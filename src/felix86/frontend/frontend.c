@@ -614,7 +614,6 @@ void frontend_compile_instruction(frontend_state_t* state)
         ir_instruction_t* zero = ir_emit_immediate(INSTS, 0);
         ir_instruction_t* condition = ir_emit_equal(INSTS, rcx, zero);
         ir_emit_jump_conditional(INSTS, condition, rep_exit_block, rep_loop_block);
-        state->current_block->compiled = true;
 
         // Write the instruction in the loop body
         state->current_block = rep_loop_block;
@@ -648,7 +647,6 @@ void frontend_compile_instruction(frontend_state_t* state)
         ir_emit_jump_conditional(INSTS, final_condition, rep_exit_block, rep_loop_block);
 
         state->exit = true;
-        state->current_block->compiled = true;
         state->current_block = rep_exit_block;
     }
 
@@ -660,34 +658,40 @@ void frontend_compile_block(frontend_state_t* state)
     while (!state->exit) {
         frontend_compile_instruction(state);
     }
-
     state->current_block->compiled = true;
 }
 
-void frontend_compile_function(ir_function_t* function) {
-    ir_block_list_t* current = function->first;
+void frontend_compile_function(ir_function_t* function, u64 address) {
     frontend_state_t state = {0};
     state.function = function;
 
-    while (current) {
-        state.current_block = current->block;
-        state.current_address = current->block->start_address;
-        if (state.current_address != IR_NO_ADDRESS) {
-            frontend_compile_block(&state);
+    ir_block_t* first = ir_function_get_block(function, function->entry, address);
+    ir_block_list_t* list_of_blocks = ir_block_list_create(first);
+    state.left_to_compile = list_of_blocks;
+
+    while (state.left_to_compile) {
+        state.current_block = state.left_to_compile->block;
+        state.current_address = state.current_block->start_address;
+        frontend_compile_block(&state);
+
+        ir_block_list_t* successor = state.left_to_compile->block->successors;
+        while (successor) {
+            if (!successor->block->compiled)
+                ir_block_list_insert(state.left_to_compile, successor->block);
+            successor = successor->next;
         }
+
         state.exit = false;
-        current = current->next;
-    }
-
-    // Verify they are all compiled
-    current = function->first;
-    while (current) {
-        if (!current->block->compiled) {
-            ERROR("Block not compiled");
-        }
-
-        current = current->next;
+        state.left_to_compile = state.left_to_compile->next;
     }
 
     function->compiled = true;
+
+    // Cleanup
+    ir_block_list_t* current = list_of_blocks;
+    while (current) {
+        ir_block_list_t* next = current->next;
+        free(current);
+        current = next;
+    }
 }

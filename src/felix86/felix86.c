@@ -203,7 +203,7 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler) {
         ir_function_t* function = ir_function_cache_get_function(recompiler->function_cache, address);
 
         if (!function->compiled) {
-            frontend_compile_function(function);
+            frontend_compile_function(function, address);
             ir_naming_pass(function);
 
             if (recompiler->print_blocks)

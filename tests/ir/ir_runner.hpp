@@ -11,7 +11,7 @@
 
 #define START_IR_TEST() \
     ir_function_t* function = ir_function_create(IR_NO_ADDRESS); \
-    ir_block_t* current_block = function->first->block;\
+    ir_block_t* current_block = function->list->block;\
     ir_block_t* entry = current_block
 
 #define END_IR_TEST() \

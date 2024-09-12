@@ -233,7 +233,7 @@ void ir_print_block(ir_block_t* block) {
 
 extern "C" void ir_print_function_graphviz(ir_function_t* function) {
     {
-        ir_block_list_t* blocks = function->first;
+        ir_block_list_t* blocks = function->list;
         while (blocks) {
             ir_instruction_list_t* node = blocks->block->instructions;
             while (node) {
@@ -260,7 +260,7 @@ extern "C" void ir_print_function_graphviz(ir_function_t* function) {
                 "penwidth=2"
                 "]\n");
     
-    ir_block_list_t* blocks = function->first;
+    ir_block_list_t* blocks = function->list;
     while (blocks) {
         u64 address = blocks->block->start_address - g_base_address;
         if (address & (1ull << 63)) {
@@ -273,7 +273,7 @@ extern "C" void ir_print_function_graphviz(ir_function_t* function) {
         printf("\t\t<tr><td port=\"top\"><b>%016lx</b></td> </tr>\n", (u64)(address));
         
         ir_instruction_list_t* node = blocks->block->instructions;
-        ir_instruction_t* last = NULL;
+        ir_instruction_t* last = &node->instruction;
         while (node) {
             if (node->instruction.opcode != IR_START_OF_BLOCK) {
                 if (node->next == NULL) {

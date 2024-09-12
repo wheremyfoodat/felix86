@@ -664,7 +664,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             break;
         }
         case IR_RUNTIME_COMMENT: {
-            VERBOSE("Runtime comment: %s", instruction->runtime_comment.comment);
+            WARN("Runtime comment: %s", instruction->runtime_comment.comment);
             fflush(stdout);
             // print_state(state);
             break;
@@ -685,7 +685,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
 
 void ir_interpret_function(ir_function_t* function, x86_state_t* state) {
     memset(temps, 0, sizeof(temps));
-    ir_block_list_t* blocks = function->first;
+    ir_block_list_t* blocks = function->entry->successors;
     ir_instruction_list_t* current = blocks->block->instructions;
     ir_block_t* next;
     ir_block_t* entry = NULL;

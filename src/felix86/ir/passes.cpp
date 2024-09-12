@@ -187,7 +187,7 @@
 
 extern "C" void ir_naming_pass(ir_function_t* function) {
     u16 name = 0;
-    for (ir_block_list_t* current = function->first; current; current = current->next) {
+    for (ir_block_list_t* current = function->list; current; current = current->next) {
         for (ir_instruction_list_t* current_instruction = current->block->instructions->next; current_instruction; current_instruction = current_instruction->next) {
             current_instruction->instruction.name = name++;
 			if (name == 0xFFFF) {

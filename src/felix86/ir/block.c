@@ -17,43 +17,63 @@ ir_block_t* ir_block_create(u64 address)
     return block;
 }
 
+void ir_block_list_node_destroy(ir_block_list_t* list)
+{
+    ir_ilist_destroy(list->block->instructions);
+    free(list->block);
+    free(list);
+}
+
+void ir_block_list_insert(ir_block_list_t* list, ir_block_t* block)
+{
+    ir_block_list_t* next = list->next;
+    list->next = ir_block_list_create(block);
+    list->next->next = next;
+}
+
 ir_function_t* ir_function_create(u64 address)
 {
-    ir_block_list_t* list = ir_block_list_create(ir_block_create(address));
-
-    // We add a dummy block at the start with guaranteed no predecessors
-    ir_block_list_t* entry = ir_block_list_create(ir_block_create(0));
-
-    list->block->predecessors = entry;
-
     ir_function_t* function = calloc(sizeof(ir_function_t), 1);
-    function->entry = entry;
-    function->first = list;
-    function->last = list;
+    function->entry = ir_block_create(IR_NO_ADDRESS);
+    function->exit = ir_block_create(IR_NO_ADDRESS);
+
+    function->list = ir_block_list_create(function->entry);
+    ir_block_list_insert(function->list, function->exit);
+
+    function->compiled = false;
 
     return function;
 }
 
 void ir_function_destroy(ir_function_t* function)
 {
-    ir_block_list_t* current = function->first;
+    ir_block_list_t* current = function->list;
     while (current) {
+        ir_block_list_t* predecessors = current->block->predecessors;
+        while (predecessors) {
+            ir_block_list_t* next = predecessors->next;
+            free(predecessors);
+            predecessors = next;
+        }
+
+        ir_block_list_t* successors = current->block->successors;
+        while (successors) {
+            ir_block_list_t* next = successors->next;
+            free(successors);
+            successors = next;
+        }
+
         ir_block_list_t* next = current->next;
-        ir_ilist_destroy(current->block->instructions);
-        free(current->block);
-        free(current);
+        ir_block_list_node_destroy(current);
         current = next;
     }
 
-    ir_ilist_destroy(function->entry->block->instructions);
-    free(function->entry->block);
-    free(function->entry);
     free(function);
 }
 
 ir_block_t* ir_function_get_block(ir_function_t* function, ir_block_t* predecessor, u64 address) {
     if (address != IR_NO_ADDRESS) {
-        for (ir_block_list_t* current = function->first; current; current = current->next) {
+        for (ir_block_list_t* current = function->list; current; current = current->next) {
             if (current->block->start_address == address) {
                 if (predecessor) {
                     ir_add_predecessor(current->block, predecessor);
@@ -64,9 +84,7 @@ ir_block_t* ir_function_get_block(ir_function_t* function, ir_block_t* predecess
     }
 
     ir_block_t* block = ir_block_create(address);
-    ir_block_list_t* list = ir_block_list_create(block);
-    function->last->next = list;
-    function->last = list;
+    ir_block_list_insert(function->list, block);
 
     // Add block to predecessor's successors
     if (predecessor) {
@@ -77,23 +95,29 @@ ir_block_t* ir_function_get_block(ir_function_t* function, ir_block_t* predecess
 }
 
 void ir_add_predecessor(ir_block_t* block, ir_block_t* predecessor) {
-    ir_block_list_t* list = ir_block_list_create(predecessor);
-    list->next = block->predecessors;
-    block->predecessors = list;
+    if (!block->predecessors) {
+        block->predecessors = ir_block_list_create(predecessor);
+    } else {
+        ir_block_list_insert(block->predecessors, predecessor);
+    }
     block->predecessors_count++;
-    ir_block_list_t* succ = ir_block_list_create(block);
-    succ->next = predecessor->successors;
-    predecessor->successors = succ;
-    predecessor->successors_count++;
+    if (!predecessor->successors) {
+        predecessor->successors = ir_block_list_create(block);
+    } else {
+        ir_block_list_insert(predecessor->successors, block);
+    }
 }
 
 void ir_add_successor(ir_block_t* block, ir_block_t* successor) {
-    ir_block_list_t* list = ir_block_list_create(successor);
-    list->next = block->successors;
-    block->successors = list;
+    if (!block->successors) {
+        block->successors = ir_block_list_create(successor);
+    } else {
+        ir_block_list_insert(block->successors, successor);
+    }
     block->successors_count++;
-    ir_block_list_t* pred = ir_block_list_create(block);
-    pred->next = successor->predecessors;
-    successor->predecessors = pred;
-    successor->predecessors_count++;
+    if (!successor->predecessors) {
+        successor->predecessors = ir_block_list_create(block);
+    } else {
+        ir_block_list_insert(successor->predecessors, block);
+    }
 }

@@ -66,7 +66,7 @@ Code_##name::Code_##name() : Xbyak::CodeGenerator(0x1000, malloc(0x2000)) { \
     mov(rsp, (u64)stack); \
     emit_code(); \
     hlt(); /* emit a hlt instruction to stop the recompiler */ \
-    felix86_recompiler_config_t config = { .testing = true, .optimize = true, .print_blocks = true, .use_interpreter = true }; \
+    felix86_recompiler_config_t config = { .testing = true, .optimize = true, .print_blocks = false, .use_interpreter = true }; \
     recompiler = felix86_recompiler_create(&config); \
     felix86_set_guest(recompiler, X86_REF_RIP, (u64)data); \
     felix86_recompiler_run(recompiler); \

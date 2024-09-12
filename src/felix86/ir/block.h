@@ -13,9 +13,9 @@ typedef struct ir_block_s {
 	u64 start_address;
 	ir_instruction_list_t* instructions;
 	struct ir_block_list_s* predecessors;
-	u32 predecessors_count;
 	struct ir_block_list_s* successors;
-	u32 successors_count;
+	u8 predecessors_count;
+	u8 successors_count;
 	bool compiled;
 } ir_block_t;
 
@@ -24,15 +24,19 @@ typedef struct ir_block_list_s {
 	struct ir_block_list_s* next;
 } ir_block_list_t;
 
+// A function has an entry block and an exit block. A function always starts at the entry block and ends at the exit block.
 typedef struct ir_function_t {
-	ir_block_list_t* entry;
-	ir_block_list_t* first;
-	ir_block_list_t* last;
+	ir_block_t* entry;
+	ir_block_t* exit;
+	ir_block_list_t* list; // total list of blocks
 	bool compiled;
 } ir_function_t;
 
 struct ir_function_cache_s;
 
+ir_block_list_t* ir_block_list_create(ir_block_t* block);
+void ir_block_list_insert(ir_block_list_t* list, ir_block_t* block);
+void ir_block_list_node_destroy(ir_block_list_t* list);
 ir_block_t* ir_block_create(u64 address);
 ir_function_t* ir_function_create(u64 address);
 void ir_function_destroy(ir_function_t* function);

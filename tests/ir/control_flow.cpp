@@ -32,6 +32,8 @@ TEST_CASE("simple_if", "[felix86-ir]") {
     ir_interpret_function(function, &state);
 
     REQUIRE(state.gprs[X86_REF_RAX - X86_REF_RAX] == 20);
+
+    ir_function_destroy(function);
 }
 
 // TEST_CASE("simple_do_while_loop", "[felix86-ir]") {
