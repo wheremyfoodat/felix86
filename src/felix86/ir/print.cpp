@@ -262,6 +262,11 @@ extern "C" void ir_print_function_graphviz(ir_function_t* function) {
     
     ir_block_list_t* blocks = function->list;
     while (blocks) {
+        if (blocks->block == function->entry || blocks->block == function->exit) {
+            blocks = blocks->next;
+            continue;
+        }
+
         u64 address = blocks->block->start_address - g_base_address;
         if (address & (1ull << 63)) {
             address = blocks->block->start_address - g_interpreter_address;

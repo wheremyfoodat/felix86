@@ -12,10 +12,9 @@ typedef struct {
 	ir_block_t* current_block;
 	u64 current_address;
 	bool exit;
-	ir_block_list_t* left_to_compile;
 } frontend_state_t;
 
-void frontend_compile_block(frontend_state_t* state);
+void frontend_compile_block(ir_function_t* function, ir_block_t* block);
 void frontend_compile_function(ir_function_t* function, u64 address);
 
 #ifdef __cplusplus

@@ -71,6 +71,10 @@ void ir_function_destroy(ir_function_t* function)
     free(function);
 }
 
+// Gets a block from the function. The function keeps a list of all blocks so it can go through them linearly if needed.
+// If address is IR_NO_ADDRESS, a new block is created and not looked up in the list. This is for blocks that are not
+// tied to an actual address but are used as auxiliary blocks, for example for the rep instruction loop bodies or in the future
+// for breaking up critical edges etc.
 ir_block_t* ir_function_get_block(ir_function_t* function, ir_block_t* predecessor, u64 address) {
     if (address != IR_NO_ADDRESS) {
         for (ir_block_list_t* current = function->list; current; current = current->next) {

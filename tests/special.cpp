@@ -64,6 +64,8 @@ FELIX86_TEST(rep_stosq) {
     mov(rax, 0x123456789bcdef0);
     rep();
     stosq();
+    rep();
+    stosq(); // should do nothing, rcx should be zero
     jmp(end);
     L(memory);
     dq(0xdeadbeefdeadbeef);
@@ -72,13 +74,19 @@ FELIX86_TEST(rep_stosq) {
     dq(0xdeadbeefdeadbeef);
     dq(0xdeadbeefdeadbeef);
     dq(0xdeadbeefdeadbeef);
+    dq(0xdeadbeefdeadbeef);
     L(end);
+    mov(rsi, 0x1234);
 
     for (int i = 0; i < 6; i++) {
         verify_memory((u64*)memory.getAddress() + i, 0x123456789bcdef0, sizeof(u64));
     }
 
+    // Memory past not overwritten
+    verify_memory((u64*)memory.getAddress() + 6, 0xdeadbeefdeadbeef, sizeof(u64));
+
     verify(X86_REF_RDI, (u64)memory.getAddress() + 8 * 6);
+    verify(X86_REF_RSI, 0x1234);
 }
 
 FELIX86_TEST(cwd_sign) {

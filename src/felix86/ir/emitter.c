@@ -1183,33 +1183,3 @@ ir_instruction_t* ir_emit_get_cc(ir_instruction_list_t* instructions, u8 opcode)
 void ir_emit_setcc(ir_instruction_list_t* instructions, x86_instruction_t* inst) {
     ir_emit_set_rm(instructions, &inst->operand_rm, ir_emit_get_cc(instructions, inst->opcode));
 }
-
-// void ir_emit_rep_start(ir_instruction_list_t* instructions, x86_size_e size_e) {
-//     state->exit = true;
-
-//     x86_operand_t rcx = get_full_reg(X86_REF_RCX);
-//     ir_instruction_t* condition = ir_emit_equal(instructions, ir_emit_get_reg(instructions, &rcx), ir_emit_immediate(instructions, 0));
-//     ir_instruction_t* jump_address = ir_emit_immediate(instructions, state->current_address + state->current_instruction_length);
-
-//     ir_emit_jump_if_true(instructions, condition, jump_address);
-// }
-
-// void ir_emit_rep_end(ir_instruction_list_t* instructions, bool is_nz, x86_size_e size_e) {
-//     x86_operand_t rcx_reg = get_full_reg(X86_REF_RCX);
-//     rcx_reg.size = size_e;
-
-//     ir_instruction_t* rcx = ir_emit_get_reg(instructions, &rcx_reg);
-//     ir_instruction_t* rcx_sub = ir_emit_sub(instructions, rcx, ir_emit_immediate(instructions, 1));
-//     ir_emit_set_reg(instructions, &rcx_reg, rcx_sub);
-
-//     ir_instruction_t* zero = ir_emit_immediate(instructions, 0);
-//     ir_instruction_t* zf = ir_emit_get_flag(instructions, X86_REF_ZF);
-//     ir_instruction_t* condition_exit_rep = is_nz ? ir_emit_not_equal(instructions, zf, zero) : ir_emit_equal(instructions, zf, zero);
-//     ir_instruction_t* condition_exit_c = ir_emit_equal(instructions, rcx, zero);
-//     ir_instruction_t* condition = ir_emit_or(instructions, condition_exit_rep, condition_exit_c);
-//     ir_instruction_t* jump_address_false = ir_emit_immediate(instructions, state->current_address); // repeat
-//     ir_instruction_t* jump_address_true = ir_emit_immediate(instructions, state->current_address + state->current_instruction_length); // exit
-//     ir_instruction_t* jump = ir_emit_ternary(instructions, condition, jump_address_true, jump_address_false);
-
-//     ir_emit_jump(instructions, jump);
-// }
