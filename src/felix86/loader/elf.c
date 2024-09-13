@@ -17,7 +17,7 @@
 #define PAGE_OFFSET(x) ((x) & 4095)
 #define PAGE_ALIGN(x) (((x) + 4095) & ~(uintptr_t)(4095))
 
-elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
+elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks, bool is_interpreter) {
     // No, I am not a K&R enthusiast, I just want to make sure they are null before they are
     // allocated so we can check and free them in cleanup
     elf_t elf = {0};
@@ -199,7 +199,7 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
 
     u64 base_address = 0;
     if (ehdr.e_type == ET_DYN) {
-        elf.program = mmap((void*)0, highest_vaddr, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        elf.program = mmap(NULL, highest_vaddr, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         base_address = (u64)elf.program;
         if (elf.program == MAP_FAILED) {
             WARN("Failed to allocate memory for ELF file %s", path);
@@ -242,7 +242,7 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
                     WARN("Failed to allocate memory for segment in file %s", path);
                     goto cleanup;
                 } else {
-                    VERBOSE("Mapping segment with vaddr %p to %p-%p (file offset: %08x)", (void*)phdr->p_vaddr, addr, addr + segment_size, phdr->p_offset);
+                    VERBOSE("Mapping segment with vaddr %p to %p-%p (file offset: %08lx)", (void*)phdr->p_vaddr, addr, addr + segment_size, phdr->p_offset);
                     if (addr != (void*)segment_base) {
                         WARN("Failed to allocate memory at requested address for segment in file %s", path);
                         goto cleanup;
@@ -289,6 +289,16 @@ elf_t* elf_load(const char* path, file_reading_callbacks_t* callbacks) {
                 break;
             }
         }
+    }
+
+    if (!is_interpreter) {
+        const u64 brk_size = 8 * 1024 * 1024;
+        elf.brk_base = mmap((void*)PAGE_ALIGN(highest_vaddr), brk_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (elf.brk_base == MAP_FAILED) {
+            WARN("Failed to allocate memory for brk in file %s", path);
+            goto cleanup;
+        }
+        VERBOSE("BRK base at %p", elf.brk_base);
     }
 
     elf.phdr = (void*)(base_address + lowest_vaddr + ehdr.e_phoff);

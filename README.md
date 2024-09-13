@@ -43,6 +43,7 @@ Do note that I haven't fully read through all of these, most of them were used a
 - [https://github.com/SeaOfNodes/Simple](https://github.com/SeaOfNodes/Simple), a Sea of Nodes IR implementation, really detailed and easy to read
 - [Global Code Motion Global Value Numbering](https://dl.acm.org/doi/pdf/10.1145/207110.207154), another great resource related to moving out of Sea of Nodes while performing GCN
 ### These have varying degrees of JITs
+- [v8 source code](https://github.com/v8/v8)
 - [Dynarmic source code & docs folder](https://github.com/PabloMK7/dynarmic/)
 - [Dillonb's n64 source code](https://github.com/Dillonb/n64/tree/master/src/cpu/dynarec/v2)
 - [PCSX-Redux source code](https://github.com/grumpycoders/pcsx-redux)

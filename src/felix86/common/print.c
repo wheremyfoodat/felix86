@@ -33,7 +33,7 @@ void print_guest_register(x86_ref_e guest) {
     }
 }
 
-void print_state(x86_state_t* state) {
+void print_state(x86_thread_state_t* state) {
     for (int i = 0; i < 16; i++) {
         print_guest_register(X86_REF_RAX + i);
         printf(" = %016lx\n", state->gprs[i]);

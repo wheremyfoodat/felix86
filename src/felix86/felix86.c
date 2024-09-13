@@ -9,17 +9,6 @@
 #include "felix86/ir/interpreter.h"
 #include <stdlib.h>
 
-struct felix86_recompiler_s {
-    ir_function_cache_t* function_cache;
-    x86_state_t state;
-    bool testing;
-    bool optimize;
-    bool print_blocks;
-    bool use_interpreter;
-    u64 base_address;
-    bool verify;
-};
-
 felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* config) {
     felix86_recompiler_t* recompiler = calloc(1, sizeof(felix86_recompiler_t));
     recompiler->function_cache = ir_function_cache_create();
@@ -29,6 +18,8 @@ felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* con
     recompiler->base_address = config->base_address;
     recompiler->use_interpreter = config->use_interpreter;
     recompiler->verify = config->verify;
+    recompiler->brk_base_address = config->brk_base_address;
+    recompiler->brk_current_address = config->brk_base_address;
 
     return recompiler;
 }
@@ -75,9 +66,9 @@ u64 felix86_get_guest(felix86_recompiler_t* recompiler, x86_ref_e ref) {
         case X86_REF_RIP:
             return recompiler->state.rip;
         case X86_REF_GS:
-            return recompiler->state.gs;
+            return recompiler->state.gsbase;
         case X86_REF_FS:
-            return recompiler->state.fs;
+            return recompiler->state.fsbase;
         case X86_REF_CF:
             return recompiler->state.cf;
         case X86_REF_PF:
@@ -149,10 +140,10 @@ void felix86_set_guest(felix86_recompiler_t* recompiler, x86_ref_e ref, u64 valu
             recompiler->state.rip = value;
             break;
         case X86_REF_GS:
-            recompiler->state.gs = value;
+            recompiler->state.gsbase = value;
             break;
         case X86_REF_FS:
-            recompiler->state.fs = value;
+            recompiler->state.fsbase = value;
             break;
         case X86_REF_CF:
             recompiler->state.cf = value;
@@ -210,7 +201,7 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler) {
                 ir_print_function_graphviz(function);
         }
 
-        ir_interpret_function(function, &recompiler->state);
+        ir_interpret_function(recompiler, function, &recompiler->state);
 
         if (recompiler->testing)
             break;

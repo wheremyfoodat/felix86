@@ -191,6 +191,22 @@ IR_HANDLE(sub_eax_imm) { // sub ax/eax/rax, imm16/32/64 - 0x2d
     ir_emit_set_cpazso(INSTS, c, p, a, z, s, o);
 }
 
+IR_HANDLE(sub_reg_rm) {
+    x86_size_e size_e = inst->operand_reg.size;
+    ir_instruction_t* reg = ir_emit_get_reg(INSTS, &inst->operand_reg);
+    ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
+    ir_instruction_t* result = ir_emit_sub(INSTS, reg, rm);
+    ir_emit_set_reg(INSTS, &inst->operand_reg, result);
+
+    ir_instruction_t* c = ir_emit_get_carry_sub(INSTS, reg, rm, result, size_e);
+    ir_instruction_t* p = ir_emit_get_parity(INSTS, result);
+    ir_instruction_t* a = ir_emit_get_aux_sub(INSTS, reg, rm);
+    ir_instruction_t* z = ir_emit_get_zero(INSTS, result);
+    ir_instruction_t* s = ir_emit_get_sign(INSTS, result, size_e);
+    ir_instruction_t* o = ir_emit_get_overflow_sub(INSTS, reg, rm, result, size_e);
+
+    ir_emit_set_cpazso(INSTS, c, p, a, z, s, o);
+}
 
 IR_HANDLE(xor_rm_reg) { // xor rm8, r8 - 0x30
     x86_size_e size_e = inst->operand_reg.size;

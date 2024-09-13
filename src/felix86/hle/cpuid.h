@@ -1,12 +1,12 @@
 #pragma once
 
+#include "felix86/felix86.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include "felix86/common/state.h"
-
-void felix86_cpuid(x86_state_t* state);
+void felix86_cpuid(x86_thread_state_t* state);
 
 #ifdef __cplusplus
 }

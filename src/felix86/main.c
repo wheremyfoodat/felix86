@@ -2,6 +2,7 @@
 #include "felix86/loader/loader.h"
 #include "felix86/common/version.h"
 #include "felix86/common/log.h"
+#include "felix86/hle/filesystem.h"
 #include <stdio.h>
 #include <argp.h>
 
@@ -89,6 +90,8 @@ int main(int argc, char* argv[]) {
     config.use_interpreter = false;
 
     argp_parse(&argp, argc, argv, 0, 0, &config);
+
+    felix86_fs_init();
 
     if (argc == 1) {
         felix86_gui();

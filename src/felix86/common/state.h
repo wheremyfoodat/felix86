@@ -15,15 +15,21 @@ typedef struct {
 	u64 rip;
 	u64 mm[8];
 	xmm_reg_t xmm[16];
-	u16 gs;
-	u16 fs;
 	bool cf;
 	bool pf;
 	bool af;
 	bool zf;
 	bool sf;
 	bool of;
-} x86_state_t;
+
+	// The kernel normally maintains these for each thread, since we are emulating the kernel
+	// we need to maintain them ourselves
+	u64 gsbase;
+	u64 fsbase;
+	u64 robust_futex_list;
+	u64 set_child_tid;
+	u64 clear_child_tid;
+} x86_thread_state_t;
 
 typedef union {
 	struct {

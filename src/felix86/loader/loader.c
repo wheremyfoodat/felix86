@@ -4,8 +4,10 @@
 #include "felix86/loader/elf.h"
 #include "felix86/common/log.h"
 #include "felix86/felix86.h"
+#include <errno.h>
 #include <string.h>
 #include <sys/auxv.h>
+#include <sys/random.h>
 
 extern char** environ;
 
@@ -46,7 +48,7 @@ void loader_run_elf(loader_config_t* config) {
 
     const char* path = config->argv[0];
 
-    elf_t* elf = elf_load(path, NULL);
+    elf_t* elf = elf_load(path, NULL, false);
     if (!elf) {
         ERROR("Failed to load ELF");
         return;
@@ -55,7 +57,7 @@ void loader_run_elf(loader_config_t* config) {
     u64 entry;
     elf_t* interpreter = NULL;
     if (elf->interpreter) {
-        interpreter = elf_load(elf->interpreter, NULL);
+        interpreter = elf_load(elf->interpreter, NULL, true);
         entry = (u64)interpreter->program + interpreter->entry;
         g_interpreter_address = (u64)interpreter->program;
     } else {
@@ -102,10 +104,19 @@ void loader_run_elf(loader_config_t* config) {
         envp_addresses[i] = rsp;
     }
     
+    // Push 128-bits to stack that are gonna be used as random data
+    u64 rand_address = stack_push(rsp, 0);
+    stack_push(rsp, 0);
+
+    int result = getrandom((void*)rand_address, 16, 0);
+    if (result == -1 || result != 16) {
+        ERROR("Failed to get random data");
+        return;
+    }
 
     rsp &= ~0xF; // Align to 16 bytes
 
-    auxv_t auxv_entries[16] =
+    auxv_t auxv_entries[17] =
     {
         [0] = { AT_PAGESZ, { 4096 } },
         [1] = { AT_EXECFN, { (u64)program_name } },
@@ -122,7 +133,8 @@ void loader_run_elf(loader_config_t* config) {
         [12] = { AT_PHDR, { (u64)elf->phdr } },
         [13] = { AT_PHENT, { elf->phent } },
         [14] = { AT_PHNUM, { elf->phnum } },
-        [15] = { AT_NULL, { 0 } } // null terminator
+        [15] = { AT_RANDOM, { rand_address } },
+        [16] = { AT_NULL, { 0 } } // null terminator
     };
 
     VERBOSE("AT_PHDR: %p", auxv_entries[12].a_un.a_ptr);
@@ -183,6 +195,7 @@ void loader_run_elf(loader_config_t* config) {
         .print_blocks = config->print_blocks,
         .base_address = (u64)elf->program,
         .verify = config->verify,
+        .brk_base_address = (u64)elf->brk_base
     };
     felix86_recompiler_t* recompiler = felix86_recompiler_create(&fconfig);
     felix86_set_guest(recompiler, X86_REF_RIP, entry);

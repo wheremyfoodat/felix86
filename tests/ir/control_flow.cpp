@@ -28,8 +28,8 @@ TEST_CASE("simple_if", "[felix86-ir]") {
 
     END_IR_TEST();
 
-    x86_state_t state = {0};
-    ir_interpret_function(function, &state);
+    x86_thread_state_t state = {0};
+    ir_interpret_function(NULL, function, &state);
 
     REQUIRE(state.gprs[X86_REF_RAX - X86_REF_RAX] == 20);
 
@@ -60,7 +60,7 @@ TEST_CASE("simple_if", "[felix86-ir]") {
 
 //     ir_print_function_uml(function);
 
-//     x86_state_t state = {0};
+//     x86_thread_state_t state = {0};
 //     ir_interpret_function(function, &state);
 
 //     REQUIRE(state.gprs[X86_REF_RAX - X86_REF_RAX] == 10);

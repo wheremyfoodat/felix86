@@ -1,19 +1,18 @@
 #include "felix86/ir/interpreter.h"
-#include "felix86/common/cpuid.h"
+#include "felix86/hle/cpuid.h"
 #include "felix86/common/global.h"
 #include "felix86/common/print.h"
 #include "felix86/common/log.h"
 #include "felix86/common/utility.h"
+#include "felix86/hle/syscall.h"
 #include "felix86/ir/print.h"
 #include <string.h>
-#include <sys/syscall.h>
 #include <unistd.h>
-#include <cpuid.h>
 
 static u64 temps[16384] = {0};
 static xmm_reg_t xmm_temps[16384] = {0};
 
-ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instruction, x86_state_t* state)
+ir_block_t* ir_interpret_instruction(felix86_recompiler_t* recompiler, ir_block_t* entry, ir_instruction_t* instruction, x86_thread_state_t* state)
 {
     switch (instruction->opcode) {
         case IR_NULL: {
@@ -274,22 +273,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
             break;
         }
         case IR_SYSCALL: {
-            u64 opcode = state->gprs[0];
-            u64 arg1 = state->gprs[X86_REF_RDI - X86_REF_RAX];
-            u64 arg2 = state->gprs[X86_REF_RSI - X86_REF_RAX];
-            u64 arg3 = state->gprs[X86_REF_RDX - X86_REF_RAX];
-            u64 arg4 = state->gprs[X86_REF_R10 - X86_REF_RAX];
-            u64 arg5 = state->gprs[X86_REF_R8 - X86_REF_RAX];
-            u64 arg6 = state->gprs[X86_REF_R9 - X86_REF_RAX];
-            VERBOSE("Syscall number: %016lx", opcode);
-            VERBOSE("Syscall argument 1: %016lx", arg1);
-            VERBOSE("Syscall argument 2: %016lx", arg2);
-            VERBOSE("Syscall argument 3: %016lx", arg3);
-            VERBOSE("Syscall argument 4: %016lx", arg4);
-            VERBOSE("Syscall argument 5: %016lx", arg5);
-            VERBOSE("Syscall argument 6: %016lx", arg6);
-            u64 result = syscall(opcode, arg1, arg2, arg3, arg4, arg5, arg6);
-            state->gprs[0] = result;
+            felix86_syscall(recompiler, state);
             break;
         }
         case IR_CPUID: {
@@ -424,11 +408,11 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
                     break;
                 }
                 case X86_REF_FS: {
-                    temps[instruction->name] = state->fs;
+                    temps[instruction->name] = state->fsbase;
                     break;
                 }
                 case X86_REF_GS: {
-                    temps[instruction->name] = state->gs;
+                    temps[instruction->name] = state->gsbase;
                     break;
                 }
                 case X86_REF_XMM0 ... X86_REF_XMM15: {
@@ -684,7 +668,7 @@ ir_block_t* ir_interpret_instruction(ir_block_t* entry, ir_instruction_t* instru
     return NULL;
 }
 
-void ir_interpret_function(ir_function_t* function, x86_state_t* state) {
+void ir_interpret_function(felix86_recompiler_t* recompiler, ir_function_t* function, x86_thread_state_t* state) {
     memset(temps, 0, sizeof(temps));
     ir_block_list_t* blocks = function->entry->successors;
     ir_instruction_list_t* current = blocks->block->instructions;
@@ -692,7 +676,7 @@ void ir_interpret_function(ir_function_t* function, x86_state_t* state) {
     ir_block_t* entry = NULL;
     ir_block_t* entry_next = blocks->block;
     while (current) {
-        next = ir_interpret_instruction(entry, &current->instruction, state);
+        next = ir_interpret_instruction(recompiler, entry, &current->instruction, state);
         if (next) {
             entry = entry_next;
             entry_next = next;

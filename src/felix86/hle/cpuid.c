@@ -1,15 +1,15 @@
-#include "felix86/common/cpuid.h"
+#include "felix86/hle/cpuid.h"
 #include "felix86/common/log.h"
 #include "felix86/frontend/instruction.h"
 
 const char* manufacturer_id = "GenuineIntel";
 
-void felix86_cpuid(x86_state_t* state) {
+void felix86_cpuid(x86_thread_state_t* state) {
     u32 eax = state->gprs[0];
     u32 ebx = 0;
     u32 ecx = 0;
     u32 edx = 0;
-    WARN("CPUID: %08x", eax);
+    VERBOSE("CPUID: %08x", eax);
     switch (eax) {
         case 0: {
             eax = 0x0B; // Nehalem, which doesn't have AVX

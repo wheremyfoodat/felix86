@@ -15,6 +15,7 @@ typedef struct {
 	bool use_interpreter;
 	u64 base_address;
 	bool verify;
+	u64 brk_base_address;
 } felix86_recompiler_config_t;
 
 typedef enum : u8 {
@@ -23,7 +24,18 @@ typedef enum : u8 {
 	DoneTesting,
 } felix86_exit_reason_e;
 
-typedef struct felix86_recompiler_s felix86_recompiler_t;
+typedef struct {
+    struct ir_function_cache_s* function_cache;
+    x86_thread_state_t state;
+    bool testing;
+    bool optimize;
+    bool print_blocks;
+    bool use_interpreter;
+    u64 base_address;
+    bool verify;
+    u64 brk_base_address;
+    u64 brk_current_address;
+} felix86_recompiler_t;
 
 felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* config);
 void felix86_recompiler_destroy(felix86_recompiler_t* recompiler);
