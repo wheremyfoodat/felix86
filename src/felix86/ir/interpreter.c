@@ -438,6 +438,35 @@ ir_block_t* ir_interpret_instruction(felix86_recompiler_t* recompiler, ir_block_
             }
             break;
         }
+
+        case IR_VECTOR_UNPACK_BYTE_LOW: {
+            xmm_reg_t xmm_dest = xmm_temps[instruction->operands.args[0]->name];
+            xmm_reg_t xmm_src = xmm_temps[instruction->operands.args[1]->name];
+            xmm_reg_t result = {0};
+            u8* src1 = (u8*)&xmm_dest.data[0];
+            u8* src2 = (u8*)&xmm_src.data[0];
+            u8* dest = (u8*)&result.data[0];
+            for (int i = 0; i < 128; i += 8) {
+                int j = i >> 3;
+                dest[j] = j & 1 ? src2[j >> 1] : src1[j >> 1];
+            }
+            xmm_temps[instruction->name] = result;
+            break;
+        }
+        case IR_VECTOR_UNPACK_WORD_LOW: {
+            xmm_reg_t xmm_dest = xmm_temps[instruction->operands.args[0]->name];
+            xmm_reg_t xmm_src = xmm_temps[instruction->operands.args[1]->name];
+            xmm_reg_t result = {0};
+            u16* src1 = (u16*)&xmm_dest.data[0];
+            u16* src2 = (u16*)&xmm_src.data[0];
+            u16* dest = (u16*)&result.data[0];
+            for (int i = 0; i < 128; i += 16) {
+                int j = i >> 4;
+                dest[j] = j & 1 ? src2[j >> 1] : src1[j >> 1];
+            }
+            xmm_temps[instruction->name] = result;
+            break;
+        }
         case IR_VECTOR_UNPACK_DWORD_LOW: {
             xmm_reg_t xmm_dest = xmm_temps[instruction->operands.args[0]->name];
             xmm_reg_t xmm_src = xmm_temps[instruction->operands.args[1]->name];
@@ -473,6 +502,23 @@ ir_block_t* ir_interpret_instruction(felix86_recompiler_t* recompiler, ir_block_
             xmm_reg_t result = {0};
             result.data[0] = xmm_dest.data[0] ^ xmm_src.data[0];
             result.data[1] = xmm_dest.data[1] ^ xmm_src.data[1];
+            xmm_temps[instruction->name] = result;
+            break;
+        }
+        case IR_VECTOR_PACKED_SHUFFLE_DWORD: {
+            if (instruction->operands.args[1]->type != IR_TYPE_LOAD_IMMEDIATE) {
+                ERROR("Invalid shuffle mask");
+            }
+
+            u8 imm = instruction->operands.args[1]->load_immediate.immediate;
+            xmm_reg_t xmm_src = xmm_temps[instruction->operands.args[0]->name];
+            xmm_reg_t result = {0};
+            u32* src = (u32*)&xmm_src.data[0];
+            u32* dest = (u32*)&result.data[0];
+            for (int i = 0; i < 4; i++) {
+                dest[i] = src[imm & 3];
+                imm >>= 2;
+            }
             xmm_temps[instruction->name] = result;
             break;
         }
@@ -615,6 +661,10 @@ ir_block_t* ir_interpret_instruction(felix86_recompiler_t* recompiler, ir_block_
             temps[instruction->name] = __builtin_clzll(temps[instruction->operands.args[0]->name]);
             break;
         }
+        case IR_CTZ: {
+            temps[instruction->name] = __builtin_ctzll(temps[instruction->operands.args[0]->name]);
+            break;
+        }
         case IR_IMUL: {
             temps[instruction->name] = (i64)temps[instruction->operands.args[0]->name] * (i64)temps[instruction->operands.args[1]->name];
             break;
@@ -648,10 +698,65 @@ ir_block_t* ir_interpret_instruction(felix86_recompiler_t* recompiler, ir_block_
             xmm_temps[instruction->name] = result;
             break;
         }
+        case IR_VECTOR_PACKED_COMPARE_EQ_BYTE: {
+            xmm_reg_t xmm_dest = xmm_temps[instruction->operands.args[0]->name];
+            xmm_reg_t xmm_src = xmm_temps[instruction->operands.args[1]->name];
+            xmm_reg_t result = {0};
+            u8* result_dest = (u8*)&result.data[0];
+            for (u32 i = 0; i < 16; i++) {
+                if (((u8*)&xmm_dest.data[0])[i] == ((u8*)&xmm_src.data[0])[i]) {
+                    result_dest[i] = 0xFF;
+                }
+            }
+            xmm_temps[instruction->name] = result;
+            break;
+        }
+        case IR_VECTOR_PACKED_COMPARE_EQ_WORD: {
+            xmm_reg_t xmm_dest = xmm_temps[instruction->operands.args[0]->name];
+            xmm_reg_t xmm_src = xmm_temps[instruction->operands.args[1]->name];
+            xmm_reg_t result = {0};
+            u16* result_dest = (u16*)&result.data[0];
+            for (u32 i = 0; i < 8; i++) {
+                if (((u16*)&xmm_dest.data[0])[i] == ((u16*)&xmm_src.data[0])[i]) {
+                    result_dest[i] = 0xFFFF;
+                }
+            }
+            xmm_temps[instruction->name] = result;
+            break;
+        }
+        case IR_VECTOR_PACKED_COMPARE_EQ_DWORD: {
+            xmm_reg_t xmm_dest = xmm_temps[instruction->operands.args[0]->name];
+            xmm_reg_t xmm_src = xmm_temps[instruction->operands.args[1]->name];
+            xmm_reg_t result = {0};
+            u32* result_dest = (u32*)&result.data[0];
+            for (u32 i = 0; i < 4; i++) {
+                if (((u32*)&xmm_dest.data[0])[i] == ((u32*)&xmm_src.data[0])[i]) {
+                    result_dest[i] = 0xFFFFFFFF;
+                }
+            }
+            xmm_temps[instruction->name] = result;
+            break;
+        }
+        case IR_VECTOR_PACKED_MOVE_BYTE_MASK: {
+            xmm_reg_t xmm = xmm_temps[instruction->operands.args[0]->name];
+            u64 mask = 0;
+            u8* data = (u8*)&xmm.data[0];
+            for (u32 i = 0; i < 16; i++) {
+                mask |= (data[i] >> 7) << (i * 8);
+            }
+            temps[instruction->name] = mask;
+            break;
+        }
         case IR_RUNTIME_COMMENT: {
             WARN("Runtime comment: %s", instruction->runtime_comment.comment);
             fflush(stdout);
             // print_state(state);
+            break;
+        }
+        case IR_LEFT_ROTATE64: {
+            u64 value = temps[instruction->operands.args[0]->name];
+            u64 count = temps[instruction->operands.args[1]->name];
+            temps[instruction->name] = (value << count) | (value >> (64 - count));
             break;
         }
         case IR_HINT_FULL:

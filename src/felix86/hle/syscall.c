@@ -1,5 +1,6 @@
 #include "felix86/hle/syscall.h"
 #include "felix86/common/log.h"
+#include "felix86/hle/filesystem.h"
 #include <errno.h>
 #include <unistd.h>
 
@@ -131,7 +132,18 @@ void felix86_syscall(felix86_recompiler_t* recompiler, x86_thread_state_t* state
             break;
         }
         case felix86_x86_64_readlinkat: {
-            ERROR("readlinkat not implemented");
+            felix86_fs_readlinkat(rdi, (const char*)rsi, (char*)rdx, r10);
+            VERBOSE("readlinkat(%d, %s, %s, %d) = %d", (int)rdi, (const char*)rsi, (char*)rdx, (int)r10, (int)result);
+            break;
+        }
+        case felix86_x86_64_getrandom: {
+            result = HOST_SYSCALL(syscall_number, rdi, rsi, rdx);
+            VERBOSE("getrandom(%p, %016lx, %d) = %016lx", (void*)rdi, rsi, (int)rdx, result);
+            break;
+        }
+        case felix86_x86_64_mprotect: {
+            result = HOST_SYSCALL(syscall_number, rdi, rsi, rdx);
+            VERBOSE("mprotect(%p, %016lx, %d) = %016lx", (void*)rdi, rsi, (int)rdx, result);
             break;
         }
         default: {

@@ -7,11 +7,11 @@ extern "C" {
 #include "felix86/common/utility.h"
 #include <linux/limits.h>
 
-extern char sandbox_path[PATH_MAX];
+extern char squashfs_path[PATH_MAX];
 
-int felix86_make_path_safe(char* buffer, u32 buffer_size, const char* path);
+int felix86_lexically_normal(char* buffer, u32 buffer_size, const char* path);
 
-void felix86_fs_init(const char* squashfs_path);
+void felix86_fs_init(const char* squashfs_path, const char* executable_path);
 void felix86_fs_cleanup();
 u32 felix86_fs_readlinkat(u32 dirfd, const char* pathname, char* buf, u32 bufsiz);
 

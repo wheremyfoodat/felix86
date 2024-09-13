@@ -4,7 +4,7 @@
 extern "C" {
 #endif
 
-void felix86_exit() __attribute__((noreturn));
+void felix86_exit(int code) __attribute__((noreturn));
 
 #ifdef __cplusplus
 }

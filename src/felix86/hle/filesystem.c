@@ -1,29 +1,40 @@
 #include "felix86/hle/filesystem.h"
 #include "felix86/common/log.h"
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 
-char sandbox_path[PATH_MAX] = {0};
+char squashfs_path[PATH_MAX] = {0};
+char emulated_executable_path[PATH_MAX] = {0};
 bool mounted = false;
 
-void felix86_fs_init(const char* squashfs_path)
+const char* proc_self_exe = "/proc/self/exe";
+
+void felix86_fs_init(const char* squashfs_file_path, const char* executable_path)
 {
-    snprintf(sandbox_path, sizeof(sandbox_path), "/tmp/felix86-%d-XXXXXX", getpid());
-    mkdtemp(sandbox_path);
+    strncpy(emulated_executable_path, executable_path, sizeof(emulated_executable_path));
+
+    snprintf(squashfs_path, sizeof(squashfs_path), "/tmp/felix86-%d-XXXXXX", getpid());
+    mkdtemp(squashfs_path);
 
     pid_t pid = fork();
 
     if (pid == 0) {
         const char* args[4] = {
             "squashfuse",
+            squashfs_file_path,
             squashfs_path,
-            sandbox_path,
             NULL,
         };
 
-        execvp("squashfuse", (char* const*)args);
+        int result = execvp("squashfuse", (char* const*)args);
+        if (result != 0) {
+            exit(1);
+        }
     } else {
         int status;
         waitpid(pid, &status, 0);
@@ -32,7 +43,7 @@ void felix86_fs_init(const char* squashfs_path)
             ERROR("Failed to mount squashfs image");
         }
 
-        VERBOSE("Mounted squashfs image at %s", sandbox_path);
+        VERBOSE("Mounted squashfs image at %s", squashfs_path);
         mounted = true;
     }
 }
@@ -50,32 +61,30 @@ void felix86_fs_cleanup()
             "fusermount",
             "-u",
             "-q",
-            sandbox_path,
+            squashfs_path,
             NULL,
         };
 
         execvp("fusermount", args);
     } else {
         int status;
-        waitpid(pid, &status, 0);
+        while (waitpid(pid, &status, 0) == -1 && errno == EINTR);
 
         if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
-            ERROR("Failed to unmount squashfs image, please unmount manually: %s", sandbox_path);
+            WARN("Failed to unmount squashfs image, please unmount manually: %s", squashfs_path);
         }
 
-        VERBOSE("Unmounted squashfs image at %s", sandbox_path);
-        rmdir(sandbox_path);
+        VERBOSE("Unmounted squashfs image at %s", squashfs_path);
+        rmdir(squashfs_path);
     }
 }
 
 u32 felix86_fs_readlinkat(u32 dirfd, const char* pathname, char* buf, u32 bufsiz)
 {
-    char path[PATH_MAX] = {0};
-    bool is_absolute = felix86_make_path_safe(path, sizeof(path), pathname);
-
-    if (is_absolute) {
-        return readlink(path, buf, bufsiz);
-    } else {
-        ERROR("Unimplemented readlinkat with a relative path");
+    if (strncmp(pathname, proc_self_exe, strlen(proc_self_exe)) == 0) {
+        snprintf(buf, bufsiz, "%s", emulated_executable_path);
+        return strlen(emulated_executable_path);
     }
+
+    ERROR("Unsupported readlinkat call: (%d) %s", dirfd, pathname);
 }

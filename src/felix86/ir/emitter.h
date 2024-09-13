@@ -28,6 +28,7 @@ ir_instruction_t* ir_emit_imul(ir_instruction_list_t* instructions, ir_instructi
 ir_instruction_t* ir_emit_idiv(ir_instruction_list_t* instructions, x86_size_e opcode, ir_instruction_t* source);
 ir_instruction_t* ir_emit_udiv(ir_instruction_list_t* instructions, x86_size_e opcode, ir_instruction_t* source);
 ir_instruction_t* ir_emit_clz(ir_instruction_list_t* instructions, ir_instruction_t* source);
+ir_instruction_t* ir_emit_ctz(ir_instruction_list_t* instructions, ir_instruction_t* source);
 ir_instruction_t* ir_emit_and(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_or(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_xor(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
@@ -55,15 +56,24 @@ ir_instruction_t* ir_emit_insert_integer_to_vector(
 	ir_instruction_list_t* instructions, ir_instruction_t* dst, ir_instruction_t* source, u8 idx, x86_size_e sz
 );
 ir_instruction_t* ir_emit_extract_integer_from_vector(ir_instruction_list_t* instructions, ir_instruction_t* src, u8 idx, x86_size_e sz);
+ir_instruction_t* ir_emit_vector_unpack_byte_low(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
+ir_instruction_t* ir_emit_vector_unpack_word_low(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_vector_unpack_dword_low(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_vector_unpack_qword_low(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_vector_from_integer(ir_instruction_list_t* instructions, ir_instruction_t* source);
 ir_instruction_t* ir_emit_integer_from_vector(ir_instruction_list_t* instructions, ir_instruction_t* source);
 ir_instruction_t* ir_emit_vector_packed_and(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
+ir_instruction_t* ir_emit_vector_packed_or(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_vector_packed_xor(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_vector_packed_shift_right(ir_instruction_list_t* instructions, ir_instruction_t* source, ir_instruction_t* imm);
 ir_instruction_t* ir_emit_vector_packed_shift_left(ir_instruction_list_t* instructions, ir_instruction_t* source, ir_instruction_t* imm);
 ir_instruction_t* ir_emit_vector_packed_add_qword(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
+ir_instruction_t* ir_emit_vector_packed_compare_eq_byte(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
+ir_instruction_t* ir_emit_vector_packed_compare_eq_word(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
+ir_instruction_t* ir_emit_vector_packed_compare_eq_dword(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
+ir_instruction_t* ir_emit_vector_packed_shuffle_dword(ir_instruction_list_t* instructions, ir_instruction_t* source, ir_instruction_t* immediate);
+ir_instruction_t* ir_emit_vector_packed_move_byte_mask(ir_instruction_list_t* instructions, ir_instruction_t* source);
+ir_instruction_t* ir_emit_vector_packed_min_byte(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 
 ir_instruction_t* ir_emit_get_guest(ir_instruction_list_t* instructions, x86_ref_e ref);
 void ir_emit_set_guest(ir_instruction_list_t* instructions, x86_ref_e ref, ir_instruction_t* source);
@@ -114,7 +124,7 @@ void ir_emit_set_gpr64(ir_instruction_list_t* instructions, x86_ref_e reg, ir_in
 void ir_emit_set_vector(ir_instruction_list_t* instructions, x86_ref_e reg, ir_instruction_t* source);
 
 ir_instruction_t* ir_emit_get_parity(ir_instruction_list_t* instructions, ir_instruction_t* source);
-ir_instruction_t* ir_emit_get_zero(ir_instruction_list_t* sta32te, ir_instruction_t* source);
+ir_instruction_t* ir_emit_get_zero(ir_instruction_list_t* sta32te, ir_instruction_t* source, x86_size_e size);
 ir_instruction_t* ir_emit_get_sign(ir_instruction_list_t* instructions, ir_instruction_t* source, x86_size_e size);
 ir_instruction_t* ir_emit_get_overflow_add(
 	ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2, ir_instruction_t* result, x86_size_e size

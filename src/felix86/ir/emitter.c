@@ -38,6 +38,18 @@ x86_operand_t get_full_reg(x86_ref_e ref) {
     return operand;
 }
 
+ir_instruction_t* ir_emit_get_mask(ir_instruction_list_t* instructions, x86_size_e size_e)
+{
+    u16 size = get_bit_size(size_e);
+    switch (size) {
+        case 8: return ir_emit_immediate(instructions, 0xFF);
+        case 16: return ir_emit_immediate(instructions, 0xFFFF);
+        case 32: return ir_emit_immediate(instructions, 0xFFFFFFFF);
+        case 64: return ir_emit_immediate(instructions, 0xFFFFFFFFFFFFFFFF);
+        default: ERROR("Invalid size");
+    }
+}
+
 ir_instruction_t* ir_emit_one_operand(ir_instruction_list_t* instructions, ir_opcode_e opcode, ir_instruction_t* source) {
     ir_instruction_t* instruction = ir_ilist_push_back(instructions);
     instruction->opcode = opcode;
@@ -185,6 +197,11 @@ ir_instruction_t* ir_emit_idiv(ir_instruction_list_t* instructions, x86_size_e s
 ir_instruction_t* ir_emit_clz(ir_instruction_list_t* instructions, ir_instruction_t* source)
 {
     return ir_emit_one_operand(instructions, IR_CLZ, source);
+}
+
+ir_instruction_t* ir_emit_ctz(ir_instruction_list_t* instructions, ir_instruction_t* source)
+{
+    return ir_emit_one_operand(instructions, IR_CTZ, source);
 }
 
 ir_instruction_t* ir_emit_udiv(ir_instruction_list_t* instructions, x86_size_e size, ir_instruction_t* source)
@@ -352,11 +369,11 @@ ir_instruction_t* ir_emit_jump_conditional(ir_instruction_list_t* instructions, 
     return instruction;
 }
 
-ir_instruction_t* ir_emit_insert_integer_to_vector(ir_instruction_list_t* instructions, ir_instruction_t* dst, ir_instruction_t* source, u8 idx, x86_size_e sz)
+ir_instruction_t* ir_emit_insert_integer_to_vector(ir_instruction_list_t* instructions, ir_instruction_t* dest, ir_instruction_t* source, u8 idx, x86_size_e sz)
 {
     ir_instruction_t* index = ir_emit_immediate(instructions, idx);
     ir_instruction_t* size = ir_emit_immediate(instructions, sz);
-    return ir_emit_four_operands(instructions, IR_INSERT_INTEGER_TO_VECTOR, dst, source, index, size);
+    return ir_emit_four_operands(instructions, IR_INSERT_INTEGER_TO_VECTOR, dest, source, index, size);
 }
 
 ir_instruction_t* ir_emit_extract_integer_from_vector(ir_instruction_list_t* instructions, ir_instruction_t* src, u8 idx, x86_size_e sz)
@@ -364,6 +381,16 @@ ir_instruction_t* ir_emit_extract_integer_from_vector(ir_instruction_list_t* ins
     ir_instruction_t* index = ir_emit_immediate(instructions, idx);
     ir_instruction_t* size = ir_emit_immediate(instructions, sz);
     return ir_emit_three_operands(instructions, IR_EXTRACT_INTEGER_FROM_VECTOR, src, index, size);
+}
+
+ir_instruction_t* ir_emit_vector_unpack_byte_low(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    return ir_emit_two_operands(instructions, IR_VECTOR_UNPACK_BYTE_LOW, source1, source2);
+}
+
+ir_instruction_t* ir_emit_vector_unpack_word_low(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    return ir_emit_two_operands(instructions, IR_VECTOR_UNPACK_WORD_LOW, source1, source2);
 }
 
 ir_instruction_t* ir_emit_vector_unpack_dword_low(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
@@ -391,6 +418,11 @@ ir_instruction_t* ir_emit_vector_packed_and(ir_instruction_list_t* instructions,
     return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_AND, source1, source2);
 }
 
+ir_instruction_t* ir_emit_vector_packed_or(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_OR, source1, source2);
+}
+
 ir_instruction_t* ir_emit_vector_packed_xor(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
 {
     return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_XOR, source1, source2);
@@ -409,6 +441,36 @@ ir_instruction_t* ir_emit_vector_packed_shift_left(ir_instruction_list_t* instru
 ir_instruction_t* ir_emit_vector_packed_add_qword(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
 {
     return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_ADD_QWORD, source1, source2);
+}
+
+ir_instruction_t* ir_emit_vector_packed_compare_eq_byte(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_COMPARE_EQ_BYTE, source1, source2);
+}
+
+ir_instruction_t* ir_emit_vector_packed_compare_eq_word(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_COMPARE_EQ_WORD, source1, source2);
+}
+
+ir_instruction_t* ir_emit_vector_packed_compare_eq_dword(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_COMPARE_EQ_DWORD, source1, source2);
+}
+
+ir_instruction_t* ir_emit_vector_packed_shuffle_dword(ir_instruction_list_t* instructions, ir_instruction_t* source, ir_instruction_t* immediate)
+{
+    return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_SHUFFLE_DWORD, source, immediate);
+}
+
+ir_instruction_t* ir_emit_vector_packed_move_byte_mask(ir_instruction_list_t* instructions, ir_instruction_t* source)
+{
+    return ir_emit_one_operand(instructions, IR_VECTOR_PACKED_MOVE_BYTE_MASK, source);
+}
+
+ir_instruction_t* ir_emit_vector_packed_min_byte(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_MIN_BYTE, source1, source2);
 }
 
 ir_instruction_t* ir_emit_get_guest(ir_instruction_list_t* instructions, x86_ref_e ref)
@@ -556,6 +618,10 @@ ir_instruction_t* ir_emit_immediate_sext(ir_instruction_list_t* instructions, x8
 
 ir_instruction_t* ir_emit_get_reg(ir_instruction_list_t* instructions, x86_operand_t* reg_operand)
 {
+    if (reg_operand->type != X86_OP_TYPE_REGISTER) {
+        ERROR("Invalid operand type");
+    }
+
     switch (reg_operand->size) {
         case X86_SIZE_BYTE: {
             if (reg_operand->reg.high8) {
@@ -776,10 +842,11 @@ ir_instruction_t* ir_emit_get_parity(ir_instruction_list_t* instructions, ir_ins
     return instruction;
 }
 
-ir_instruction_t* ir_emit_get_zero(ir_instruction_list_t* instructions, ir_instruction_t* source)
+ir_instruction_t* ir_emit_get_zero(ir_instruction_list_t* instructions, ir_instruction_t* source, x86_size_e size_e)
 {
     ir_instruction_t* zero = ir_emit_immediate(instructions, 0);
-    ir_instruction_t* instruction = ir_emit_equal(instructions, source, zero);
+    ir_instruction_t* masked = ir_emit_and(instructions, source, ir_emit_get_mask(instructions, size_e));
+    ir_instruction_t* instruction = ir_emit_equal(instructions, masked, zero);
 
     return instruction;
 }
@@ -812,12 +879,6 @@ ir_instruction_t* ir_emit_get_shift_mask_right(ir_instruction_list_t* instructio
     ir_instruction_t* shift = ir_emit_sub(instructions, source, one);
     ir_instruction_t* mask = ir_emit_shift_left(instructions, one, shift);
     return ir_emit_select(instructions, is_zero, zero, mask);
-}
-
-ir_instruction_t* ir_emit_get_mask(ir_instruction_list_t* instructions, x86_size_e size_e)
-{
-    u16 size = get_bit_size(size_e);
-    return ir_emit_immediate(instructions, (1ull << size) - 1);
 }
 
 ir_instruction_t* ir_emit_get_sign(ir_instruction_list_t* instructions, ir_instruction_t* source, x86_size_e size_e)
@@ -932,6 +993,7 @@ ir_instruction_t* ir_emit_set_cpazso(ir_instruction_list_t* instructions, ir_ins
 void ir_emit_group1_imm(ir_instruction_list_t* instructions, x86_instruction_t* inst) {
     x86_group1_e opcode = inst->operand_reg.reg.ref - X86_REF_RAX;
 
+    x86_size_e size_e = inst->operand_rm.size;
     ir_instruction_t* rm = ir_emit_get_rm(instructions, &inst->operand_rm);
     ir_instruction_t* imm = ir_emit_immediate_sext(instructions, &inst->operand_imm);
     ir_instruction_t* result = NULL;
@@ -995,7 +1057,7 @@ void ir_emit_group1_imm(ir_instruction_list_t* instructions, x86_instruction_t* 
     }
 
     ir_instruction_t* p = ir_emit_get_parity(instructions, result);
-    ir_instruction_t* z = ir_emit_get_zero(instructions, result);
+    ir_instruction_t* z = ir_emit_get_zero(instructions, result, size_e);
     ir_instruction_t* s = ir_emit_get_sign(instructions, result, inst->operand_rm.size);
 
     ir_emit_set_cpazso(instructions, c, p, a, z, s, o);
@@ -1078,7 +1140,7 @@ void ir_emit_group2(ir_instruction_list_t* instructions, x86_instruction_t* inst
     }
 
     p = ir_emit_get_parity(instructions, result);
-    z = ir_emit_get_zero(instructions, result);
+    z = ir_emit_get_zero(instructions, result, size_e);
     s = ir_emit_get_sign(instructions, result, size_e);
 
     ir_emit_set_cpazso(instructions, c, p, a, z, s, o);
@@ -1105,7 +1167,7 @@ void ir_emit_group3(ir_instruction_list_t* instructions, x86_instruction_t* inst
             ir_instruction_t* imm = ir_emit_immediate_sext(instructions, &inst->operand_imm);
             ir_instruction_t* masked = ir_emit_and(instructions, rm, imm);
             s = ir_emit_get_sign(instructions, masked, size_e);
-            z = ir_emit_get_zero(instructions, masked);
+            z = ir_emit_get_zero(instructions, masked, size_e);
             p = ir_emit_get_parity(instructions, masked);
             break;
         }
@@ -1116,7 +1178,7 @@ void ir_emit_group3(ir_instruction_list_t* instructions, x86_instruction_t* inst
         case X86_GROUP3_NEG: {
             ir_instruction_t* zero = ir_emit_immediate(instructions, 0);
             result = ir_emit_sub(instructions, zero, rm);
-            z = ir_emit_get_zero(instructions, result);
+            z = ir_emit_get_zero(instructions, result, size_e);
             c = ir_emit_equal(instructions, z, zero);
             s = ir_emit_get_sign(instructions, result, size_e);
             o = ir_emit_get_overflow_sub(instructions, zero, rm, result, size_e);

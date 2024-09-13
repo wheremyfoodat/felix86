@@ -1,3 +1,4 @@
+#include "felix86/common/prompt.h"
 #include "felix86/gui.h"
 #include "felix86/loader/loader.h"
 #include "felix86/common/version.h"
@@ -91,7 +92,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    felix86_fs_init(config.squashfs_path);
+    felix86_fs_init(config.squashfs_path, config.argv[0]);
 
     if (argc == 1) {
         felix86_gui();
@@ -99,5 +100,5 @@ int main(int argc, char* argv[]) {
         loader_run_elf(&config);
     }
 
-    felix86_exit();
+    felix86_exit(0);
 }

@@ -13,6 +13,7 @@
     int a_1 = ux & 0xF, a_2 = uy & 0xF; \
     int a = a_1 + a_2; \
     verify_a(a > 0xF); \
+    verify_z(result == 0); \
 }
 
 TEST_ADD(1, 5)
@@ -27,6 +28,7 @@ TEST_ADD(0, 127)
 TEST_ADD(0x0F, 0x0F)
 TEST_ADD(0x0F, 0x0E)
 TEST_ADD(0x0E, 0x02)
+TEST_ADD(0xFF, 0x01)
 
 FELIX86_TEST(add_sign_extend) {
     xor_(ebx, ebx);

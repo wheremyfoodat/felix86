@@ -23,7 +23,7 @@ extern bool quiet;
 #define ERROR(format, ...)                                                                               \
 	do {                                                                                                 \
 		printf(ANSI_COLOR_RED "%s:%d " format ANSI_COLOR_RESET "\n", __FILE__, __LINE__, ##__VA_ARGS__); \
-		felix86_exit();                                                                                    \
+		felix86_exit(1);                                                                                    \
 	} while (0)
 #define WARN(format, ...)                                                                                       \
 	do {                                                                                                        \
