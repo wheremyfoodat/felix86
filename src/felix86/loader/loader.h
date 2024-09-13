@@ -15,7 +15,7 @@ typedef struct {
 	bool print_blocks;
 	bool use_interpreter;
 	bool dont_optimize;
-	bool verify;
+	const char* squashfs_path;
 } loader_config_t;
 
 void loader_run_elf(loader_config_t* config);

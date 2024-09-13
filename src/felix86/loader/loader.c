@@ -194,7 +194,6 @@ void loader_run_elf(loader_config_t* config) {
         .use_interpreter = config->use_interpreter,
         .print_blocks = config->print_blocks,
         .base_address = (u64)elf->program,
-        .verify = config->verify,
         .brk_base_address = (u64)elf->brk_base
     };
     felix86_recompiler_t* recompiler = felix86_recompiler_create(&fconfig);

@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "felix86/common/exit.h"
 
 #define ANSI_COLOR_RED "\x1b[31m"
 #define ANSI_COLOR_GREEN "\x1b[32m"
@@ -22,7 +23,7 @@ extern bool quiet;
 #define ERROR(format, ...)                                                                               \
 	do {                                                                                                 \
 		printf(ANSI_COLOR_RED "%s:%d " format ANSI_COLOR_RESET "\n", __FILE__, __LINE__, ##__VA_ARGS__); \
-		exit(1);                                                                                         \
+		felix86_exit();                                                                                    \
 	} while (0)
 #define WARN(format, ...)                                                                                       \
 	do {                                                                                                        \

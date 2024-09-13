@@ -17,7 +17,6 @@ felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* con
     recompiler->print_blocks = config->print_blocks;
     recompiler->base_address = config->base_address;
     recompiler->use_interpreter = config->use_interpreter;
-    recompiler->verify = config->verify;
     recompiler->brk_base_address = config->brk_base_address;
     recompiler->brk_current_address = config->brk_base_address;
 
@@ -83,6 +82,7 @@ u64 felix86_get_guest(felix86_recompiler_t* recompiler, x86_ref_e ref) {
             return recompiler->state.of;
         default:
             ERROR("Invalid GPR reference");
+            break;
     }
 }
 

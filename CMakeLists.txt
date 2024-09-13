@@ -39,6 +39,7 @@ set(FELIX86_IR_SOURCES
 
 set(FELIX86_COMMON_SOURCES
     src/felix86/common/allocator.c
+    src/felix86/common/exit.c
     src/felix86/common/file.c
     src/felix86/common/global.c
     src/felix86/common/log.c
@@ -57,6 +58,7 @@ set(FELIX86_LOADER_SOURCES
 set(FELIX86_HLE_SOURCES
     src/felix86/hle/cpuid.c
     src/felix86/hle/filesystem.c
+    src/felix86/hle/filesystem.cpp
     src/felix86/hle/syscall.c
 )
 

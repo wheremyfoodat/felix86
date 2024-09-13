@@ -14,12 +14,12 @@ static char args_doc[] = "BINARY [ARGS...]";
 
 static struct argp_option options[] = {
   { "verbose", 'v', 0, 0, "Produce verbose output" },
-  { "verify", 'V', 0, 0, "Verify each instruction, only works on x86-64 host" },
   { "quiet", 'q', 0, 0, "Don't produce any output" },
   { "interpreter", 'i', 0, 0, "Run in interpreter mode" },
   { "host-envs", 'e', 0, 0, "Pass host environment variables to the guest" },
-  { "print-blocks", 'p', 0, 0, "Print basic blocks as they compile" },
+  { "print-functions", 'P', 0, 0, "Print functions as they compile" },
   { "dont-optimize", 'O', 0, 0, "Don't run IR optimizations" },
+  { "squashfs-path", 'p', "PATH", 0, "Path to the rootfs squashfs image" },
   { 0 }
 };
 
@@ -39,15 +39,6 @@ static error_t parse_opt (int key, char* arg, struct argp_state* state)
     }
 
     switch (key) {
-        case 'V': {
-#ifdef __x86_64__
-            config->verify = true;
-#else
-            WARN("Verification only works on x86-64 hosts");
-            return ARGP_ERR_UNKNOWN;
-#endif
-            break;
-        }
         case 'v': {
             enable_verbose();
             break;
@@ -56,11 +47,15 @@ static error_t parse_opt (int key, char* arg, struct argp_state* state)
             disable_logging();
             break;
         }
+        case 'p': {
+            config->squashfs_path = arg;
+            break;
+        }
         case 'e': {
             config->use_host_envs = true;
             break;
         }
-        case 'p': {
+        case 'P': {
             config->print_blocks = true;
             break;
         }
@@ -91,7 +86,12 @@ int main(int argc, char* argv[]) {
 
     argp_parse(&argp, argc, argv, 0, 0, &config);
 
-    felix86_fs_init();
+    if (config.squashfs_path == NULL) {
+        ERROR("No squashfs image path provided");
+        return 1;
+    }
+
+    felix86_fs_init(config.squashfs_path);
 
     if (argc == 1) {
         felix86_gui();
@@ -99,5 +99,5 @@ int main(int argc, char* argv[]) {
         loader_run_elf(&config);
     }
 
-    return 0;
+    felix86_exit();
 }
