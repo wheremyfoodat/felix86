@@ -29,7 +29,7 @@ Do note that I haven't fully read through all of these, most of them were used a
 - [Register Allocation And Spilling Via Graph Coloring](https://web.eecs.umich.edu/~mahlke/courses/583f12/reading/chaitin82.pdf)
 - [Linear scan register allocation](https://web.cs.ucla.edu/~palsberg/course/cs132/linearscan.pdf), as opposed to graph coloring register allocation 
 - [Efficiently Computing Static Single Assignment Form and the Control Dependence Graph](https://www.cs.utexas.edu/%7Epingali/CS380C/2010/papers/ssaCytron.pdf), the classical SSA paper, must read
-- [A Simple, Fast Dominance Algorithm](http://www.hipersoft.rice.edu/grads/publications/dom14.pdf), generally referred to as the Cooper et al. dominance algorithm, showcases a very simple way of constructing a dominance tree and finding dominance frontiers to place phi nodes
+- [A Simple, Fast Dominance Algorithm](./docs/dom14.pdf), generally referred to as the Cooper et al. dominance algorithm, showcases a very simple way of constructing a dominance tree and finding dominance frontiers to place phi nodes
 - [A Fast Algorithm for Finding Dominators in a Flowgraph](https://www.cs.princeton.edu/courses/archive/fall03/cs528/handouts/a%20fast%20algorithm%20for%20finding.pdf), referred to as the Lengauer-Tarjan dominance algorithm, another algorithm for finding dominance information, haven't read through it but supposedly a lot less simple than Cooper et al.
 - [Simple and Efficient Construction of Static Single Assignment Form](https://link.springer.com/chapter/10.1007/978-3-642-37051-9_6), an alternative way of constructing SSA form
 ### Optimizations that you can apply on SSA

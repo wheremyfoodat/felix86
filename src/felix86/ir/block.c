@@ -35,10 +35,8 @@ ir_function_t* ir_function_create(u64 address)
 {
     ir_function_t* function = calloc(sizeof(ir_function_t), 1);
     function->entry = ir_block_create(IR_NO_ADDRESS);
-    function->exit = ir_block_create(IR_NO_ADDRESS);
 
     function->list = ir_block_list_create(function->entry);
-    ir_block_list_insert(function->list, function->exit);
 
     function->compiled = false;
 

@@ -27,7 +27,6 @@ typedef struct ir_block_list_s {
 // A function has an entry block and an exit block. A function always starts at the entry block and ends at the exit block.
 typedef struct ir_function_t {
 	ir_block_t* entry;
-	ir_block_t* exit;
 	ir_block_list_t* list; // total list of blocks
 	bool compiled;
 } ir_function_t;
