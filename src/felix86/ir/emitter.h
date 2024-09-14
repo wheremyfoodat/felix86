@@ -67,13 +67,15 @@ ir_instruction_t* ir_emit_vector_packed_or(ir_instruction_list_t* instructions, 
 ir_instruction_t* ir_emit_vector_packed_xor(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_vector_packed_shift_right(ir_instruction_list_t* instructions, ir_instruction_t* source, ir_instruction_t* imm);
 ir_instruction_t* ir_emit_vector_packed_shift_left(ir_instruction_list_t* instructions, ir_instruction_t* source, ir_instruction_t* imm);
+ir_instruction_t* ir_emit_vector_packed_sub_byte(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_vector_packed_add_qword(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_vector_packed_compare_eq_byte(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_vector_packed_compare_eq_word(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 ir_instruction_t* ir_emit_vector_packed_compare_eq_dword(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
-ir_instruction_t* ir_emit_vector_packed_shuffle_dword(ir_instruction_list_t* instructions, ir_instruction_t* source, ir_instruction_t* immediate);
+ir_instruction_t* ir_emit_vector_packed_shuffle_dword(ir_instruction_list_t* instructions, ir_instruction_t* source, u8 control_byte);
 ir_instruction_t* ir_emit_vector_packed_move_byte_mask(ir_instruction_list_t* instructions, ir_instruction_t* source);
 ir_instruction_t* ir_emit_vector_packed_min_byte(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
+ir_instruction_t* ir_emit_vector_packed_compare_implicit_string_index(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2);
 
 ir_instruction_t* ir_emit_get_guest(ir_instruction_list_t* instructions, x86_ref_e ref);
 void ir_emit_set_guest(ir_instruction_list_t* instructions, x86_ref_e ref, ir_instruction_t* source);

@@ -438,6 +438,11 @@ ir_instruction_t* ir_emit_vector_packed_shift_left(ir_instruction_list_t* instru
     return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_SHIFT_LEFT, source, imm);
 }
 
+ir_instruction_t* ir_emit_vector_packed_sub_byte(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_SUB_BYTE, source1, source2);
+}
+
 ir_instruction_t* ir_emit_vector_packed_add_qword(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
 {
     return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_ADD_QWORD, source1, source2);
@@ -458,9 +463,11 @@ ir_instruction_t* ir_emit_vector_packed_compare_eq_dword(ir_instruction_list_t* 
     return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_COMPARE_EQ_DWORD, source1, source2);
 }
 
-ir_instruction_t* ir_emit_vector_packed_shuffle_dword(ir_instruction_list_t* instructions, ir_instruction_t* source, ir_instruction_t* immediate)
+ir_instruction_t* ir_emit_vector_packed_shuffle_dword(ir_instruction_list_t* instructions, ir_instruction_t* source, u8 control_byte)
 {
-    return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_SHUFFLE_DWORD, source, immediate);
+    ir_instruction_t* instruction = ir_emit_one_operand(instructions, IR_VECTOR_PACKED_SHUFFLE_DWORD, source);
+    instruction->control_byte = control_byte;
+    return instruction;
 }
 
 ir_instruction_t* ir_emit_vector_packed_move_byte_mask(ir_instruction_list_t* instructions, ir_instruction_t* source)
@@ -471,6 +478,11 @@ ir_instruction_t* ir_emit_vector_packed_move_byte_mask(ir_instruction_list_t* in
 ir_instruction_t* ir_emit_vector_packed_min_byte(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
 {
     return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_MIN_BYTE, source1, source2);
+}
+
+ir_instruction_t* ir_emit_vector_packed_compare_implicit_string_index(ir_instruction_list_t* instructions, ir_instruction_t* source1, ir_instruction_t* source2)
+{
+    return ir_emit_two_operands(instructions, IR_VECTOR_PACKED_COMPARE_IMPLICIT_STRING_INDEX, source1, source2);
 }
 
 ir_instruction_t* ir_emit_get_guest(ir_instruction_list_t* instructions, x86_ref_e ref)

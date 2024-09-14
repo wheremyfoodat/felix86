@@ -1,5 +1,5 @@
-// x86_64 instruction handlers for the primary table, calls the equivalent ir_handle_* function in ir/emitter.h
-// X(primary opcode, no prefix handler, handler with 0x66 prefix, handler with 0xF3 prefix, handler with 0xF2 prefix, decoding intricacy flag, whether this instruction has an immediate and its size)
+// x86_64 instruction handlers for the 0xf3 0x0f table, calls the equivalent ir_handle_* function in ir/emitter.h
+// X(primary opcode, handler, decoding intricacy flag, whether this instruction has an immediate and its size)
 
 X(0x00, error, NO_FLAG, NO_IMMEDIATE)
 X(0x01, error, NO_FLAG, NO_IMMEDIATE)

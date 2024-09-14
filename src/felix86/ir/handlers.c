@@ -936,10 +936,9 @@ IR_HANDLE(movdqa_xmm_xmm128) { // movdqa xmm, xmm128 - 0x66 0x0f 0x6f
     ir_emit_set_reg(INSTS, &inst->operand_reg, rm);
 }
 
-IR_HANDLE(pshufd_xmm_xmm128_imm8) { // pshufd xmm, xmm/m128, imm8 - 0x66 0x0f 0x70
+IR_HANDLE(pshufd_xmm_xmm128_cb) { // pshufd xmm, xmm/m128, imm8 - 0x66 0x0f 0x70
     ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
-    ir_instruction_t* imm = ir_emit_immediate(INSTS, inst->operand_imm.immediate.data);
-    ir_instruction_t* result = ir_emit_vector_packed_shuffle_dword(INSTS, rm, imm);
+    ir_instruction_t* result = ir_emit_vector_packed_shuffle_dword(INSTS, rm, inst->operand_imm.immediate.data);
     ir_emit_set_reg(INSTS, &inst->operand_reg, result);
 }
 
@@ -1019,6 +1018,13 @@ IR_HANDLE(pxor_xmm_xmm128) { // pxor xmm, xmm/m128 - 0x66 0x0f 0xef
     ir_emit_set_reg(INSTS, &inst->operand_reg, result);
 }
 
+IR_HANDLE(psubb_xmm_xmm128) { // psubb xmm, xmm/m128 - 0x66 0x0f 0xf8
+    ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
+    ir_instruction_t* reg = ir_emit_get_reg(INSTS, &inst->operand_reg);
+    ir_instruction_t* result = ir_emit_vector_packed_sub_byte(INSTS, reg, rm);
+    ir_emit_set_reg(INSTS, &inst->operand_reg, result);
+}
+
 // ███████ ███████  ██████  ██████  ███    ██ ██████   █████  ██████  ██    ██     ███████ ██████  
 // ██      ██      ██      ██    ██ ████   ██ ██   ██ ██   ██ ██   ██  ██  ██      ██           ██ 
 // ███████ █████   ██      ██    ██ ██ ██  ██ ██   ██ ███████ ██████    ████       █████    █████  
@@ -1053,4 +1059,48 @@ IR_HANDLE(movq_xmm_xmm64) { // movq xmm, xmm64 - 0xf3 0x0f 0x7e
 
     ir_emit_vector_from_integer(INSTS, integer);
     ir_emit_set_reg(INSTS, &inst->operand_reg, integer);
+}
+
+// ████████ ███████ ██████  ████████ ██  █████  ██████  ██    ██     ██████   █████  
+//    ██    ██      ██   ██    ██    ██ ██   ██ ██   ██  ██  ██           ██ ██   ██ 
+//    ██    █████   ██████     ██    ██ ███████ ██████    ████        █████   █████  
+//    ██    ██      ██   ██    ██    ██ ██   ██ ██   ██    ██             ██ ██   ██ 
+//    ██    ███████ ██   ██    ██    ██ ██   ██ ██   ██    ██        ██████   █████  
+
+// ████████ ███████ ██████  ████████ ██  █████  ██████  ██    ██     ██████   █████       ██████   ██████  
+//    ██    ██      ██   ██    ██    ██ ██   ██ ██   ██  ██  ██           ██ ██   ██     ██       ██       
+//    ██    █████   ██████     ██    ██ ███████ ██████    ████        █████   █████      ███████  ███████  
+//    ██    ██      ██   ██    ██    ██ ██   ██ ██   ██    ██             ██ ██   ██     ██    ██ ██    ██ 
+//    ██    ███████ ██   ██    ██    ██ ██   ██ ██   ██    ██        ██████   █████       ██████   ██████  
+
+// ████████ ███████ ██████  ████████ ██  █████  ██████  ██    ██     ██████   █████      ███████ ██████  
+//    ██    ██      ██   ██    ██    ██ ██   ██ ██   ██  ██  ██           ██ ██   ██     ██           ██ 
+//    ██    █████   ██████     ██    ██ ███████ ██████    ████        █████   █████      █████    █████  
+//    ██    ██      ██   ██    ██    ██ ██   ██ ██   ██    ██             ██ ██   ██     ██      ██      
+//    ██    ███████ ██   ██    ██    ██ ██   ██ ██   ██    ██        ██████   █████      ██      ███████ 
+
+// ████████ ███████ ██████  ████████ ██  █████  ██████  ██    ██     ██████   █████  
+//    ██    ██      ██   ██    ██    ██ ██   ██ ██   ██  ██  ██           ██ ██   ██ 
+//    ██    █████   ██████     ██    ██ ███████ ██████    ████        █████  ███████ 
+//    ██    ██      ██   ██    ██    ██ ██   ██ ██   ██    ██             ██ ██   ██ 
+//    ██    ███████ ██   ██    ██    ██ ██   ██ ██   ██    ██        ██████  ██   ██ 
+
+// ████████ ███████ ██████  ████████ ██  █████  ██████  ██    ██     ██████   █████       ██████   ██████  
+//    ██    ██      ██   ██    ██    ██ ██   ██ ██   ██  ██  ██           ██ ██   ██     ██       ██       
+//    ██    █████   ██████     ██    ██ ███████ ██████    ████        █████  ███████     ███████  ███████  
+//    ██    ██      ██   ██    ██    ██ ██   ██ ██   ██    ██             ██ ██   ██     ██    ██ ██    ██ 
+//    ██    ███████ ██   ██    ██    ██ ██   ██ ██   ██    ██        ██████  ██   ██      ██████   ██████  
+
+IR_HANDLE(pcmpistri_xmm_xmm128_cb) { // pcmpistri xmm, xmm/m128, imm8 - 0x66 0x0f 0x3a 0x63
+    ir_instruction_t* rm = ir_emit_get_rm(INSTS, &inst->operand_rm);
+    ir_instruction_t* imm = ir_emit_immediate(INSTS, inst->operand_imm.immediate.data);
+    ir_instruction_t* result = ir_emit_vector_packed_compare_implicit_string_index(INSTS, rm, imm);
+    ir_emit_set_reg(INSTS, &inst->operand_reg, result);
+
+    x86_ref_e outputs[] = { X86_REF_RCX, X86_REF_CF, X86_REF_ZF, X86_REF_SF, X86_REF_OF };
+    ir_emit_hint_outputs(INSTS, outputs, 5);
+
+    ir_instruction_t* zero = ir_emit_immediate(INSTS, 0);
+    ir_emit_set_flag(INSTS, X86_REF_PF, zero);
+    ir_emit_set_flag(INSTS, X86_REF_AF, zero);
 }

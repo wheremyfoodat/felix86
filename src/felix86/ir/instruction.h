@@ -7,7 +7,7 @@ extern "C" {
 #include "felix86/common/utility.h"
 #include "felix86/frontend/instruction.h"
 
-typedef enum : u16 {
+typedef enum : u8 {
 	IR_NULL,
 
 	IR_START_OF_BLOCK,
@@ -92,6 +92,7 @@ typedef enum : u16 {
 	IR_VECTOR_PACKED_XOR,
 	IR_VECTOR_PACKED_SHIFT_RIGHT,
 	IR_VECTOR_PACKED_SHIFT_LEFT,
+	IR_VECTOR_PACKED_SUB_BYTE,
 	IR_VECTOR_PACKED_ADD_QWORD,
 	IR_VECTOR_PACKED_COMPARE_EQ_BYTE,
 	IR_VECTOR_PACKED_COMPARE_EQ_WORD,
@@ -99,6 +100,7 @@ typedef enum : u16 {
 	IR_VECTOR_PACKED_SHUFFLE_DWORD,
 	IR_VECTOR_PACKED_MOVE_BYTE_MASK,
 	IR_VECTOR_PACKED_MIN_BYTE,
+	IR_VECTOR_PACKED_COMPARE_IMPLICIT_STRING_INDEX,
 	IR_VECTOR_ZEXT64, // zero extend the bottom 64-bits of a vector
 } ir_opcode_e;
 
@@ -173,6 +175,7 @@ typedef struct ir_instruction_s {
 	u16 name;
 	ir_type_e type;
 	ir_opcode_e opcode;
+	u8 control_byte; // for some sse instructions
 } ir_instruction_t;
 
 void ir_clear_instruction(ir_instruction_t* instruction);

@@ -506,18 +506,14 @@ ir_block_t* ir_interpret_instruction(felix86_recompiler_t* recompiler, ir_block_
             break;
         }
         case IR_VECTOR_PACKED_SHUFFLE_DWORD: {
-            if (instruction->operands.args[1]->type != IR_TYPE_LOAD_IMMEDIATE) {
-                ERROR("Invalid shuffle mask");
-            }
-
-            u8 imm = instruction->operands.args[1]->load_immediate.immediate;
+            u8 control_byte = instruction->control_byte;
             xmm_reg_t xmm_src = xmm_temps[instruction->operands.args[0]->name];
             xmm_reg_t result = {0};
             u32* src = (u32*)&xmm_src.data[0];
             u32* dest = (u32*)&result.data[0];
             for (int i = 0; i < 4; i++) {
-                dest[i] = src[imm & 3];
-                imm >>= 2;
+                dest[i] = src[control_byte & 3];
+                control_byte >>= 2;
             }
             xmm_temps[instruction->name] = result;
             break;
@@ -757,6 +753,19 @@ ir_block_t* ir_interpret_instruction(felix86_recompiler_t* recompiler, ir_block_
             u64 value = temps[instruction->operands.args[0]->name];
             u64 count = temps[instruction->operands.args[1]->name];
             temps[instruction->name] = (value << count) | (value >> (64 - count));
+            break;
+        }
+        case IR_VECTOR_PACKED_SUB_BYTE: {
+            xmm_reg_t xmm_dest = xmm_temps[instruction->operands.args[0]->name];
+            xmm_reg_t xmm_src = xmm_temps[instruction->operands.args[1]->name];
+            xmm_reg_t result = {0};
+            u8* dest = (u8*)&result.data[0];
+            u8* src0 = (u8*)&xmm_dest.data[0];
+            u8* src1 = (u8*)&xmm_src.data[0];
+            for (u32 i = 0; i < 16; i++) {
+                dest[i] = src0[i] - src1[i];
+            }
+            xmm_temps[instruction->name] = result;
             break;
         }
         case IR_HINT_FULL:

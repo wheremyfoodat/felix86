@@ -75,6 +75,36 @@ instruction_metadata_t secondary_table_f3[] = {
 #undef X
 };
 
+instruction_metadata_t tertiary_table_3a[] = {
+#define X(opcode, name, flag, immsize) [opcode] = {opcode, ir_handle_##name, flag, immsize},
+#include "felix86/frontend/tertiary_3a.inc"
+#undef X
+};
+
+instruction_metadata_t tertiary_table_3a_66[] = {
+#define X(opcode, name, flag, immsize) [opcode] = {opcode, ir_handle_##name, flag, immsize},
+#include "felix86/frontend/tertiary_3a_66.inc"
+#undef X
+};
+
+instruction_metadata_t tertiary_table_38[] = {
+#define X(opcode, name, flag, immsize) [opcode] = {opcode, ir_handle_##name, flag, immsize},
+#include "felix86/frontend/tertiary_38.inc"
+#undef X
+};
+
+instruction_metadata_t tertiary_table_38_66[] = {
+#define X(opcode, name, flag, immsize) [opcode] = {opcode, ir_handle_##name, flag, immsize},
+#include "felix86/frontend/tertiary_38_66.inc"
+#undef X
+};
+
+instruction_metadata_t tertiary_table_38_f2[] = {
+#define X(opcode, name, flag, immsize) [opcode] = {opcode, ir_handle_##name, flag, immsize},
+#include "felix86/frontend/tertiary_38_f2.inc"
+#undef X
+};
+
 u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, bool rex_b, bool rex_x, bool rex_r, modrm_t modrm, sib_t sib) {
     operand_reg->type = X86_OP_TYPE_REGISTER;
     operand_reg->reg.ref = X86_REF_RAX + (modrm.reg | (rex_r << 3));
@@ -176,6 +206,7 @@ void frontend_compile_instruction(frontend_state_t* state)
             case 0x36:
             case 0x3E: {
                 // Null prefixes
+                prefix = true;
                 index += 1;
                 break;
             }
@@ -336,24 +367,47 @@ void frontend_compile_instruction(frontend_state_t* state)
             ERROR("Secondary opcode while VEX changed the primary map");
         }
 
+        instruction_metadata_t secondary;
         opcode = data[index++];
-        inst.opcode = opcode;
-        instruction_metadata_t secondary = secondary_table[opcode];
-        decoding_flags = secondary.decoding_flags;
 
-        if (decoding_flags & MANDATORY_PREFIX_FLAG) {
-            if (operand_override) {
-                secondary = secondary_table_66[opcode];
-            } else if (rep_z_f3) {
-                secondary = secondary_table_f3[opcode];
-            } else if (rep_nz_f2) {
-                secondary = secondary_table_f2[opcode];
+        if (opcode == 0x38) {
+            opcode = data[index++];
+            secondary = tertiary_table_38[opcode];
+
+            if (secondary.decoding_flags & MANDATORY_PREFIX_FLAG) {
+                if (operand_override) {
+                    secondary = tertiary_table_38_66[opcode];
+                } else if (rep_z_f3) {
+                    secondary = tertiary_table_38_f2[opcode];
+                }
+            }
+        } else if (opcode == 0x3A) {
+            opcode = data[index++];
+            secondary = tertiary_table_3a[opcode];
+
+            if (secondary.decoding_flags & MANDATORY_PREFIX_FLAG) {
+                if (operand_override) {
+                    secondary = tertiary_table_3a_66[opcode];
+                }
+            }
+        } else {
+            secondary = secondary_table[opcode];
+
+            if (secondary.decoding_flags & MANDATORY_PREFIX_FLAG) {
+                if (operand_override) {
+                    secondary = secondary_table_66[opcode];
+                } else if (rep_z_f3) {
+                    secondary = secondary_table_f3[opcode];
+                } else if (rep_nz_f2) {
+                    secondary = secondary_table_f2[opcode];
+                }
             }
         }
 
         decoding_flags = secondary.decoding_flags;
         immediate_size = secondary.immediate_size;
         fn = secondary.fn;
+        inst.opcode = opcode;
     }
 
     u8 size = (decoding_flags & DEFAULT_U64_FLAG) ? X86_SIZE_QWORD : X86_SIZE_DWORD;
