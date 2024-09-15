@@ -88,6 +88,7 @@
 struct ir_block_info_t {
     ir_block_t* actual_block = nullptr;
     std::vector<ir_block_info_t*> predecessors = {};
+    std::vector<ir_block_info_t*> dominance_frontiers = {};
     ir_block_info_t* immediate_dominator = nullptr;
 
     ir_block_info_t* successor1 = nullptr;
@@ -196,6 +197,8 @@ void ir_ssa_pass(ir_function_t* function) {
     rpo_vector[0].immediate_dominator = &rpo_vector[0];
     bool changed = true;
 
+    // Simple fixpoint algorithm to find immediate dominators by Cooper et al.
+    // Name: A Simple, Fast Dominance Algorithm
     while (changed) {
         changed = false;
 
@@ -222,4 +225,25 @@ void ir_ssa_pass(ir_function_t* function) {
             }
         }
     }
+
+    // Now we have immediate dominators, we can find dominance frontiers
+    for (size_t i = 0; i < rpo_vector.size(); i++) {
+        ir_block_info_t* b = &rpo_vector[i];
+
+        if (b->predecessors.size() >= 2) {
+            for (size_t j = 0; j < b->predecessors.size(); j++) {
+                ir_block_info_t* p = b->predecessors[j];
+                ir_block_info_t* runner = p;
+
+                while (runner != b->immediate_dominator) {
+                    runner->dominance_frontiers.push_back(b);
+                    runner = runner->immediate_dominator;
+                }
+            }
+        }
+    }
+
+    // Now that we have dominance frontiers, step 1 is complete
+    // We can now move on to step 2, which is inserting phi instructions
+    
 }
