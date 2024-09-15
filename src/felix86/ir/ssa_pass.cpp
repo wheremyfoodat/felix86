@@ -1,5 +1,7 @@
 #include "felix86/ir/passes.h"
+#include "felix86/common/log.h"
 #include <algorithm>
+#include <cstdio>
 #include <unordered_map>
 #include <vector>
 
@@ -85,12 +87,13 @@
 
 struct ir_block_info_t {
     ir_block_t* actual_block = nullptr;
-    std::vector<ir_block_info_t> dominators = {};
+    std::vector<ir_block_info_t*> predecessors = {};
     ir_block_info_t* immediate_dominator = nullptr;
 
     ir_block_info_t* successor1 = nullptr;
     ir_block_info_t* successor2 = nullptr;
     bool visited = false;
+    int postorder_number = 0;
 };
 
 void postorder(ir_block_info_t* block, std::vector<ir_block_info_t>& output) {
@@ -111,12 +114,11 @@ void postorder(ir_block_info_t* block, std::vector<ir_block_info_t>& output) {
     output.push_back(*block);
 }
 
-void reverse_postorder_vector_creation(ir_function_t* function, std::vector<ir_block_info_t>& output) {
-    std::vector<ir_block_info_t> list;
-    list.resize(output.size());
+void reverse_postorder_vector_creation(ir_function_t* function, std::vector<ir_block_info_t>& list, std::vector<ir_block_info_t>& output, size_t size) {
+    list.resize(size);
 
     std::vector<std::pair<ir_block_t*, ir_block_t*>> successors;
-    successors.resize(output.size());
+    successors.resize(size);
 
     std::unordered_map<ir_block_t*, int> block_to_index;
     ir_block_list_t* block = function->list;
@@ -134,17 +136,44 @@ void reverse_postorder_vector_creation(ir_function_t* function, std::vector<ir_b
     for (size_t i = 0; i < list.size(); i++) {
         list[i].successor1 = successors[i].first ? &list[block_to_index[successors[i].first]] : nullptr;
         list[i].successor2 = successors[i].second ? &list[block_to_index[successors[i].second]] : nullptr;
+        
+        ir_block_list_t* pred = list[i].actual_block->predecessors;
+        while (pred) {
+            list[i].predecessors.push_back(&list[block_to_index[pred->block]]);
+            pred = pred->next;
+        }
     }
 
     ir_block_info_t* entry = &list[0];
     postorder(entry, output);
     std::reverse(output.begin(), output.end());
+
+    if (output.size() != size) {
+        ERROR("Postorder traversal did not visit all blocks");
+    }
     
-    for (size_t i = 0; i < list.size(); i++) {
+    for (size_t i = 0; i < output.size(); i++) {
         output[i].visited = false;
+        output[i].postorder_number = i;
     }
 }
 
+ir_block_info_t* intersect(ir_block_info_t* a, ir_block_info_t* b) {
+    ir_block_info_t* finger1 = a;
+    ir_block_info_t* finger2 = b;
+
+    while (finger1 != finger2) {
+        while (finger1->postorder_number < finger2->postorder_number) {
+            finger1 = finger1->immediate_dominator;
+        }
+
+        while (finger2->postorder_number < finger1->postorder_number) {
+            finger2 = finger2->immediate_dominator;
+        }
+    }
+
+    return finger1;
+}
 
 void ir_ssa_pass(ir_function_t* function) {
     size_t count = 0;
@@ -154,8 +183,43 @@ void ir_ssa_pass(ir_function_t* function) {
         block = block->next;
     }
 
+    std::vector<ir_block_info_t> storage;
     std::vector<ir_block_info_t> rpo_vector;
-    rpo_vector.resize(count);
+    rpo_vector.reserve(count);
     
-    reverse_postorder_vector_creation(function, rpo_vector);
+    reverse_postorder_vector_creation(function, storage, rpo_vector, count);
+
+    if (rpo_vector[0].actual_block != function->entry) {
+        ERROR("Entry block is not the first block");
+    }
+
+    rpo_vector[0].immediate_dominator = &rpo_vector[0];
+    bool changed = true;
+
+    while (changed) {
+        changed = false;
+
+        // For all nodes in reverse postorder, except the start node
+        for (size_t i = 1; i < rpo_vector.size(); i++) {
+            ir_block_info_t* b = &rpo_vector[i];
+
+            if (b->predecessors.empty()) {
+                ERROR("Block has no predecessors");
+            }
+
+            ir_block_info_t* new_idom = b->predecessors[0];
+            for (size_t j = 1; j < b->predecessors.size(); j++) {
+                ir_block_info_t* p = b->predecessors[j];
+                printf("Block %p has predecessor %p\n", b->actual_block, p->actual_block);
+                if (p->immediate_dominator) {
+                    new_idom = intersect(p, new_idom);
+                }
+            }
+
+            if (b->immediate_dominator != new_idom) {
+                b->immediate_dominator = new_idom;
+                changed = true;
+            }
+        }
+    }
 }

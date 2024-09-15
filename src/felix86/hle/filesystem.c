@@ -57,7 +57,7 @@ void felix86_fs_cleanup()
     pid_t pid = fork();
 
     if (pid == 0) {
-        char* args[4] = {
+        char* args[5] = {
             "fusermount",
             "-u",
             "-q",

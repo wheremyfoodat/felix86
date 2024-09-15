@@ -35,6 +35,7 @@ set(FELIX86_IR_SOURCES
     src/felix86/ir/instruction_list.c
     src/felix86/ir/passes.cpp
     src/felix86/ir/print.cpp
+    src/felix86/ir/ssa_pass.cpp
 )
 
 set(FELIX86_COMMON_SOURCES

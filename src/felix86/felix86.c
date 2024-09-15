@@ -195,6 +195,7 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler) {
 
         if (!function->compiled) {
             frontend_compile_function(function, address);
+            ir_ssa_pass(function);
             ir_naming_pass(function);
 
             if (recompiler->print_blocks)
