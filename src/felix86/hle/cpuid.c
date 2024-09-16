@@ -19,6 +19,7 @@ void felix86_cpuid(x86_thread_state_t* state) {
             break;
         }
         case 1: {
+            ERROR("Needs additional info in ebx and eax");
             eax = 0;
             feature_info_ecx_t ecx_info = {0};
             feature_info_edx_t edx_info = {0};
