@@ -97,7 +97,7 @@ struct ir_block_info_t {
     int postorder_number = 0;
 };
 
-void postorder(ir_block_info_t* block, std::vector<ir_block_info_t>& output) {
+void postorder(ir_block_info_t* block, std::vector<ir_block_info_t*>& output) {
     if (block->visited) {
         return;
     }
@@ -112,10 +112,10 @@ void postorder(ir_block_info_t* block, std::vector<ir_block_info_t>& output) {
         postorder(block->successor2, output);
     }
 
-    output.push_back(*block);
+    output.push_back(block);
 }
 
-void reverse_postorder_vector_creation(ir_function_t* function, std::vector<ir_block_info_t>& list, std::vector<ir_block_info_t>& output, size_t size) {
+void reverse_postorder_vector_creation(ir_function_t* function, std::vector<ir_block_info_t>& list, std::vector<ir_block_info_t*>& output, size_t size) {
     list.resize(size);
 
     std::vector<std::pair<ir_block_t*, ir_block_t*>> successors;
@@ -147,15 +147,18 @@ void reverse_postorder_vector_creation(ir_function_t* function, std::vector<ir_b
 
     ir_block_info_t* entry = &list[0];
     postorder(entry, output);
+
+    for (size_t i = 0; i < output.size(); i++) {
+        output[i]->visited = false;
+
+        // Set the postorder number before reversing
+        output[i]->postorder_number = i;
+    }
+
     std::reverse(output.begin(), output.end());
 
     if (output.size() != size) {
         ERROR("Postorder traversal did not visit all blocks");
-    }
-    
-    for (size_t i = 0; i < output.size(); i++) {
-        output[i].visited = false;
-        output[i].postorder_number = i;
     }
 }
 
@@ -163,7 +166,7 @@ ir_block_info_t* intersect(ir_block_info_t* a, ir_block_info_t* b) {
     ir_block_info_t* finger1 = a;
     ir_block_info_t* finger2 = b;
 
-    while (finger1 != finger2) {
+    while (finger1->postorder_number != finger2->postorder_number) {
         while (finger1->postorder_number < finger2->postorder_number) {
             finger1 = finger1->immediate_dominator;
         }
@@ -185,16 +188,16 @@ void ir_ssa_pass(ir_function_t* function) {
     }
 
     std::vector<ir_block_info_t> storage;
-    std::vector<ir_block_info_t> rpo_vector;
+    std::vector<ir_block_info_t*> rpo_vector; // points to storage
     rpo_vector.reserve(count);
     
     reverse_postorder_vector_creation(function, storage, rpo_vector, count);
 
-    if (rpo_vector[0].actual_block != function->entry) {
+    if (rpo_vector[0]->actual_block != function->entry) {
         ERROR("Entry block is not the first block");
     }
 
-    rpo_vector[0].immediate_dominator = &rpo_vector[0];
+    rpo_vector[0]->immediate_dominator = rpo_vector[0];
     bool changed = true;
 
     // Simple fixpoint algorithm to find immediate dominators by Cooper et al.
@@ -204,16 +207,15 @@ void ir_ssa_pass(ir_function_t* function) {
 
         // For all nodes in reverse postorder, except the start node
         for (size_t i = 1; i < rpo_vector.size(); i++) {
-            ir_block_info_t* b = &rpo_vector[i];
+            ir_block_info_t* b = rpo_vector[i];
 
             if (b->predecessors.empty()) {
-                ERROR("Block has no predecessors");
+                ERROR("Block has no predecessors, this should not happen");
             }
 
             ir_block_info_t* new_idom = b->predecessors[0];
             for (size_t j = 1; j < b->predecessors.size(); j++) {
                 ir_block_info_t* p = b->predecessors[j];
-                printf("Block %p has predecessor %p\n", b->actual_block, p->actual_block);
                 if (p->immediate_dominator) {
                     new_idom = intersect(p, new_idom);
                 }
@@ -228,7 +230,7 @@ void ir_ssa_pass(ir_function_t* function) {
 
     // Now we have immediate dominators, we can find dominance frontiers
     for (size_t i = 0; i < rpo_vector.size(); i++) {
-        ir_block_info_t* b = &rpo_vector[i];
+        ir_block_info_t* b = rpo_vector[i];
 
         if (b->predecessors.size() >= 2) {
             for (size_t j = 0; j < b->predecessors.size(); j++) {
@@ -237,6 +239,8 @@ void ir_ssa_pass(ir_function_t* function) {
 
                 while (runner != b->immediate_dominator) {
                     runner->dominance_frontiers.push_back(b);
+
+                    ir_block_info_t* old_runner = runner;
                     runner = runner->immediate_dominator;
                 }
             }
@@ -245,5 +249,4 @@ void ir_ssa_pass(ir_function_t* function) {
 
     // Now that we have dominance frontiers, step 1 is complete
     // We can now move on to step 2, which is inserting phi instructions
-    
 }
