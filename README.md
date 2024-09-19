@@ -50,11 +50,6 @@ Do note that I haven't fully read through all of these, most of them were used a
 - [v8 source code](https://github.com/v8/v8)
 - [LuaJIT source code](https://github.com/LuaJIT/LuaJIT), a tracing JIT for Lua
 - [Dynarmic source code & docs folder](https://github.com/PabloMK7/dynarmic/)
-- [Dillonb's n64 source code](https://github.com/Dillonb/n64/tree/master/src/cpu/dynarec/v2)
-- [PCSX-Redux source code](https://github.com/grumpycoders/pcsx-redux)
-- [Duckstation source code](https://github.com/stenzek/duckstation)
-- [Dolphin source code](https://github.dev/dolphin-emu/dolphin)
-- Yuzu's & shadPS4 shader recompiler source code, employs most of the Braun et al. Simple and Efficient SSA algorithm linked above
 
 
 ## Other useful documentation

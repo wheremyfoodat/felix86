@@ -157,6 +157,7 @@ typedef struct ir_instruction_s {
 
 		struct {
 			ir_phi_node_t* list;
+			x86_ref_e ref;
 		} phi;
 
 		struct {
