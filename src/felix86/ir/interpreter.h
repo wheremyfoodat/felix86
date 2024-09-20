@@ -8,7 +8,8 @@
 extern "C" {
 #endif
 
-void ir_interpret_function(felix86_recompiler_t* recompiler, ir_function_t* function, x86_thread_state_t* state);
+void ir_interpret_function(felix86_recompiler_t* recompiler, ir_function_t* function,
+                           x86_thread_state_t* state);
 
 #ifdef __cplusplus
 }

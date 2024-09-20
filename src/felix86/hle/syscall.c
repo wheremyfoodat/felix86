@@ -4,7 +4,8 @@
 #include <errno.h>
 #include <unistd.h>
 
-// We add felix86_${ARCH}_ in front of the linux related identifiers to avoid naming conflicts
+// We add felix86_${ARCH}_ in front of the linux related identifiers to avoid
+// naming conflicts
 
 #define felix86_x86_64_ARCH_SET_GS 0x1001
 #define felix86_x86_64_ARCH_SET_FS 0x1002
@@ -13,40 +14,53 @@
 
 #define HOST_SYSCALL(name, ...) (syscall(match_host(name), ##__VA_ARGS__))
 
-enum {
+enum
+{
+
 #define X(name, id) felix86_x86_64_##name = id,
 #include "felix86/hle/syscalls_x86_64.inc"
 #undef X
 };
 
-enum {
+enum
+{
+
 #define X(name, id) felix86_riscv64_##name = id,
 #include "felix86/hle/syscalls_riscv64.inc"
 #undef X
 };
 
-int match_host(int syscall) {
+int match_host(int syscall)
+{
 #ifdef __x86_64__
     return syscall;
 #elif defined(__riscv) && __riscv_xlen == 64
-#define X(name, id) case felix86_x86_64_##name: return felix86_riscv64_##name;
-    switch (syscall) {
+#define X(name, id)             \
+    case felix86_x86_64_##name: \
+        return felix86_riscv64_##name;
+    switch (syscall)
+    {
 #include "felix86/hle/syscalls_x86_64.inc"
-    default: return -1;
+        default:
+            return -1;
     }
 #undef X
 #else
-    #error "Unsupported architecture"
+#error "Unsupported architecture"
 #endif
 }
 
 const char* print_syscall_name(u64 syscall_number)
 {
-    switch (syscall_number) {
-#define X(name, id) case id: return #name;
+    switch (syscall_number)
+    {
+#define X(name, id) \
+    case id:        \
+        return #name;
 #include "felix86/hle/syscalls_x86_64.inc"
 #undef X
-    default: return "Unknown";
+        default:
+            return "Unknown";
     }
 }
 
@@ -61,36 +75,48 @@ void felix86_syscall(felix86_recompiler_t* recompiler, x86_thread_state_t* state
     u64 r9 = state->gprs[X86_REF_R9];
     u64 result = 0;
 
-    switch (syscall_number) {
-        case felix86_x86_64_brk: {
-            if (rdi == 0) {
+    switch (syscall_number)
+    {
+        case felix86_x86_64_brk:
+        {
+            if (rdi == 0)
+            {
                 result = recompiler->brk_current_address;
-            } else {
+            }
+            else
+            {
                 recompiler->brk_current_address = rdi;
                 result = recompiler->brk_current_address;
             }
             VERBOSE("brk(%p) = %p", (void*)rdi, (void*)result);
             break;
         }
-        case felix86_x86_64_arch_prctl: {
-            switch (rdi) {
-                case felix86_x86_64_ARCH_SET_GS: {
+        case felix86_x86_64_arch_prctl:
+        {
+            switch (rdi)
+            {
+                case felix86_x86_64_ARCH_SET_GS:
+                {
                     state->gsbase = rsi;
                     break;
                 }
-                case felix86_x86_64_ARCH_SET_FS: {
+                case felix86_x86_64_ARCH_SET_FS:
+                {
                     state->fsbase = rsi;
                     break;
                 }
-                case felix86_x86_64_ARCH_GET_FS: {
+                case felix86_x86_64_ARCH_GET_FS:
+                {
                     result = state->fsbase;
                     break;
                 }
-                case felix86_x86_64_ARCH_GET_GS: {
+                case felix86_x86_64_ARCH_GET_GS:
+                {
                     result = state->gsbase;
                     break;
                 }
-                default: {
+                default:
+                {
                     ERROR("Unimplemented arch_prctl %016lx", rdi);
                     break;
                 }
@@ -98,56 +124,70 @@ void felix86_syscall(felix86_recompiler_t* recompiler, x86_thread_state_t* state
             VERBOSE("arch_prctl(%016lx, %016lx) = %016lx", rdi, rsi, result);
             break;
         }
-        case felix86_x86_64_set_tid_address: {
+        case felix86_x86_64_set_tid_address:
+        {
             state->clear_child_tid = rdi;
             result = rdi;
             VERBOSE("set_tid_address(%016lx) = %016lx", rdi, result);
             break;
         }
-        case felix86_x86_64_get_robust_list: {
-            if (rdi != 0) {
+        case felix86_x86_64_get_robust_list:
+        {
+            if (rdi != 0)
+            {
                 ERROR("get_robust_list asking for a different thread not implemented");
             }
             ERROR("get_robust_list not implemented");
             break;
         }
-        case felix86_x86_64_set_robust_list: {
+        case felix86_x86_64_set_robust_list:
+        {
             state->robust_futex_list = rdi;
 
-            if (rsi != sizeof(u64) * 3) {
+            if (rsi != sizeof(u64) * 3)
+            {
                 WARN("Struct size is wrong during set_robust_list");
                 result = EINVAL;
             }
             VERBOSE("set_robust_list(%016lx, %016lx) = %016lx", rdi, rsi, result);
             break;
         }
-        case felix86_x86_64_rseq: {
+        case felix86_x86_64_rseq:
+        {
             // Couldn't find any solid documentation and FEX doesn't support it either
             result = -ENOSYS;
             break;
         }
-        case felix86_x86_64_prlimit64: {
+        case felix86_x86_64_prlimit64:
+        {
             result = HOST_SYSCALL(syscall_number, rdi, rsi, rdx, r10);
-            VERBOSE("prlimit64(%016lx, %016lx, %016lx, %016lx) = %016lx", rdi, rsi, rdx, r10, result);
+            VERBOSE("prlimit64(%016lx, %016lx, %016lx, %016lx) = %016lx", rdi, rsi, rdx, r10,
+                    result);
             break;
         }
-        case felix86_x86_64_readlinkat: {
+        case felix86_x86_64_readlinkat:
+        {
             felix86_fs_readlinkat(rdi, (const char*)rsi, (char*)rdx, r10);
-            VERBOSE("readlinkat(%d, %s, %s, %d) = %d", (int)rdi, (const char*)rsi, (char*)rdx, (int)r10, (int)result);
+            VERBOSE("readlinkat(%d, %s, %s, %d) = %d", (int)rdi, (const char*)rsi, (char*)rdx,
+                    (int)r10, (int)result);
             break;
         }
-        case felix86_x86_64_getrandom: {
+        case felix86_x86_64_getrandom:
+        {
             result = HOST_SYSCALL(syscall_number, rdi, rsi, rdx);
             VERBOSE("getrandom(%p, %016lx, %d) = %016lx", (void*)rdi, rsi, (int)rdx, result);
             break;
         }
-        case felix86_x86_64_mprotect: {
+        case felix86_x86_64_mprotect:
+        {
             result = HOST_SYSCALL(syscall_number, rdi, rsi, rdx);
             VERBOSE("mprotect(%p, %016lx, %d) = %016lx", (void*)rdi, rsi, (int)rdx, result);
             break;
         }
-        default: {
-            ERROR("Unimplemented syscall %s (%016lx)", print_syscall_name(syscall_number), syscall_number);
+        default:
+        {
+            ERROR("Unimplemented syscall %s (%016lx)", print_syscall_name(syscall_number),
+                  syscall_number);
             break;
         }
     }

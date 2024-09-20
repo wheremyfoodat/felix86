@@ -5,15 +5,23 @@
 u32 prompt_yn_question(const char* question)
 {
     int response;
-    do {
+    do
+    {
         printf("%s [y/n]:\n", question);
         response = getchar();
-        if (getchar() != '\n') {
-            while (getchar() != '\n');
-        } else {
-            if (response == 'y') {
+        if (getchar() != '\n')
+        {
+            while (getchar() != '\n')
+                ;
+        }
+        else
+        {
+            if (response == 'y')
+            {
                 return 1;
-            } else if (response == 'n') {
+            }
+            else if (response == 'n')
+            {
                 return 0;
             }
         }

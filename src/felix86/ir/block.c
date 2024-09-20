@@ -1,5 +1,5 @@
-#include "felix86/frontend/frontend.h"
 #include "felix86/ir/block.h"
+#include "felix86/frontend/frontend.h"
 #include <stdlib.h>
 
 ir_block_list_t* ir_block_list_create(ir_block_t* block)
@@ -46,16 +46,19 @@ ir_function_t* ir_function_create(u64 address)
 void ir_function_destroy(ir_function_t* function)
 {
     ir_block_list_t* current = function->list;
-    while (current) {
+    while (current)
+    {
         ir_block_list_t* predecessors = current->block->predecessors;
-        while (predecessors) {
+        while (predecessors)
+        {
             ir_block_list_t* next = predecessors->next;
             free(predecessors);
             predecessors = next;
         }
 
         ir_block_list_t* successors = current->block->successors;
-        while (successors) {
+        while (successors)
+        {
             ir_block_list_t* next = successors->next;
             free(successors);
             successors = next;
@@ -69,15 +72,22 @@ void ir_function_destroy(ir_function_t* function)
     free(function);
 }
 
-// Gets a block from the function. The function keeps a list of all blocks so it can go through them linearly if needed.
-// If address is IR_NO_ADDRESS, a new block is created and not looked up in the list. This is for blocks that are not
-// tied to an actual address but are used as auxiliary blocks, for example for the rep instruction loop bodies or in the future
-// for breaking up critical edges etc.
-ir_block_t* ir_function_get_block(ir_function_t* function, ir_block_t* predecessor, u64 address) {
-    if (address != IR_NO_ADDRESS) {
-        for (ir_block_list_t* current = function->list; current; current = current->next) {
-            if (current->block->start_address == address) {
-                if (predecessor) {
+// Gets a block from the function. The function keeps a list of all blocks so it
+// can go through them linearly if needed. If address is IR_NO_ADDRESS, a new
+// block is created and not looked up in the list. This is for blocks that are
+// not tied to an actual address but are used as auxiliary blocks, for example
+// for the rep instruction loop bodies or in the future for breaking up critical
+// edges etc.
+ir_block_t* ir_function_get_block(ir_function_t* function, ir_block_t* predecessor, u64 address)
+{
+    if (address != IR_NO_ADDRESS)
+    {
+        for (ir_block_list_t* current = function->list; current; current = current->next)
+        {
+            if (current->block->start_address == address)
+            {
+                if (predecessor)
+                {
                     ir_add_predecessor(current->block, predecessor);
                 }
                 return current->block;
@@ -89,37 +99,52 @@ ir_block_t* ir_function_get_block(ir_function_t* function, ir_block_t* predecess
     ir_block_list_insert(function->list, block);
 
     // Add block to predecessor's successors
-    if (predecessor) {
+    if (predecessor)
+    {
         ir_add_successor(predecessor, block);
     }
 
     return block;
 }
 
-void ir_add_predecessor(ir_block_t* block, ir_block_t* predecessor) {
-    if (!block->predecessors) {
+void ir_add_predecessor(ir_block_t* block, ir_block_t* predecessor)
+{
+    if (!block->predecessors)
+    {
         block->predecessors = ir_block_list_create(predecessor);
-    } else {
+    }
+    else
+    {
         ir_block_list_insert(block->predecessors, predecessor);
     }
     block->predecessors_count++;
-    if (!predecessor->successors) {
+    if (!predecessor->successors)
+    {
         predecessor->successors = ir_block_list_create(block);
-    } else {
+    }
+    else
+    {
         ir_block_list_insert(predecessor->successors, block);
     }
 }
 
-void ir_add_successor(ir_block_t* block, ir_block_t* successor) {
-    if (!block->successors) {
+void ir_add_successor(ir_block_t* block, ir_block_t* successor)
+{
+    if (!block->successors)
+    {
         block->successors = ir_block_list_create(successor);
-    } else {
+    }
+    else
+    {
         ir_block_list_insert(block->successors, successor);
     }
     block->successors_count++;
-    if (!successor->predecessors) {
+    if (!successor->predecessors)
+    {
         successor->predecessors = ir_block_list_create(block);
-    } else {
+    }
+    else
+    {
         ir_block_list_insert(successor->predecessors, block);
     }
 }

@@ -4,12 +4,13 @@
 #include "felix86/common/state.h"
 #include "felix86/frontend/frontend.h"
 #include "felix86/ir/function_cache.h"
+#include "felix86/ir/interpreter.h"
 #include "felix86/ir/passes.h"
 #include "felix86/ir/print.h"
-#include "felix86/ir/interpreter.h"
 #include <stdlib.h>
 
-felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* config) {
+felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* config)
+{
     felix86_recompiler_t* recompiler = calloc(1, sizeof(felix86_recompiler_t));
     recompiler->function_cache = ir_function_cache_create();
     recompiler->testing = config->testing;
@@ -23,13 +24,16 @@ felix86_recompiler_t* felix86_recompiler_create(felix86_recompiler_config_t* con
     return recompiler;
 }
 
-void felix86_recompiler_destroy(felix86_recompiler_t* recompiler) {
+void felix86_recompiler_destroy(felix86_recompiler_t* recompiler)
+{
     ir_function_cache_destroy(recompiler->function_cache);
     free(recompiler);
 }
 
-u64 felix86_get_guest(felix86_recompiler_t* recompiler, x86_ref_e ref) {
-    switch (ref) {
+u64 felix86_get_guest(felix86_recompiler_t* recompiler, x86_ref_e ref)
+{
+    switch (ref)
+    {
         case X86_REF_RAX:
             return recompiler->state.gprs[0];
         case X86_REF_RCX:
@@ -86,8 +90,10 @@ u64 felix86_get_guest(felix86_recompiler_t* recompiler, x86_ref_e ref) {
     }
 }
 
-void felix86_set_guest(felix86_recompiler_t* recompiler, x86_ref_e ref, u64 value) {
-    switch (ref) {
+void felix86_set_guest(felix86_recompiler_t* recompiler, x86_ref_e ref, u64 value)
+{
+    switch (ref)
+    {
         case X86_REF_RAX:
             recompiler->state.gprs[0] = value;
             break;
@@ -168,32 +174,41 @@ void felix86_set_guest(felix86_recompiler_t* recompiler, x86_ref_e ref, u64 valu
     }
 }
 
-xmm_reg_t felix86_get_guest_xmm(felix86_recompiler_t* recompiler, x86_ref_e ref) {
-    if (ref < X86_REF_XMM0 || ref > X86_REF_XMM15) {
+xmm_reg_t felix86_get_guest_xmm(felix86_recompiler_t* recompiler, x86_ref_e ref)
+{
+    if (ref < X86_REF_XMM0 || ref > X86_REF_XMM15)
+    {
         ERROR("Invalid XMM reference");
     }
 
     return recompiler->state.xmm[ref - X86_REF_XMM0];
 }
 
-void felix86_set_guest_xmm(felix86_recompiler_t* recompiler, x86_ref_e ref, xmm_reg_t value) {
-    if (ref < X86_REF_XMM0 || ref > X86_REF_XMM15) {
+void felix86_set_guest_xmm(felix86_recompiler_t* recompiler, x86_ref_e ref, xmm_reg_t value)
+{
+    if (ref < X86_REF_XMM0 || ref > X86_REF_XMM15)
+    {
         ERROR("Invalid XMM reference");
     }
 
     recompiler->state.xmm[ref - X86_REF_XMM0] = value;
 }
 
-felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler) {
-    if (!recompiler->use_interpreter) {
+felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler)
+{
+    if (!recompiler->use_interpreter)
+    {
         ERROR("Interpreter not enabled");
     }
 
-    while (true) {
+    while (true)
+    {
         u64 address = recompiler->state.rip;
-        ir_function_t* function = ir_function_cache_get_function(recompiler->function_cache, address);
+        ir_function_t* function =
+            ir_function_cache_get_function(recompiler->function_cache, address);
 
-        if (!function->compiled) {
+        if (!function->compiled)
+        {
             frontend_compile_function(function, address);
             ir_ssa_pass(function);
             ir_naming_pass(function);
@@ -211,6 +226,7 @@ felix86_exit_reason_e felix86_recompiler_run(felix86_recompiler_t* recompiler) {
     return DoneTesting;
 }
 
-ir_function_t* felix86_get_function(felix86_recompiler_t* recompiler, u64 address) {
+ir_function_t* felix86_get_function(felix86_recompiler_t* recompiler, u64 address)
+{
     return ir_function_cache_get_function(recompiler->function_cache, address);
 }
