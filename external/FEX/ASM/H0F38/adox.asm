@@ -10,6 +10,7 @@
   }
 }
 %endif
+bits 64
 
 ; Test with no overflow
 mov rax, -1

@@ -10,6 +10,7 @@
   }
 }
 %endif
+bits 64
 
 ; Within 16 byte region but unaligned
 mov r15, 0xe0000007

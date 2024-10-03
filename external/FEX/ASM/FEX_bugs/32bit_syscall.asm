@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 ; 32-bit:
 ; 265 = clock_gettime

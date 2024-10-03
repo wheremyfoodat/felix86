@@ -2,6 +2,7 @@
 {
 }
 %endif
+bits 64
 
 ; Arg 1 = type
 ; Arg 2 = Reg

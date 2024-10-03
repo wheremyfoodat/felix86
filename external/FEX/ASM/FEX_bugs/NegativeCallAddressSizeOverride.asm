@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX had a bug with relative call instructions.
 ; It was incorrectly truncating the immediate displacement based on address size override AND operand size override.

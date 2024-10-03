@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX has had various bugs throughout the years leading to accidental
 ; superlinear time, for example with constant pooling and register allocation.

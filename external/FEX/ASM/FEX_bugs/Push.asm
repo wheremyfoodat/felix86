@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX had a bug where a `push rsp` would generate an Arm64 instruction with undefined behaviour.
 ; `push rsp` -> `str x8, [x8, #-8]!`

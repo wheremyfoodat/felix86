@@ -10,6 +10,7 @@
   "Env": { "FEX_X87REDUCEDPRECISION" : "1" }
 }
 %endif
+bits 64
 
 section .data
     neg_zero dq 0x8000000000000000   ; -0.0

@@ -11,6 +11,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX-Emu had a bug where movs based copies with overlapping regions results in incorrect results.
 ; Since this is dealing with a large amount of data for testing purposes, CRC the results to ensure they were copied correctly.

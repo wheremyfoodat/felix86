@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 mov rbx, 0xe0000000
 o32 fstenv [rbx]

@@ -8,6 +8,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX-Emu had a bug where it thought repeat worked on increment and decrement instructions.
 ; While the prefix can be encoded on the instructions, it is ignored by the hardware implementation.

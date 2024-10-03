@@ -8,6 +8,7 @@
   }
 }
 %endif
+bits 64
 
 %macro single_case 4
   ; Load sources

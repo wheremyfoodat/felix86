@@ -6,6 +6,7 @@
   "HostFeatures": ["BMI1"]
 }
 %endif
+bits 64
 
 ; Source 0 sets ZF
 mov rax, 0

@@ -7,6 +7,7 @@
   "HostFeatures": ["AVX"]
 }
 %endif
+bits 64
 
 ; FEX had a bug where VSIB indexing wasn't allow xmm4/ymm4 to be encoded inside of the VSIB due to legacy SIB behaviour
 ; This ensures that VSIB with xmm4 is allowed to work.

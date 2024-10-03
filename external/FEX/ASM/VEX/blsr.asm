@@ -11,6 +11,7 @@
   "HostFeatures": ["BMI1"]
 }
 %endif
+bits 64
 
 ; Trivial test, this should result in 10.
 mov rax, 11

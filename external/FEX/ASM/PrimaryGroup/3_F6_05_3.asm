@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 %macro ofcfmerge 0
   ; Get CF

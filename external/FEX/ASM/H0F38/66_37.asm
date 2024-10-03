@@ -14,6 +14,7 @@
   }
 }
 %endif
+bits 64
 
 movaps xmm0, [rel .data0]
 movaps xmm1, [rel .data1]

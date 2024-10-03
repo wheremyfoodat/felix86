@@ -9,6 +9,7 @@
   }
 }
 %endif
+bits 64
 
 lea rdx, [rel data2]
 fld tword [rdx + 8 * 0]

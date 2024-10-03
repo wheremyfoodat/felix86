@@ -13,6 +13,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX-Emu had a bug where we were conflating x87 registers as mmx registers and vice-versa depending on caching behaviour.
 ; This unittest semi-aggressively mixes x87 and mmx with xsave/xrstor that would have failed with FEX's caching.

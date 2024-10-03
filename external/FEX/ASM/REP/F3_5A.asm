@@ -13,6 +13,7 @@
   }
 }
 %endif
+bits 64
 
 mov rdx, 0xe0000000
 mov rax, 0x414243443f800000 ; 1.0

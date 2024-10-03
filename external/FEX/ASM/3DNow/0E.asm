@@ -6,6 +6,7 @@
   "HostFeatures": ["3DNOW"]
 }
 %endif
+bits 64
 
 ; Load all x87 registers
 finit

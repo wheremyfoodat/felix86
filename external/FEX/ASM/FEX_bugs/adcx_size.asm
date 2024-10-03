@@ -12,6 +12,7 @@
   }
 }
 %endif
+bits 64
 
 mov rax, 0x6B11A609DC1643F1
 mov rbx, 0x0FB22768A2CF00BB

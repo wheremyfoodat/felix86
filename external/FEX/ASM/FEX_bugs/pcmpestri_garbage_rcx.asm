@@ -7,6 +7,7 @@
   }
 }
 %endif
+bits 64
 
 ; Tests a bug that FEX had with pcmpestri where the returned index would leave data in the upper 32-bits of rcx.
 ; This instruction writes a 32-bit result to rcx with zero extend to 64-bit.

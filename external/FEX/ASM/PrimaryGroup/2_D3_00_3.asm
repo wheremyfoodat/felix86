@@ -12,6 +12,7 @@
   }
 }
 %endif
+bits 64
 
 mov r15, 1
 

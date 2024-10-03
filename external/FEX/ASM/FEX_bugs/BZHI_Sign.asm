@@ -8,6 +8,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX had a bug where bzhi would fail to update SF. Test that bzhi correctly
 ; sets ZF/SF correctly based on the result.

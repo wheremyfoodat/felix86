@@ -12,6 +12,7 @@
   }
 }
 %endif
+bits 64
 
 ; 8bit
 mov rcx, 0x4142434445466148

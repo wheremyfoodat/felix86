@@ -11,6 +11,7 @@
   }
 }
 %endif
+bits 64
 
 ; Simple test to prove that config loader's MemoryData is working
 

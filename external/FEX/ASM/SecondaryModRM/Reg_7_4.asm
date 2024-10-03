@@ -6,6 +6,7 @@
   "HostFeatures": ["CLZERO"]
 }
 %endif
+bits 64
 
 ; Starting address to store to
 mov rax, 0xe8000000

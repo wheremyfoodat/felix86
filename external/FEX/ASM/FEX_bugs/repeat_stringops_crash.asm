@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX-Emu had a bug where a backwards repeating string operation would read past the end of a mapped page.
 ; This was encountered in https://github.com/FEX-Emu/FEX/pull/3478.

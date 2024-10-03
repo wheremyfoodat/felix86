@@ -7,6 +7,7 @@
   }
 }
 %endif
+bits 64
 
 mov rdx, 0xe8000000
 mov rax, 0xDEADBEEFBAD0DAD1

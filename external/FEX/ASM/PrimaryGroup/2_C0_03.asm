@@ -12,6 +12,7 @@
   }
 }
 %endif
+bits 64
 
 mov rbx, 0x02
 mov rcx, 0x02

@@ -12,6 +12,7 @@
   "HostFeatures": ["BMI1"]
 }
 %endif
+bits 64
 
 ; General extraction
 mov r14, 0x7FFFFFFFFFFFFFFF

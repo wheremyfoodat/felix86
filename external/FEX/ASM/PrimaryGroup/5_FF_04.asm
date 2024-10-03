@@ -8,6 +8,7 @@
   }
 }
 %endif
+bits 64
 
 mov r15, 0xe0000000
 lea rsp, [r15 + 8 * 4]

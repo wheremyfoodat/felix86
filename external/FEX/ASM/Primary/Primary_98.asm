@@ -8,6 +8,7 @@
   }
 }
 %endif
+bits 64
 
 mov al, 0xF0
 cbw

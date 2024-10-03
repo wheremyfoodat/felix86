@@ -8,6 +8,7 @@
   "HostFeatures": ["3DNOW"]
 }
 %endif
+bits 64
 
 pfrcpv mm0, [rel data1]
 pfrcpv mm1, [rel data2]

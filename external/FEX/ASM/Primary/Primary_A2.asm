@@ -9,6 +9,7 @@
   }
 }
 %endif
+bits 64
 
 mov rax, 0x41
 ; mov [0xe0000008], rax

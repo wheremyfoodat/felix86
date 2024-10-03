@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 ; FEX-Emu had a bug where a 128-bit divide with a large unsigned number with a negative number would result in incorrect data.
 ; This only manifested itself when the sign bit differed between upper and lower halves of the dividend.
 

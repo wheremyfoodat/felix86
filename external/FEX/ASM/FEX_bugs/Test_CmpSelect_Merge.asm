@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 %macro intcompare 3
   ; instruction, value1, value2

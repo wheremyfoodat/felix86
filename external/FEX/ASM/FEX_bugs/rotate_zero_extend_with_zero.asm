@@ -14,6 +14,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX-Emu had a bug where it forgot to zero extend 32-bit rotate operations even if the rotate value masked to zero.
 ; Do both immediate encoded rotates and CL encoded rotates to ensure it gets zero extended correctly.

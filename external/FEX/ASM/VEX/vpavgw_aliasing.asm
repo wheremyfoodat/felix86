@@ -7,6 +7,7 @@
   }
 }
 %endif
+bits 64
 
 ; Small test that ensures aliasing source/dest is handled properly.
 

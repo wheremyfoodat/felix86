@@ -14,6 +14,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX had a bug in pr #3153 which encountered a destination register overwrite in sbbNZCV.
 ; This was due to the destination register for that IR operation aliases the first source register.

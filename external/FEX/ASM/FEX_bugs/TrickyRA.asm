@@ -4,6 +4,7 @@
   }
 }
 %endif
+bits 64
 
 ; This test is reduced from a game that hit a register allocation bug. The test
 ; has a high register pressure across a `rep movsb` (_Memcpy), and since _Memcpy

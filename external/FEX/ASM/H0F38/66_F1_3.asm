@@ -7,6 +7,7 @@
   }
 }
 %endif
+bits 64
 
 mov rax, 0x41424344454647
 mov rbx, 0x51525354555657

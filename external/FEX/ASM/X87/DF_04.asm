@@ -16,6 +16,7 @@
   }
 }
 %endif
+bits 64
 
 fbld [rel .data_0]
 fbstp [rel .res_data_0]

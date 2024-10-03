@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX-Emu has a bug around NZCV flags getting spilled and filled.
 ; The bug comes down to NZCV actually being 32-bit but our IR incorrectly assumed that all flags were 8-bit.

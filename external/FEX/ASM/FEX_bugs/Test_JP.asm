@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 ; This test checks for proper behaviour of the parity flag. Older FEX versions
 ; would accidentally turn JP into a zero/nonzero check of the result.

@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 
 lea rax, [rel .data]
 lea rbx, [rel .data_mov]

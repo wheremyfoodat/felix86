@@ -12,6 +12,7 @@
   "Env": { "FEX_X87REDUCEDPRECISION" : "1" }
 }
 %endif
+bits 64
 
 section .data
 align 8

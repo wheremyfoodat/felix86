@@ -15,6 +15,7 @@
   "HostFeatures": ["BMI2"]
 }
 %endif
+bits 64
 
 ; Trivial test
 mov rax, 1

@@ -14,6 +14,7 @@
   }
 }
 %endif
+bits 64
 
 mov rcx, 0xe0000000
 

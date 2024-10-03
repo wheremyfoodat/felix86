@@ -9,6 +9,7 @@
   }
 }
 %endif
+bits 64
 
 mov rax, qword 0xDEADBEEFBAD0DAD1
 

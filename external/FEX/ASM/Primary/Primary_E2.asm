@@ -8,6 +8,7 @@
   }
 }
 %endif
+bits 64
 
 mov rax, 0
 mov rcx, 0x11

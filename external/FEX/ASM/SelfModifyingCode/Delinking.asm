@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 
 mov rcx, 2
 mov rbx, 1

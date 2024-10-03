@@ -8,6 +8,7 @@
   }
 }
 %endif
+bits 64
 
 clc
 

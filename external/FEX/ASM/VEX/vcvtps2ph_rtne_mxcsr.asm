@@ -13,6 +13,7 @@
   }
 }
 %endif
+bits 64
 
 ; Set up MXCSR to Round to Nearest Even
 vldmxcsr [rel .mxcsr]

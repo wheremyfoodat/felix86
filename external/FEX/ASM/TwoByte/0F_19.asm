@@ -8,6 +8,7 @@
   }
 }
 %endif
+bits 64
 
 %macro nop_enc 1
 db 0x0F

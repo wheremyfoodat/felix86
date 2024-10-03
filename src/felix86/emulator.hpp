@@ -20,9 +20,13 @@ struct Config {
 };
 
 struct Emulator {
-    Emulator(const Config& config) : fs(config.rootfs_path), config(config) {
-        if (!fs.Good()) {
-            ERROR("Failed to initialize filesystem");
+    Emulator(const Config& config) : config(config) {
+        // Sometimes we run without rootfs, such as for testing
+        if (!config.rootfs_path.empty()) {
+            fs.LoadRootFS(config.rootfs_path);
+            if (!fs.Good()) {
+                ERROR("Failed to initialize filesystem");
+            }
         }
     }
 

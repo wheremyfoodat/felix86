@@ -22,6 +22,7 @@
   }
 }
 %endif
+bits 64
 
 lea rdx, [rel .data]
 vmovapd xmm0,  [rdx + 16 * 0]

@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 
 ; Test behaviour of overflow
 ; and storing negative numbers

@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 ; This test checks that PF is not modified with zero shifts
 

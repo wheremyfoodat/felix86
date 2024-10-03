@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 fldln2
 

@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX-Emu had a bug with vpsrldq where if the shift was >= 16 bytes then the top half of the ymm register wasn't modified.
 ; Adds a simple test to ensure this continues working.

@@ -14,6 +14,7 @@
   }
 }
 %endif
+bits 64
 
 ; Round to Nearest Even
 

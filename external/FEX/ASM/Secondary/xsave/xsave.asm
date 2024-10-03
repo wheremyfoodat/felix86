@@ -34,6 +34,7 @@
   }
 }
 %endif
+bits 64
 
 %include "xsave_macros.mac"
 

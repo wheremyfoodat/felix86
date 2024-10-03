@@ -11,6 +11,7 @@
   "HostFeatures": ["BMI2"]
 }
 %endif
+bits 64
 
 ; Test low
 mov rbx, 2

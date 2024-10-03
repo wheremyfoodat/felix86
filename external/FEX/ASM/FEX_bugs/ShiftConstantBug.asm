@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX had a bug in its `TestNZ` opcode where it would try to load a constant in to the tst instruction
 ; If the constant didn't fit in a logical encoding it would generate invalid instructions and also crash.

@@ -10,6 +10,7 @@
   }
 }
 %endif
+bits 64
 
 ; Load inputs
 vmovapd ymm1, [rel .data]

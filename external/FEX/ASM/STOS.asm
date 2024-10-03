@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 
 ; Data we want to store
 mov rax, 0xDEADBEEFBAD0DAD1

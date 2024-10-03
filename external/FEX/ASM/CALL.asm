@@ -10,6 +10,7 @@
   }
 }
 %endif
+bits 64
 
 jmp label
 label:

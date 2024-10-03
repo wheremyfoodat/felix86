@@ -20,6 +20,7 @@
   }
 }
 %endif
+bits 64
 
 vmovaps ymm0, [rel .data0]
 vmovaps ymm1, [rel .data1]

@@ -7,6 +7,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX had a bug setting carry with 8/16-bit SBB
 mov rax, 0x8000abcd80000000

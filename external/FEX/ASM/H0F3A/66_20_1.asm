@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 mov rsi, 0xe0000000
 

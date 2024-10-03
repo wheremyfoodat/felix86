@@ -10,6 +10,7 @@
   }
 }
 %endif
+bits 64
 
 ; Starting address to store to
 mov rdi, 0xe8000000

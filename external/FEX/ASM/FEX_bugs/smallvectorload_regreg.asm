@@ -10,6 +10,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX-Emu had a bug with vector loadstore instructions where 16-bit and 8-bit vector loadstores with reg+reg source would assert in the code emitter.
 ; This affected both vector loads and stores. SSE 8-bit and 16-bit are quite uncommon so this isn't encountered frequently.

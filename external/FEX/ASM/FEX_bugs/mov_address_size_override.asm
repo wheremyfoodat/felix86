@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 ; FEX-Emu had a bug where address size override was overriding destination and source sizes on operations not affecting memory.
 ; This showed up as a bug in OpenSSL where GCC was padding move instructions with the address size prefix, knowing that it wouldn't do anything.
 ; FEX interpreted this address size prefix as making the destination 32-bit resulting in zero-extending the 64-bit source.

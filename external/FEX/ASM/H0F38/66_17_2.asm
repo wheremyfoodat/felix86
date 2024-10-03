@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 
 ; Set EFLAGS to known value with sahf
 mov rax, -1

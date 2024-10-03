@@ -13,6 +13,7 @@
   }
 }
 %endif
+bits 64
 
 ; Set up MXCSR to Round Up
 vldmxcsr [rel .mxcsr]

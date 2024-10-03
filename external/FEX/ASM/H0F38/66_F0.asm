@@ -7,6 +7,7 @@
   }
 }
 %endif
+bits 64
 
 ; This is a clone of the F2_F0 crc32 test with manually coded crc32 with prefix 66 instead of F2
 mov rax, 0

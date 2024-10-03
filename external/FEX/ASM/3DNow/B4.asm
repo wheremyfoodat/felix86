@@ -7,6 +7,7 @@
   "HostFeatures": ["3DNOW"]
 }
 %endif
+bits 64
 
 movq mm0, [rel data1]
 movq mm1, [rel data2]

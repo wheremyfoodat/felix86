@@ -23,6 +23,7 @@
   }
 }
 %endif
+bits 64
 
 %macro swap32 2
 mov %1, -1

@@ -13,6 +13,7 @@
   "HostFeatures": ["BMI2"]
 }
 %endif
+bits 64
 
 ; Should not alter the source value
 mov rax, -1

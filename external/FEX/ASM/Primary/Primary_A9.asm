@@ -10,6 +10,7 @@
   }
 }
 %endif
+bits 64
 
 mov rax, 0x6162636465666768
 test rax, 0x71727374

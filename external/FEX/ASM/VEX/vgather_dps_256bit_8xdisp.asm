@@ -19,6 +19,7 @@
   "HostFeatures": ["AVX"]
 }
 %endif
+bits 64
 
 ; 256-bit
 ; 8x displacement

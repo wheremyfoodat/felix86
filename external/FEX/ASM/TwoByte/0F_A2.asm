@@ -8,6 +8,7 @@
   }
 }
 %endif
+bits 64
 
 ; CPUID function zero
 mov rax, 0

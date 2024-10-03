@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 
 mov esi, 50
 

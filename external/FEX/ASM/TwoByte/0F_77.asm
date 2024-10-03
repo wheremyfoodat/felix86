@@ -7,6 +7,7 @@
   }
 }
 %endif
+bits 64
 
 emms ; Just ensure it runs
 

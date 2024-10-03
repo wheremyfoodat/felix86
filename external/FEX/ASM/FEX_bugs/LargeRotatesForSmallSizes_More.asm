@@ -20,6 +20,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX-Emu had a bug where 8-bit and 16-bit rotates with carry generated incorrect results when the rotate amount was larger than the data size.
 ; These are additional tests to capture more edge cases in the implementation.

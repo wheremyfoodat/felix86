@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX had a bug where an NZCV RMW would fail to calculate previously deferred
 ; flags, resulting in garbage flag values

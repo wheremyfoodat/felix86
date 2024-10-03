@@ -9,6 +9,7 @@
   }
 }
 %endif
+bits 64
 
 ; Uses AX and BX and stores result in r15
 ; CF:ZF

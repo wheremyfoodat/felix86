@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX had a bug where an optimization for canonical zeroing of a register would fail to set flags correctly.
 ; This broke `Metal Gear Rising: Revengeance`. The title screen geometry was broken.

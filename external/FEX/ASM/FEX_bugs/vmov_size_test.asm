@@ -12,6 +12,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX-Emu had a bug where vmovq was loading 128-bits worth of data instead of 64-bits.
 ; This ensures that {v,}mov{d,q} all load the correct amount of data through a test that will fault if it loads too much.

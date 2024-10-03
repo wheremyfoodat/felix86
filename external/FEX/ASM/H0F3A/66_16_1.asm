@@ -10,6 +10,7 @@
   }
 }
 %endif
+bits 64
 
 lea rdx, [rel .data]
 mov rsi, 0xe0000000

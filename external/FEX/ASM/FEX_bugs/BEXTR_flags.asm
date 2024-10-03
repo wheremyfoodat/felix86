@@ -7,6 +7,7 @@
   "HostFeatures": ["BMI1"]
 }
 %endif
+bits 64
 
 mov rcx, 0x8f635a775ad3b9b4
 mov esi, 0x3018

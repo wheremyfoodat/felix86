@@ -35,6 +35,7 @@
   }
 }
 %endif
+bits 64
 
 %define IS_AVX
 %include "xsave_macros.mac"

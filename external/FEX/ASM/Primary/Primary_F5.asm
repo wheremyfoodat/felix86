@@ -8,6 +8,7 @@
   }
 }
 %endif
+bits 64
 
 ; Set CF to known value
 clc

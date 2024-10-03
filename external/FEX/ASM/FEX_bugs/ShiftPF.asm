@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX had a bug where variable shifts modified PF but RCLSE ignored this,
 ; causing RCLSE to invalidly propagate earlier PF results.

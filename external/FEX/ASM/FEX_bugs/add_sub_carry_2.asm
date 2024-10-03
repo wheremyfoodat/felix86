@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX had a bug with smaller than 32-bit operations corrupting sbb and adc results.
 ; A small test that tests both sbb and adc to ensure it returns data correctly.

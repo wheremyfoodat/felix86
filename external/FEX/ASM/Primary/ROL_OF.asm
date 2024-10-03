@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 %macro clearof 0
 mov r12, 0

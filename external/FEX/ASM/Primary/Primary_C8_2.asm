@@ -10,6 +10,7 @@
   }
 }
 %endif
+bits 64
 
 mov rsp, 0xe0001000
 mov rbp, 0xe0002000

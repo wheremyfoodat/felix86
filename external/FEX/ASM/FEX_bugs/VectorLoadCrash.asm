@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 
 ; FEX-Emu had a bug where a vector load that was using SIB addressing would overflow to larger than what ARM could encode.

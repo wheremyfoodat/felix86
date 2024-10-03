@@ -8,6 +8,7 @@
   }
 }
 %endif
+bits 64
 
 vmovups ymm0, [rel .data]
 vmovups ymm1, [rel .data2]

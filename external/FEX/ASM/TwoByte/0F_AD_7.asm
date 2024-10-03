@@ -8,6 +8,7 @@
   }
 }
 %endif
+bits 64
 
 mov cl, 2
 mov r15, 0xFFFFFFFFFFFFFFF2

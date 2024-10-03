@@ -20,6 +20,7 @@
   }
 }
 %endif
+bits 64
 
 movaps xmm0,  [rel .data + 16 * 0]
 movaps xmm1,  [rel .data + 16 * 1]

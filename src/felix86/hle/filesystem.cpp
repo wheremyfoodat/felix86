@@ -15,7 +15,7 @@
 
 const char* proc_self_exe = "/proc/self/exe";
 
-Filesystem::Filesystem(const std::filesystem::path& path) {
+void Filesystem::LoadRootFS(const std::filesystem::path& path) {
     if (path.empty()) {
         ERROR("Empty rootfs path");
         return;
@@ -58,6 +58,11 @@ ssize_t Filesystem::ReadLinkAt(u32 dirfd, const char* pathname, char* buf, u32 b
 }
 
 bool Filesystem::validatePath(const std::filesystem::path& path) {
+    if (!Good()) {
+        ERROR("Filesystem not initialized");
+        return false;
+    }
+
     std::string string = path.lexically_normal().string();
 
     // To check that it's part of the sandbox, we check that the path is

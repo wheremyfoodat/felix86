@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 
 mov esp, 0xe0000030
 

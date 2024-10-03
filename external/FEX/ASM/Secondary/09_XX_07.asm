@@ -10,6 +10,7 @@
   "HostFeatures": ["RAND"]
 }
 %endif
+bits 64
 
 mov rax, 0x4142434445464748
 mov rbx, 0x4142434445464748

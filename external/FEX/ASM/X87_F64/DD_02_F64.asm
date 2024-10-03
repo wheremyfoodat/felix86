@@ -8,6 +8,7 @@
   "Env": { "FEX_X87REDUCEDPRECISION" : "1" }
 }
 %endif
+bits 64
 
 lea rdx, [rel data]
 fld tword [rdx + 8 * 0]

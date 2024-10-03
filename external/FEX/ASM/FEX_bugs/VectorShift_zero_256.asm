@@ -19,6 +19,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX had a bug where immediate encoded shifts by zero would generate bad code on AArch64.
 

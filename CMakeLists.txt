@@ -20,6 +20,7 @@ add_subdirectory(external/Catch2)
 add_subdirectory(external/xbyak)
 # add_subdirectory(external/riscv-disassembler)
 add_subdirectory(external/zydis)
+add_subdirectory(external/fmt)
 
 set(FELIX86_FRONTEND_SOURCES
     src/felix86/frontend/frontend.cpp
@@ -76,6 +77,7 @@ set(FELIX86_INCLUDES
     include
     src
     external/robin-map/include
+    external/json
 )
 
 add_library(felix86_core STATIC)

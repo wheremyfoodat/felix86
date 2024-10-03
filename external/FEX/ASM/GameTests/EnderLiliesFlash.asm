@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 
 ; This bug was encountered in Ender Lilies, when an enemy attacked the player character there was a chance for a black screen flash.
 ; This was due to a bug in FEX's `ZextAndMaskingElimination` pass which tries to remove useless vmov IR operations.

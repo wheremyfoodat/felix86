@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX-Emu had a bug where SIGBUS handling of unaligned loadstores using FEAT_LRCPC would accidentally try using the FEAT_LSE atomic memory operation
 ; handlers. It wouldn't find the handler for FEAT_LRCPC instructions (because it was only supposed to handle FEAT_LSE instructions) and fault out.

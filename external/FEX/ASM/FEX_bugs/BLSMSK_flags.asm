@@ -7,6 +7,7 @@
   "HostFeatures": ["BMI1"]
 }
 %endif
+bits 64
 
 ; Result in all-1's due to underflow so SF/CF set
 mov rbx, 1

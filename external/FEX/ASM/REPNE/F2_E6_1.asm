@@ -20,6 +20,7 @@
   }
 }
 %endif
+bits 64
 
 lea rdx, [rel .data]
 movapd xmm0, [rel .random_data + 16 * 0]

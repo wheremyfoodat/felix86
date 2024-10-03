@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 
 mov ecx, 0
 xgetbv

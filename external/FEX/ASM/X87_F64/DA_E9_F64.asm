@@ -7,6 +7,7 @@
   "Env": { "FEX_X87REDUCEDPRECISION" : "1" }
 }
 %endif
+bits 64
 
 ; Only tests pop behaviour
 fld1

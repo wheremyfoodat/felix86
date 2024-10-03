@@ -7,6 +7,7 @@
   }
 }
 %endif
+bits 64
 
 mov r15, 0xDEADBEEF
 mov r14, 0x5

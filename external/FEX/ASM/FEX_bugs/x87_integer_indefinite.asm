@@ -10,6 +10,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX-Emu had a bug where x87 float to integer conversions weren't converting to the correct "integer indefinite" value for 16-bit conversions.
 ; Test 16-bit, 32-bit, and 64-bit to ensure correct "integer indefinite" results for all.

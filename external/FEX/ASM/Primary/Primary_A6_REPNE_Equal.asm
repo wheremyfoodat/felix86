@@ -12,6 +12,7 @@
   }
 }
 %endif
+bits 64
 
 %macro copy 3
   ; Dest, Src, Size

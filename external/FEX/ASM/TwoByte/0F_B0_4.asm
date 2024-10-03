@@ -16,6 +16,7 @@
   }
 }
 %endif
+bits 64
 
 ; Offset everything by 15 bytes
 mov r10, 0xe000000f

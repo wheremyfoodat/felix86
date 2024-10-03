@@ -10,6 +10,7 @@
   }
 }
 %endif
+bits 64
 
 fld dword [rel positive]
 ftst

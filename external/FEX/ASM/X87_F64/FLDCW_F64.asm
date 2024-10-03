@@ -7,6 +7,7 @@
   }
 }
 %endif
+bits 64
 
 lea rbp, [rel data]
 mov rdx, 0xe0000000

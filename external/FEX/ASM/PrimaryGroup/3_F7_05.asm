@@ -13,6 +13,7 @@
   }
 }
 %endif
+bits 64
 
 mov r15, 0xe0000000
 

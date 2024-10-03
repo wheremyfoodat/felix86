@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 %macro cfmerge 0
 

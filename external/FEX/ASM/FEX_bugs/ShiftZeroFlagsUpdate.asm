@@ -9,6 +9,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX-Emu has a bug where a shift by zero was updating flags.
 ; x86 shift by zero must not update flags.

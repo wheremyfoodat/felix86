@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX-Emu had a bug in the 32-bit implementation of LOOP where it didn't handle 16-bit RCX correctly.
 ; For test coverage on the 64-bit side, ensure that both 64-bit and 32-bit operation works correctly.

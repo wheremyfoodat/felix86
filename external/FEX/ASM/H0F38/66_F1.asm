@@ -10,6 +10,7 @@
   }
 }
 %endif
+bits 64
 
 ; This is a clone of the F2_F1 crc32 test with manually coded crc32 with prefix 66 instead of F2
 ; This can't user operand size override on 32-bit instructions for testing since it WILL override to 16-bit

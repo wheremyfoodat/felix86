@@ -12,6 +12,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX-Emu had a bug where 8-bit and 16-bit shifts with large offsets would calculate flags incorrectly.
 mov rsp, 0xe000_1000

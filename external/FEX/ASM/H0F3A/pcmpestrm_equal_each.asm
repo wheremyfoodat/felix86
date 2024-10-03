@@ -21,6 +21,7 @@
   }
 }
 %endif
+bits 64
 
 ; Adjusts the result from LAHF and SETO so that we have a set of flags organized
 ; like [OF, SF, ZF, AF, PF, CF] for storing into the .flags region

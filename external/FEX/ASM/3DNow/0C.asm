@@ -9,6 +9,7 @@
   "HostFeatures": ["3DNOW"]
 }
 %endif
+bits 64
 
 pi2fw mm0, [rel data1]
 pi2fw mm1, [rel data2]

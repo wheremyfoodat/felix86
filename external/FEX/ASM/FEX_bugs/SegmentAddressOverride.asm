@@ -19,6 +19,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX had a bug that caused the truncation from the address-size flag to be applied after adding the segment base, even
 ; though the flag is only supposed to apply to the offset itself.

@@ -8,6 +8,7 @@
   }
 }
 %endif
+bits 64
 
 mov rsp, 0xe0000020
 mov rax, 0

@@ -11,6 +11,7 @@
   "HostFeatures": ["BMI2"]
 }
 %endif
+bits 64
 
 ; 32-bit
 mov eax, 0x00012567

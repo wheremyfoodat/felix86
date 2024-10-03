@@ -2,6 +2,7 @@
 {
 }
 %endif
+bits 64
 
 ; FEX-Emu had a bug in the vcvtdq2ps and vcvtdq2pd instruction where it was incorrectly generating a 256-bit IR operation.
 ; Due to a quirk of the IR operation handling, this instruction was actually handled "correctly" as a 128-bit operation.

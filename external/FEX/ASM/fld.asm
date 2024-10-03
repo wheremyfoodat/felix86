@@ -9,6 +9,7 @@
   }
 }
 %endif
+bits 64
 
 lea rbp, [rel data]
 

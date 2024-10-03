@@ -6,6 +6,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX has a bug with NZCV host flag usage that IR operations that implicitly clobber flags might not save emulated eflags correctly in all instances.
 ; This tests one particular instance of `ImplicitFlagClobber`.

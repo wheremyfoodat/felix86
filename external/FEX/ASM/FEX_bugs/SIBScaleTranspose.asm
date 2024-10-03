@@ -29,6 +29,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX had a bug in its const-prop pass where x86 SIB scale would accidentally transpose the register that was scaling with the base.
 ; This test explicitly tests SIB in a way that a transpose would load data from the wrong address.

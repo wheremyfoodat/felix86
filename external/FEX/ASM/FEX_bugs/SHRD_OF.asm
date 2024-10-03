@@ -5,6 +5,7 @@
   }
 }
 %endif
+bits 64
 
 ; FEX had a bug where OF for SHRD wasn't getting calculated correctly.
 ; OF with SHRD set if the sign bit has changed.

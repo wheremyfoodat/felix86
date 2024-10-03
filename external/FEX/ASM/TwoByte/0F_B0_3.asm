@@ -16,6 +16,7 @@
   }
 }
 %endif
+bits 64
 
 ; Offset everything by 1 byte
 ; Everything stays within 16byte boundary but unaligned

@@ -28,6 +28,7 @@
     %else
       movaps xmm%1,  [rel %2 + 32 * %1]
     %endif
+bits 64
   %endmacro
 
   move_to_xmm 0,  %1
@@ -213,3 +214,4 @@ align 32
 %endmacro
 
 %endif
+bits 64

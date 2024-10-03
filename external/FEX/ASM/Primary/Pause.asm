@@ -2,6 +2,7 @@
 {
 }
 %endif
+bits 64
 
 ; Set rcx to an absurd number just incase something terrible occurs since pause = `rep nop`
 mov rcx, -1

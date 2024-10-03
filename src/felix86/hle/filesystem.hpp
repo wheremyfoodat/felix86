@@ -5,7 +5,9 @@
 #include "felix86/common/utility.hpp"
 
 struct Filesystem {
-    Filesystem(const std::filesystem::path& path);
+    Filesystem() = default;
+
+    void LoadRootFS(const std::filesystem::path& path);
 
     bool Good() {
         return good;

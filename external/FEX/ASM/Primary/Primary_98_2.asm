@@ -13,6 +13,7 @@
   }
 }
 %endif
+bits 64
 
 ; Positive 8bit
 mov rax, 0x4142434445464701

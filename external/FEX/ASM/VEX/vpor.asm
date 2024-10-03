@@ -14,6 +14,7 @@
   }
 }
 %endif
+bits 64
 
 lea rdx, [rel .data1]
 lea rbx, [rel .data2]

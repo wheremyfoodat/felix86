@@ -11,6 +11,7 @@
   }
 }
 %endif
+bits 64
 
 section .data
 align 8

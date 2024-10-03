@@ -12,6 +12,7 @@
   }
 }
 %endif
+bits 64
 
 mov r10, 0xe0000000
 

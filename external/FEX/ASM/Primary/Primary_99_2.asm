@@ -24,6 +24,7 @@
   }
 }
 %endif
+bits 64
 
 ; Positive 16bit
 mov rax, 1

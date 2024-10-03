@@ -7,6 +7,7 @@
   }
 }
 %endif
+bits 64
 
 lea r15, [rel .data]
 

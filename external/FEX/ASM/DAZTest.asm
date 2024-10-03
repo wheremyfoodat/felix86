@@ -7,6 +7,7 @@
   }
 }
 %endif
+bits 64
 
 vmovaps ymm1, [rel .data_three]
 vmovaps ymm2, [rel .data_four]

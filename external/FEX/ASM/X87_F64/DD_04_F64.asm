@@ -12,6 +12,7 @@
   "Env": { "FEX_X87REDUCEDPRECISION" : "1" }
 }
 %endif
+bits 64
 
 ; We don't test XMM0 or the MM* registers due to precision
 

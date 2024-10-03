@@ -10,6 +10,7 @@
   }
 }
 %endif
+bits 64
 
 mov rbx, 0xe0000000
 lea r9, [rbx + 8 * 1]

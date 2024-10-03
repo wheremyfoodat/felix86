@@ -10,6 +10,7 @@
   }
 }
 %endif
+bits 64
 
 ; Spans 64byte boundary and unaligned
 mov r15, 0xe000003F
