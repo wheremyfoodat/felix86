@@ -155,7 +155,21 @@ struct Comment {
     std::string comment = {};
 };
 
+enum class ExpressionType : u8{
+    Operands,
+    Immediate,
+    GetGuest,
+    SetGuest,
+    Phi,
+    Comment,
+    TupleAccess,
+
+    Count,
+};
+
 using Expression = std::variant<Operands, Immediate, GetGuest, SetGuest, Phi, Comment, TupleAccess>;
+
+static_assert(std::variant_size_v<Expression> == (u8)ExpressionType::Count);
 
 struct IRInstruction {
     IRInstruction(IROpcode opcode, std::initializer_list<IRInstruction*> operands)
@@ -169,18 +183,23 @@ struct IRInstruction {
         }
 
         checkValidity(opcode, op);
+        expression_type = ExpressionType::Operands;
     }
 
     IRInstruction(u64 immediate) : opcode(IROpcode::Immediate), return_type{IRType::Integer64} {
         Immediate imm;
         imm.immediate = immediate;
         expression = imm;
+
+        expression_type = ExpressionType::Immediate;
     }
 
     IRInstruction(IROpcode opcode, x86_ref_e ref) : opcode(opcode), return_type{IRInstruction::getTypeFromOpcode(opcode, ref)} {
         GetGuest get;
         get.ref = ref;
         expression = get;
+
+        expression_type = ExpressionType::GetGuest;
     }
 
     IRInstruction(IROpcode opcode, x86_ref_e ref, IRInstruction* source)
@@ -191,6 +210,7 @@ struct IRInstruction {
         expression = set;
 
         source->AddUse();
+        expression_type = ExpressionType::SetGuest;
     }
 
     IRInstruction(Phi phi) : opcode(IROpcode::Phi), return_type{IRInstruction::getTypeFromOpcode(opcode, phi.ref)} {
@@ -199,12 +219,16 @@ struct IRInstruction {
         for (auto& node : phi.nodes) {
             node.value->AddUse();
         }
+
+        expression_type = ExpressionType::Phi;
     }
 
     IRInstruction(const std::string& comment) : opcode(IROpcode::Comment), return_type{IRInstruction::getTypeFromOpcode(opcode)} {
         Comment c;
         c.comment = comment;
         expression = c;
+
+        expression_type = ExpressionType::Comment;
     }
 
     IRInstruction(IRInstruction* tuple, u8 index)
@@ -215,6 +239,7 @@ struct IRInstruction {
         expression = tg;
 
         tuple->AddUse();
+        expression_type = ExpressionType::TupleAccess;
     }
 
     IRInstruction(IRInstruction* mov) : opcode(IROpcode::Mov), return_type{mov->return_type} {
@@ -223,6 +248,7 @@ struct IRInstruction {
         expression = op;
 
         mov->AddUse();
+        expression_type = ExpressionType::Operands;
     }
 
     IRInstruction(const IRInstruction& other) = delete;
@@ -286,8 +312,60 @@ struct IRInstruction {
         return std::get<Operands>(expression);
     }
 
+    GetGuest& AsGetGuest() {
+        return std::get<GetGuest>(expression);
+    }
+
+    SetGuest& AsSetGuest() {
+        return std::get<SetGuest>(expression);
+    }
+
+    Immediate& AsImmediate() {
+        return std::get<Immediate>(expression);
+    }
+
     Phi& AsPhi() {
         return std::get<Phi>(expression);
+    }
+
+    Comment& AsComment() {
+        return std::get<Comment>(expression);
+    }
+
+    TupleAccess& AsTupleAccess() {
+        return std::get<TupleAccess>(expression);
+    }
+
+    ExpressionType GetExpressionType() const {
+        return expression_type;
+    }
+
+    bool IsOperands() const {
+        return expression_type == ExpressionType::Operands;
+    }
+
+    bool IsImmediate() const {
+        return expression_type == ExpressionType::Immediate;
+    }
+
+    bool IsGetGuest() const {
+        return expression_type == ExpressionType::GetGuest;
+    }
+
+    bool IsSetGuest() const {
+        return expression_type == ExpressionType::SetGuest;
+    }
+
+    bool IsPhi() const {
+        return expression_type == ExpressionType::Phi;
+    }
+
+    bool IsComment() const {
+        return expression_type == ExpressionType::Comment;
+    }
+
+    bool IsTupleAccess() const {
+        return expression_type == ExpressionType::TupleAccess;
     }
 
     u32 GetName() const {
@@ -331,10 +409,6 @@ struct IRInstruction {
         AsOperands().extra_data = extra_data;
     }
 
-    Expression& GetExpression() {
-        return expression;
-    }
-
     std::string Print() const;
 
     void Lock() {
@@ -349,6 +423,7 @@ private:
     Expression expression;
     u32 name = 0;
     u16 uses = 0;
+    ExpressionType expression_type;
     IROpcode opcode;
     IRType return_type;
     bool locked = false; // must not be removed by optimizations, even when used by nothing

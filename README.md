@@ -18,6 +18,7 @@ felix86 depends on a bunch of great projects:
 - [Catch2](https://github.com/catchorg/Catch2) for unit testing
 - [fmt](https://github.com/fmtlib/fmt) for string formatting
 - [robin-map](https://github.com/Tessil/robin-map) for a fast hashmap implementation
+- [nlohmann/json](https://github.com/nlohmann/json) for json parsing
 
 ## Also check out
 - [Panda3DS](https://github.com/wheremyfoodat/Panda3DS), a 3DS emulator for Windows, MacOS, Linux and Android

@@ -10,10 +10,6 @@ void ir_naming_pass(IRFunction* function) {
     auto get_name = [&names](IRType type) { return names[(u8)type]++; };
 
     auto name_block = [&get_name](IRBlock* block) {
-        for (auto& inst : block->GetPhiInstructions()) {
-            inst.SetName(get_name(inst.GetType()));
-        }
-
         for (auto& inst : block->GetInstructions()) {
             inst.SetName(get_name(inst.GetType()));
         }

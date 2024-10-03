@@ -133,10 +133,9 @@ bool IRFunction::Validate() const {
         auto add_uses = [&uses](IRInstruction* inst) {
             uses[inst].want = inst->GetUseCount();
 
-            Expression& expression = inst->GetExpression();
-            switch (expression.index()) {
-            case 0: {
-                Operands& operands = std::get<Operands>(expression);
+            switch (inst->GetExpressionType()) {
+            case ExpressionType::Operands: {
+                Operands& operands = inst->AsOperands();
                 for (IRInstruction* operand : operands.operands) {
                     if (operand != nullptr) {
                         uses[operand].have += 1;
@@ -146,13 +145,13 @@ bool IRFunction::Validate() const {
                 }
                 break;
             }
-            case 1:
-            case 2:
-            case 5: {
+            case ExpressionType::GetGuest:
+            case ExpressionType::Immediate:
+            case ExpressionType::Comment: {
                 break;
             }
-            case 3: {
-                SetGuest& set_guest = std::get<SetGuest>(expression);
+            case ExpressionType::SetGuest: {
+                SetGuest& set_guest = inst->AsSetGuest();
                 if (set_guest.source != nullptr) {
                     uses[set_guest.source].have += 1;
                 } else {
@@ -160,8 +159,8 @@ bool IRFunction::Validate() const {
                 }
                 break;
             }
-            case 4: {
-                Phi& phi = std::get<Phi>(expression);
+            case ExpressionType::Phi: {
+                Phi& phi = inst->AsPhi();
                 for (const PhiNode& node : phi.nodes) {
                     if (node.value != nullptr) {
                         uses[node.value].have += 1;
@@ -171,8 +170,8 @@ bool IRFunction::Validate() const {
                 }
                 break;
             }
-            case 6: {
-                TupleAccess& tuple_access = std::get<TupleAccess>(expression);
+            case ExpressionType::TupleAccess: {
+                TupleAccess& tuple_access = inst->AsTupleAccess();
                 if (tuple_access.tuple != nullptr) {
                     uses[tuple_access.tuple].have += 1;
                 } else {
@@ -185,10 +184,6 @@ bool IRFunction::Validate() const {
             }
             }
         };
-
-        for (auto& inst : block->GetPhiInstructions()) {
-            add_uses(&inst);
-        }
 
         for (auto& inst : block->GetInstructions()) {
             add_uses(&inst);

@@ -10,9 +10,9 @@ void ir_copy_propagate_node(const IRDominatorTreeNode* node, std::unordered_map<
             it->Invalidate();
             it = insts.erase(it);
         } else {
-            switch (it->GetExpression().index()) {
-            case 0: {
-                Operands& operands = std::get<Operands>(it->GetExpression());
+            switch (it->GetExpressionType()) {
+            case ExpressionType::Operands: {
+                Operands& operands = it->AsOperands();
                 for (IRInstruction*& operand : operands.operands) {
                     auto found = map.find(operand);
                     if (found != map.end()) {
@@ -22,14 +22,13 @@ void ir_copy_propagate_node(const IRDominatorTreeNode* node, std::unordered_map<
                 }
                 break;
             }
-            case 1: {
+            case ExpressionType::Immediate:
+            case ExpressionType::GetGuest:
+            case ExpressionType::Comment: {
                 break;
             }
-            case 2: {
-                break;
-            }
-            case 3: {
-                SetGuest& set_guest = std::get<SetGuest>(it->GetExpression());
+            case ExpressionType::SetGuest: {
+                SetGuest& set_guest = it->AsSetGuest();
                 auto found = map.find(set_guest.source);
                 if (found != map.end()) {
                     set_guest.source = found->second;
@@ -37,8 +36,8 @@ void ir_copy_propagate_node(const IRDominatorTreeNode* node, std::unordered_map<
                 }
                 break;
             }
-            case 4: {
-                Phi& phi = std::get<Phi>(it->GetExpression());
+            case ExpressionType::Phi: {
+                Phi& phi = it->AsPhi();
                 for (PhiNode& node : phi.nodes) {
                     auto found = map.find(node.value);
                     if (found != map.end()) {
@@ -48,11 +47,8 @@ void ir_copy_propagate_node(const IRDominatorTreeNode* node, std::unordered_map<
                 }
                 break;
             }
-            case 5: {
-                break;
-            }
-            case 6: {
-                TupleAccess& tuple_access = std::get<TupleAccess>(it->GetExpression());
+            case ExpressionType::TupleAccess: {
+                TupleAccess& tuple_access = it->AsTupleAccess();
                 auto found = map.find(tuple_access.tuple);
                 if (found != map.end()) {
                     tuple_access.tuple = found->second;

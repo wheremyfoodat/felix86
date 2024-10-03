@@ -113,10 +113,6 @@ struct IRBlock {
         return instructions;
     }
 
-    std::vector<IRInstruction>& GetPhiInstructions() {
-        return phi_instructions;
-    }
-
     std::vector<IRBlock*>& GetDominanceFrontiers() {
         return dominance_frontiers;
     }
@@ -126,7 +122,7 @@ struct IRBlock {
     }
 
     void AddPhi(IRInstruction&& instr) {
-        phi_instructions.push_back(std::move(instr));
+        instructions.push_front(std::move(instr));
     }
 
     std::string Print() const;
@@ -138,7 +134,6 @@ private:
 
     u64 start_address = IR_NO_ADDRESS;
     std::list<IRInstruction> instructions;
-    std::vector<IRInstruction> phi_instructions;
     std::vector<IRBlock*> predecessors;
     std::array<IRBlock*, 2> successors = {nullptr, nullptr};
     std::vector<IRBlock*> dominance_frontiers;

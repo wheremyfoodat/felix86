@@ -227,7 +227,11 @@ static void search(IRDominatorTreeNode* node, std::array<std::stack<IRInstructio
     IRBlock* successor1 = block->GetSuccessor(0);
     if (successor1) {
         int j = which_pred(block, successor1);
-        for (IRInstruction& inst : successor1->GetPhiInstructions()) {
+        for (IRInstruction& inst : successor1->GetInstructions()) {
+            if (!inst.IsPhi()) {
+                break;
+            }
+
             Phi& phi = inst.AsPhi();
             phi.nodes[j].block = block;
             phi.nodes[j].value = stacks[phi.ref].top();
