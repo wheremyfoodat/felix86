@@ -6,6 +6,7 @@ add_compile_options(-fsanitize=address)
 add_link_options(-fsanitize=address)
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=implicit-fallthrough -Werror=incompatible-pointer-types -Wall")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=implicit-fallthrough -Wall")
 
 add_compile_options($<$<COMPILE_LANGUAGE:CPP>:-fno-rtti> $<$<COMPILE_LANGUAGE:CPP>:-fno-exceptions>)
 
@@ -21,46 +22,44 @@ add_subdirectory(external/xbyak)
 add_subdirectory(external/zydis)
 
 set(FELIX86_FRONTEND_SOURCES
-    src/felix86/frontend/frontend.c
+    src/felix86/frontend/frontend.cpp
 )
 
 set(FELIX86_IR_SOURCES
-    src/felix86/ir/block.c
-    src/felix86/ir/function_cache.cpp
-    src/felix86/ir/emitter.c
-    src/felix86/ir/handlers_weak.c
-    src/felix86/ir/handlers.c
-    src/felix86/ir/interpreter.c
-    src/felix86/ir/instruction.c
-    src/felix86/ir/instruction_list.c
+    src/felix86/ir/block.cpp
+    src/felix86/ir/copy_propagation_pass.cpp
+    src/felix86/ir/emitter.cpp
+    src/felix86/ir/entry_exit_unused_pass.cpp
+    src/felix86/ir/function.cpp
+    src/felix86/ir/handlers_weak.cpp
+    src/felix86/ir/handlers.cpp
+    src/felix86/ir/instruction.cpp
+    src/felix86/ir/naming_pass.cpp
     src/felix86/ir/print.cpp
     src/felix86/ir/ssa_pass.cpp
 )
 
 set(FELIX86_COMMON_SOURCES
-    src/felix86/common/allocator.c
-    src/felix86/common/exit.c
-    src/felix86/common/file.c
-    src/felix86/common/global.c
-    src/felix86/common/log.c
-    src/felix86/common/print.c
-    src/felix86/common/prompt.c
+    src/felix86/common/exit.cpp
+    src/felix86/common/file.cpp
+    src/felix86/common/global.cpp
+    src/felix86/common/log.cpp
+    src/felix86/common/print.cpp
 )
 
 set(FELIX86_BACKEND_SOURCES
-    src/felix86/backend/block_metadata.cpp
 )
 
 set(FELIX86_LOADER_SOURCES
-    src/felix86/loader/elf.c
-    src/felix86/loader/loader.c
+    src/felix86/loader/elf.cpp
+    src/felix86/loader/loader.cpp
 )
 
 set(FELIX86_HLE_SOURCES
-    src/felix86/hle/cpuid.c
-    src/felix86/hle/filesystem.c
+    src/felix86/hle/cpuid.cpp
     src/felix86/hle/filesystem.cpp
-    src/felix86/hle/syscall.c
+    src/felix86/hle/filesystem.cpp
+    src/felix86/hle/syscall.cpp
 )
 
 set(FELIX86_CORE_SOURCES
@@ -70,7 +69,7 @@ set(FELIX86_CORE_SOURCES
     ${FELIX86_BACKEND_SOURCES}
     ${FELIX86_LOADER_SOURCES}
     ${FELIX86_HLE_SOURCES}
-    src/felix86/felix86.c
+    src/felix86/emulator.cpp
 )
 
 set(FELIX86_INCLUDES
@@ -82,26 +81,27 @@ set(FELIX86_INCLUDES
 add_library(felix86_core STATIC)
 target_sources(felix86_core PUBLIC ${FELIX86_CORE_SOURCES})
 target_include_directories(felix86_core PUBLIC ${FELIX86_INCLUDES})
-target_link_libraries(felix86_core PUBLIC Zydis)
+target_link_libraries(felix86_core PUBLIC Zydis fmt)
 
 add_executable(felix86)
-target_sources(felix86 PRIVATE src/felix86/main.c src/felix86/gui.cpp)
+target_sources(felix86 PRIVATE src/felix86/main.cpp)
 target_link_libraries(felix86 PRIVATE felix86_core)
 
-set(FELIX86_TEST_SOURCES
-    tests/add.cpp
-    tests/and.cpp
-    tests/sub.cpp
-    tests/mov.cpp
-    tests/lea.cpp
-    tests/shift.cpp
-    tests/special.cpp
-    tests/xmm.cpp
-    tests/ir/control_flow.cpp
-)
+if (BUILD_TESTS)
+    set(FELIX86_TEST_SOURCES
+        tests/add.cpp
+        tests/and.cpp
+        tests/sub.cpp
+        tests/mov.cpp
+        tests/lea.cpp
+        tests/shift.cpp
+        tests/special.cpp
+        tests/xmm.cpp
+    )
 
-add_executable(felix86_test)
-target_sources(felix86_test PRIVATE ${FELIX86_TEST_SOURCES})
-target_include_directories(felix86_test PRIVATE tests)
-target_link_libraries(felix86_test PRIVATE felix86_core Catch2::Catch2WithMain xbyak)
-target_compile_options(felix86_test PRIVATE $<$<COMPILE_LANGUAGE:CPP>:-fno-operator-names>)
+    add_executable(felix86_test)
+    target_sources(felix86_test PRIVATE ${FELIX86_TEST_SOURCES})
+    target_include_directories(felix86_test PRIVATE tests)
+    target_link_libraries(felix86_test PRIVATE felix86_core Catch2::Catch2WithMain xbyak)
+    target_compile_options(felix86_test PRIVATE $<$<COMPILE_LANGUAGE:CPP>:-fno-operator-names>)
+endif()
