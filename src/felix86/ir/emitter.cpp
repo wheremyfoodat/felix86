@@ -7,6 +7,20 @@
 #include "felix86/ir/emitter.hpp"
 #include "felix86/ir/instruction.hpp"
 
+void ir_store_partial_state(IRBlock* block, std::span<const x86_ref_e> refs) {
+    for (x86_ref_e reg : refs) {
+        IRInstruction* guest = ir_emit_get_guest(block, reg);
+        ir_emit_store_guest_to_memory(block, reg, guest);
+    }
+}
+
+void ir_load_partial_state(IRBlock* block, std::span<const x86_ref_e> refs) {
+    for (x86_ref_e reg : refs) {
+        IRInstruction* guest = ir_emit_load_guest_from_memory(block, reg);
+        ir_emit_set_guest(block, reg, guest);
+    }
+}
+
 u16 get_bit_size(x86_size_e size) {
     switch (size) {
     case X86_SIZE_BYTE:
@@ -36,6 +50,12 @@ x86_operand_t get_full_reg(x86_ref_e ref) {
     operand.reg.ref = ref;
     operand.size = X86_SIZE_QWORD;
     return operand;
+}
+
+IRInstruction* get_reg(IRBlock* block, x86_ref_e ref, x86_size_e size_e) {
+    x86_operand_t operand = get_full_reg(ref);
+    operand.size = size_e;
+    return ir_emit_get_reg(block, &operand);
 }
 
 IRInstruction* ir_emit_get_mask(IRBlock* block, x86_size_e size_e) {
@@ -137,60 +157,12 @@ IRInstruction* ir_emit_select(IRBlock* block, IRInstruction* condition, IRInstru
     return ir_emit_three_operands(block, IROpcode::Select, condition, true_value, false_value);
 }
 
-IRInstruction* ir_emit_imul(IRBlock* block, IRInstruction* source1, IRInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::IMul64, source1, source2);
-}
-
-IRInstruction* ir_emit_idiv(IRBlock* block, x86_size_e size, IRInstruction* rdx, IRInstruction* rax, IRInstruction* divisor) {
-    IROpcode opcode;
-    switch (size) {
-    case X86_SIZE_BYTE:
-        opcode = IROpcode::IDiv8;
-        return ir_emit_two_operands(block, opcode, rax, divisor);
-    case X86_SIZE_WORD:
-        opcode = IROpcode::IDiv16;
-        break;
-    case X86_SIZE_DWORD:
-        opcode = IROpcode::IDiv32;
-        break;
-    case X86_SIZE_QWORD:
-        opcode = IROpcode::IDiv64;
-        break;
-    default:
-        ERROR("Invalid size");
-        break;
-    }
-    return ir_emit_three_operands(block, opcode, rdx, rax, divisor);
-}
-
 IRInstruction* ir_emit_clz(IRBlock* block, IRInstruction* source) {
     return ir_emit_one_operand(block, IROpcode::Clz, source);
 }
 
 IRInstruction* ir_emit_ctz(IRBlock* block, IRInstruction* source) {
     return ir_emit_one_operand(block, IROpcode::Ctz, source);
-}
-
-IRInstruction* ir_emit_udiv(IRBlock* block, x86_size_e size, IRInstruction* rdx, IRInstruction* rax, IRInstruction* divisor) {
-    IROpcode opcode;
-    switch (size) {
-    case X86_SIZE_BYTE:
-        opcode = IROpcode::UDiv8;
-        return ir_emit_two_operands(block, opcode, rax, divisor);
-    case X86_SIZE_WORD:
-        opcode = IROpcode::UDiv16;
-        break;
-    case X86_SIZE_DWORD:
-        opcode = IROpcode::UDiv32;
-        break;
-    case X86_SIZE_QWORD:
-        opcode = IROpcode::UDiv64;
-        break;
-    default:
-        ERROR("Invalid size");
-        break;
-    }
-    return ir_emit_three_operands(block, opcode, rdx, rax, divisor);
 }
 
 IRInstruction* ir_emit_and(IRBlock* block, IRInstruction* source1, IRInstruction* source2) {
@@ -233,6 +205,58 @@ IRInstruction* ir_emit_less_than_unsigned(IRBlock* block, IRInstruction* source1
     return ir_emit_two_operands(block, IROpcode::ULessThan, source1, source2);
 }
 
+IRInstruction* ir_emit_div(IRBlock* block, IRInstruction* source1, IRInstruction* source2) {
+    return ir_emit_two_operands(block, IROpcode::Div, source1, source2);
+}
+
+IRInstruction* ir_emit_divu(IRBlock* block, IRInstruction* source1, IRInstruction* source2) {
+    return ir_emit_two_operands(block, IROpcode::Divu, source1, source2);
+}
+
+IRInstruction* ir_emit_rem(IRBlock* block, IRInstruction* source1, IRInstruction* source2) {
+    return ir_emit_two_operands(block, IROpcode::Rem, source1, source2);
+}
+
+IRInstruction* ir_emit_remu(IRBlock* block, IRInstruction* source1, IRInstruction* source2) {
+    return ir_emit_two_operands(block, IROpcode::Remu, source1, source2);
+}
+
+IRInstruction* ir_emit_divw(IRBlock* block, IRInstruction* source1, IRInstruction* source2) {
+    return ir_emit_two_operands(block, IROpcode::Divw, source1, source2);
+}
+
+IRInstruction* ir_emit_divuw(IRBlock* block, IRInstruction* source1, IRInstruction* source2) {
+    return ir_emit_two_operands(block, IROpcode::Divuw, source1, source2);
+}
+
+IRInstruction* ir_emit_remw(IRBlock* block, IRInstruction* source1, IRInstruction* source2) {
+    return ir_emit_two_operands(block, IROpcode::Remw, source1, source2);
+}
+
+IRInstruction* ir_emit_remuw(IRBlock* block, IRInstruction* source1, IRInstruction* source2) {
+    return ir_emit_two_operands(block, IROpcode::Remuw, source1, source2);
+}
+
+IRInstruction* ir_emit_mul(IRBlock* block, IRInstruction* source1, IRInstruction* source2) {
+    return ir_emit_two_operands(block, IROpcode::Mul, source1, source2);
+}
+
+IRInstruction* ir_emit_mulh(IRBlock* block, IRInstruction* source1, IRInstruction* source2) {
+    return ir_emit_two_operands(block, IROpcode::Mulh, source1, source2);
+}
+
+IRInstruction* ir_emit_mulhu(IRBlock* block, IRInstruction* source1, IRInstruction* source2) {
+    return ir_emit_two_operands(block, IROpcode::Mulhu, source1, source2);
+}
+
+IRInstruction* ir_emit_div128(IRBlock* block, IRInstruction* divisor) {
+    return ir_emit_one_operand(block, IROpcode::Div128, divisor);
+}
+
+IRInstruction* ir_emit_divu128(IRBlock* block, IRInstruction* divisor) {
+    return ir_emit_one_operand(block, IROpcode::Divu128, divisor);
+}
+
 IRInstruction* ir_emit_lea(IRBlock* block, x86_operand_t* rm_operand) {
     IRInstruction* (*get_guest)(IRBlock* block, x86_ref_e reg) = rm_operand->memory.address_override ? ir_emit_get_gpr32 : ir_emit_get_gpr64;
 
@@ -250,9 +274,11 @@ IRInstruction* ir_emit_lea(IRBlock* block, x86_operand_t* rm_operand) {
     IRInstruction* index = rm_operand->memory.index != X86_REF_COUNT ? get_guest(block, rm_operand->memory.index) : ir_emit_immediate(block, 0);
     IRInstruction* displacement = ir_emit_immediate(block, rm_operand->memory.displacement);
     IRInstruction* scale = ir_emit_immediate(block, rm_operand->memory.scale);
-    IRInstruction* address = ir_emit_four_operands(block, IROpcode::Lea, base_final, index, scale, displacement);
+    IRInstruction* scaled_index = ir_emit_shift_left(block, index, scale);
+    IRInstruction* address = ir_emit_add(block, base_final, scaled_index);
+    IRInstruction* displaced_address = ir_emit_add(block, address, displacement);
 
-    IRInstruction* final_address = address;
+    IRInstruction* final_address = displaced_address;
     if (rm_operand->memory.address_override) {
         IRInstruction* mask = ir_emit_immediate(block, 0xFFFFFFFF);
         final_address = ir_emit_and(block, address, mask);
@@ -292,14 +318,22 @@ IRInstruction* ir_emit_sext(IRBlock* block, IRInstruction* source, x86_size_e si
     }
 }
 
-IRInstruction* ir_emit_syscall(IRBlock* block, std::initializer_list<IRInstruction*> args) {
-    if (args.size() != 7) {
-        ERROR("Invalid number of arguments");
-    }
+void ir_emit_syscall(IRBlock* block) {
+    // The kernel clobbers registers rcx and r11 but preserves all other registers except rax which is the result.
+    // We don't have to clobber rcx and r11 as we are not a kernel.
+    // First, get_guest and writeback rax, rdi, rsi, rdx, r10, r8, r9 because they may be used by the syscall.
+    // Then emit the syscall instruction.
+    // Finally, load rax so it's not propagated from before the syscall.
+    constexpr static std::array in_regs = {X86_REF_RAX, X86_REF_RDI, X86_REF_RSI, X86_REF_RDX, X86_REF_R10, X86_REF_R8, X86_REF_R9};
+    constexpr static std::array out_regs = {X86_REF_RAX};
 
-    IRInstruction instruction(IROpcode::Syscall, args);
+    ir_store_partial_state(block, in_regs);
+
+    IRInstruction instruction(IROpcode::Syscall, {});
     instruction.Lock();
-    return block->InsertAtEnd(std::move(instruction));
+    block->InsertAtEnd(std::move(instruction));
+
+    ir_load_partial_state(block, out_regs);
 }
 
 void ir_terminate_jump(IRBlock* block, IRBlock* target) {
@@ -417,6 +451,7 @@ void ir_emit_store_guest_to_memory(IRBlock* block, x86_ref_e ref, IRInstruction*
     }
 
     IRInstruction instruction(IROpcode::StoreGuestToMemory, ref, source);
+    instruction.Lock();
     block->InsertAtEnd(std::move(instruction));
 }
 
@@ -505,20 +540,28 @@ void ir_emit_write_xmmword(IRBlock* block, IRInstruction* address, IRInstruction
     instruction->Lock();
 }
 
-IRInstruction* ir_emit_cpuid(IRBlock* block, IRInstruction* rax, IRInstruction* rcx) {
-    IRInstruction instruction(IROpcode::Cpuid, {rax, rcx});
-    return block->InsertAtEnd(std::move(instruction));
+void ir_emit_cpuid(IRBlock* block) {
+    // Similar to syscall, cpuid clobbers registers rax, rcx, rdx, rbx but preserves all other registers.
+    // It uses rax and rcx as input.
+    constexpr static std::array in_regs = {X86_REF_RAX, X86_REF_RCX};
+    constexpr static std::array out_regs = {X86_REF_RAX, X86_REF_RBX, X86_REF_RCX, X86_REF_RDX};
+
+    ir_store_partial_state(block, in_regs);
+
+    IRInstruction instruction(IROpcode::Cpuid, {});
+    block->InsertAtEnd(std::move(instruction));
+
+    ir_load_partial_state(block, out_regs);
 }
 
-IRInstruction* ir_emit_rdtsc(IRBlock* block) {
+void ir_emit_rdtsc(IRBlock* block) {
+    // Has no inputs but writes to EDX:EAX
+    constexpr static std::array out_regs = {X86_REF_RAX, X86_REF_RDX};
+
     IRInstruction instruction(IROpcode::Rdtsc, {});
-    return block->InsertAtEnd(std::move(instruction));
-}
+    block->InsertAtEnd(std::move(instruction));
 
-IRInstruction* ir_emit_tuple_extract(IRBlock* block, IRInstruction* tuple, u8 index) {
-    IRInstruction* instruction = ir_emit_one_operand(block, IROpcode::TupleExtract, tuple);
-    instruction->SetExtraData(index);
-    return instruction;
+    ir_load_partial_state(block, out_regs);
 }
 
 IRInstruction* ir_emit_immediate(IRBlock* block, u64 value) {
@@ -614,6 +657,15 @@ void ir_emit_set_reg(IRBlock* block, x86_operand_t* reg_operand, IRInstruction* 
         ERROR("Invalid register size");
         return;
     }
+}
+
+void ir_emit_set_reg(IRBlock* block, x86_ref_e ref, x86_size_e size, IRInstruction* source, bool high = false) {
+    x86_operand_t operand;
+    operand.type = X86_OP_TYPE_REGISTER;
+    operand.reg.ref = ref;
+    operand.reg.high8 = high;
+    operand.size = size;
+    ir_emit_set_reg(block, &operand, source);
 }
 
 void ir_emit_set_rm(IRBlock* block, x86_operand_t* rm_operand, IRInstruction* source) {
@@ -1132,40 +1184,106 @@ void ir_emit_group3(IRBlock* block, x86_instruction_t* inst) {
         break;
     }
     case X86_GROUP3_DIV: {
-        x86_operand_t rax = get_full_reg(X86_REF_RAX);
-        x86_operand_t rdx = get_full_reg(X86_REF_RDX);
-        rax.size = size_e;
-        rdx.size = size_e;
-        IRInstruction* rax_reg = ir_emit_get_rm(block, &rax);
-        IRInstruction* rdx_reg = ir_emit_get_rm(block, &rdx);
-        IRInstruction* tuple = ir_emit_udiv(block, inst->operand_rm.size, rdx_reg, rax_reg, rm);
-        IRInstruction* quotient = ir_emit_tuple_extract(block, tuple, 0);
-        IRInstruction* remainder = ir_emit_tuple_extract(block, tuple, 1);
-        ir_emit_set_reg(block, &rax, quotient);
-        if (size_e == X86_SIZE_BYTE) {
-            rax.reg.high8 = true;
-            ir_emit_set_reg(block, &rax, remainder); // ah = remainder, al = quotient
-        } else {
-            ir_emit_set_reg(block, &rdx, remainder); // in all other cases, rdx = remainder, rax = quotient
+        switch (size_e) {
+        case X86_SIZE_BYTE: {
+            // ax / rm, al := quotient, ah := remainder
+            IRInstruction* ax = get_reg(block, X86_REF_RAX, X86_SIZE_WORD);
+            IRInstruction* quotient = ir_emit_divuw(block, ax, rm);
+            IRInstruction* remainder = ir_emit_remuw(block, ax, rm);
+            ir_emit_set_reg(block, X86_REF_RAX, X86_SIZE_BYTE, quotient);
+            ir_emit_set_reg(block, X86_REF_RAX, X86_SIZE_BYTE, remainder, true);
+            break;
+        }
+        case X86_SIZE_WORD: {
+            // dx:ax / rm, ax := quotient, dx := remainder
+            IRInstruction* ax = get_reg(block, X86_REF_RAX, X86_SIZE_WORD);
+            IRInstruction* dx = get_reg(block, X86_REF_RDX, X86_SIZE_WORD);
+            IRInstruction* dx_shifted = ir_emit_shift_left(block, dx, ir_emit_immediate(block, 16));
+            IRInstruction* dx_ax = ir_emit_or(block, dx_shifted, ax);
+            IRInstruction* quotient = ir_emit_divuw(block, dx_ax, rm);
+            IRInstruction* remainder = ir_emit_remuw(block, dx_ax, rm);
+            ir_emit_set_reg(block, X86_REF_RAX, X86_SIZE_WORD, quotient);
+            ir_emit_set_reg(block, X86_REF_RDX, X86_SIZE_WORD, remainder);
+            break;
+        }
+        case X86_SIZE_DWORD: {
+            // edx:eax / rm, eax := quotient, edx := remainder
+            IRInstruction* eax = get_reg(block, X86_REF_RAX, X86_SIZE_DWORD);
+            IRInstruction* edx = get_reg(block, X86_REF_RDX, X86_SIZE_DWORD);
+            IRInstruction* edx_shifted = ir_emit_shift_left(block, edx, ir_emit_immediate(block, 32));
+            IRInstruction* edx_eax = ir_emit_or(block, edx_shifted, eax);
+            IRInstruction* quotient = ir_emit_divu(block, edx_eax, rm);
+            IRInstruction* remainder = ir_emit_remu(block, edx_eax, rm);
+            ir_emit_set_reg(block, X86_REF_RAX, X86_SIZE_DWORD, quotient);
+            ir_emit_set_reg(block, X86_REF_RDX, X86_SIZE_DWORD, remainder);
+            break;
+        }
+        case X86_SIZE_QWORD: {
+            // rdx:rax / rm, rax := quotient, rdx := remainder
+            constexpr static std::array reg_refs = {X86_REF_RAX, X86_REF_RDX};
+
+            ir_store_partial_state(block, reg_refs);
+
+            ir_emit_divu128(block, rm);
+
+            ir_load_partial_state(block, reg_refs);
+            break;
+        }
+        default: {
+            UNREACHABLE();
+        }
         }
         break;
     }
     case X86_GROUP3_IDIV: {
-        x86_operand_t rax = get_full_reg(X86_REF_RAX);
-        x86_operand_t rdx = get_full_reg(X86_REF_RDX);
-        rax.size = size_e;
-        rdx.size = size_e;
-        IRInstruction* rax_reg = ir_emit_get_rm(block, &rax);
-        IRInstruction* rdx_reg = ir_emit_get_rm(block, &rdx);
-        IRInstruction* tuple = ir_emit_idiv(block, inst->operand_rm.size, rdx_reg, rax_reg, rm);
-        IRInstruction* quotient = ir_emit_tuple_extract(block, tuple, 0);
-        IRInstruction* remainder = ir_emit_tuple_extract(block, tuple, 1);
-        ir_emit_set_reg(block, &rax, quotient);
-        if (size_e == X86_SIZE_BYTE) {
-            rax.reg.high8 = true;
-            ir_emit_set_reg(block, &rax, remainder); // ah = remainder, al = quotient
-        } else {
-            ir_emit_set_reg(block, &rdx, remainder); // in all other cases, rdx = remainder, rax = quotient
+        switch (size_e) {
+        case X86_SIZE_BYTE: {
+            // ax / rm, al := quotient, ah := remainder
+            IRInstruction* ax = get_reg(block, X86_REF_RAX, X86_SIZE_WORD);
+            IRInstruction* quotient = ir_emit_divw(block, ax, rm);
+            IRInstruction* remainder = ir_emit_remw(block, ax, rm);
+            ir_emit_set_reg(block, X86_REF_RAX, X86_SIZE_BYTE, quotient);
+            ir_emit_set_reg(block, X86_REF_RAX, X86_SIZE_BYTE, remainder, true);
+            break;
+        }
+        case X86_SIZE_WORD: {
+            // dx:ax / rm, ax := quotient, dx := remainder
+            IRInstruction* ax = get_reg(block, X86_REF_RAX, X86_SIZE_WORD);
+            IRInstruction* dx = get_reg(block, X86_REF_RDX, X86_SIZE_WORD);
+            IRInstruction* dx_shifted = ir_emit_shift_left(block, dx, ir_emit_immediate(block, 16));
+            IRInstruction* dx_ax = ir_emit_or(block, dx_shifted, ax);
+            IRInstruction* quotient = ir_emit_divw(block, dx_ax, rm);
+            IRInstruction* remainder = ir_emit_remw(block, dx_ax, rm);
+            ir_emit_set_reg(block, X86_REF_RAX, X86_SIZE_WORD, quotient);
+            ir_emit_set_reg(block, X86_REF_RDX, X86_SIZE_WORD, remainder);
+            break;
+        }
+        case X86_SIZE_DWORD: {
+            // edx:eax / rm, eax := quotient, edx := remainder
+            IRInstruction* eax = get_reg(block, X86_REF_RAX, X86_SIZE_DWORD);
+            IRInstruction* edx = get_reg(block, X86_REF_RDX, X86_SIZE_DWORD);
+            IRInstruction* edx_shifted = ir_emit_shift_left(block, edx, ir_emit_immediate(block, 32));
+            IRInstruction* edx_eax = ir_emit_or(block, edx_shifted, eax);
+            IRInstruction* quotient = ir_emit_div(block, edx_eax, rm);
+            IRInstruction* remainder = ir_emit_rem(block, edx_eax, rm);
+            ir_emit_set_reg(block, X86_REF_RAX, X86_SIZE_DWORD, quotient);
+            ir_emit_set_reg(block, X86_REF_RDX, X86_SIZE_DWORD, remainder);
+            break;
+        }
+        case X86_SIZE_QWORD: {
+            // rdx:rax / rm, rax := quotient, rdx := remainder
+            constexpr static std::array reg_refs = {X86_REF_RAX, X86_REF_RDX};
+
+            ir_store_partial_state(block, reg_refs);
+
+            ir_emit_div128(block, rm);
+
+            ir_load_partial_state(block, reg_refs);
+            break;
+        }
+        default: {
+            UNREACHABLE();
+        }
         }
         break;
     }

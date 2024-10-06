@@ -5,7 +5,7 @@
 #include <stack>
 #include <vector>
 #include "felix86/common/log.hpp"
-#include "felix86/ir/passes.hpp"
+#include "felix86/ir/passes/passes.hpp"
 
 /*
     This is written with my current understanding of SSA at this time, parts of
@@ -111,6 +111,8 @@ static void reverse_postorder_creation(IRFunction* function, std::vector<IRBlock
         order[i]->SetPostorderIndex(i);
     }
 
+    function->SetPostorder(order);
+
     std::reverse(order.begin(), order.end());
 }
 
@@ -177,7 +179,10 @@ static void place_phi_functions(IRFunction* function) {
                 if (has_already[df->GetIndex()] < iter_count) {
                     Phi phi;
                     phi.ref = static_cast<x86_ref_e>(i);
-                    phi.nodes.resize(df->GetPredecessors().size());
+
+                    size_t pred_count = df->GetPredecessors().size();
+                    phi.values.resize(pred_count);
+                    phi.blocks.resize(pred_count);
 
                     IRInstruction instruction(std::move(phi));
                     df->AddPhi(std::move(instruction));
@@ -216,9 +221,7 @@ static void search(IRDominatorTreeNode* node, std::array<std::stack<IRInstructio
             pop_count[ref]++;
         } else if (inst.GetOpcode() == IROpcode::GetGuest) {
             IRInstruction* def = stacks[inst.AsGetGuest().ref].top();
-
-            IRInstruction new_inst(def);
-            inst.ReplaceWith(std::move(new_inst));
+            inst.ReplaceExpressionWithMov(def);
         }
 
         it++;
@@ -233,9 +236,9 @@ static void search(IRDominatorTreeNode* node, std::array<std::stack<IRInstructio
             }
 
             Phi& phi = inst.AsPhi();
-            phi.nodes[j].block = block;
-            phi.nodes[j].value = stacks[phi.ref].top();
-            phi.nodes[j].value->AddUse();
+            phi.blocks[j] = block;
+            phi.values[j] = stacks[phi.ref].top();
+            phi.values[j]->AddUse();
         }
     }
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "felix86/backend/backend.hpp"
 #include "felix86/common/log.hpp"
 #include "felix86/common/x86.hpp"
 #include "felix86/frontend/instruction.hpp"
@@ -20,7 +21,7 @@ struct Config {
 };
 
 struct Emulator {
-    Emulator(const Config& config) : config(config) {
+    Emulator(const Config& config) : thread_state(), backend(thread_state), config(config) {
         // Sometimes we run without rootfs, such as for testing
         if (!config.rootfs_path.empty()) {
             fs.LoadRootFS(config.rootfs_path);
@@ -33,7 +34,7 @@ struct Emulator {
     ~Emulator() = default;
 
     ThreadState& GetThreadState() {
-        return state;
+        return thread_state;
     }
 
     Filesystem& GetFilesystem() {
@@ -50,7 +51,7 @@ struct Emulator {
             return 0;
         }
 
-        return state.gprs[ref - X86_REF_RAX];
+        return thread_state.gprs[ref - X86_REF_RAX];
     }
 
     void SetGpr(x86_ref_e ref, u64 value) {
@@ -58,23 +59,23 @@ struct Emulator {
             ERROR("Invalid GPR reference: %d", ref);
         }
 
-        state.gprs[ref - X86_REF_RAX] = value;
+        thread_state.gprs[ref - X86_REF_RAX] = value;
     }
 
     bool GetFlag(x86_ref_e flag) const {
         switch (flag) {
         case X86_REF_CF:
-            return state.cf;
+            return thread_state.cf;
         case X86_REF_PF:
-            return state.pf;
+            return thread_state.pf;
         case X86_REF_AF:
-            return state.af;
+            return thread_state.af;
         case X86_REF_ZF:
-            return state.zf;
+            return thread_state.zf;
         case X86_REF_SF:
-            return state.sf;
+            return thread_state.sf;
         case X86_REF_OF:
-            return state.of;
+            return thread_state.of;
         default:
             ERROR("Invalid flag reference: %d", flag);
             return false;
@@ -84,22 +85,22 @@ struct Emulator {
     void SetFlag(x86_ref_e flag, bool value) {
         switch (flag) {
         case X86_REF_CF:
-            state.cf = value;
+            thread_state.cf = value;
             break;
         case X86_REF_PF:
-            state.pf = value;
+            thread_state.pf = value;
             break;
         case X86_REF_AF:
-            state.af = value;
+            thread_state.af = value;
             break;
         case X86_REF_ZF:
-            state.zf = value;
+            thread_state.zf = value;
             break;
         case X86_REF_SF:
-            state.sf = value;
+            thread_state.sf = value;
             break;
         case X86_REF_OF:
-            state.of = value;
+            thread_state.of = value;
             break;
         default:
             ERROR("Invalid flag reference: %d", flag);
@@ -112,7 +113,7 @@ struct Emulator {
             return {};
         }
 
-        return state.fp[ref - X86_REF_ST0];
+        return thread_state.fp[ref - X86_REF_ST0];
     }
 
     void SetFpReg(x86_ref_e ref, const FpReg& value) {
@@ -121,7 +122,7 @@ struct Emulator {
             return;
         }
 
-        state.fp[ref - X86_REF_ST0] = value;
+        thread_state.fp[ref - X86_REF_ST0] = value;
     }
 
     XmmReg GetXmmReg(x86_ref_e ref) const {
@@ -130,7 +131,7 @@ struct Emulator {
             return {};
         }
 
-        return state.xmm[ref - X86_REF_XMM0];
+        return thread_state.xmm[ref - X86_REF_XMM0];
     }
 
     void SetXmmReg(x86_ref_e ref, const XmmReg& value) {
@@ -139,38 +140,39 @@ struct Emulator {
             return;
         }
 
-        state.xmm[ref - X86_REF_XMM0] = value;
+        thread_state.xmm[ref - X86_REF_XMM0] = value;
     }
 
     u64 GetRip() const {
-        return state.rip;
+        return thread_state.rip;
     }
 
     void SetRip(u64 value) {
-        state.rip = value;
+        thread_state.rip = value;
     }
 
     u64 GetGSBase() const {
-        return state.gsbase;
+        return thread_state.gsbase;
     }
 
     void SetGSBase(u64 value) {
-        state.gsbase = value;
+        thread_state.gsbase = value;
     }
 
     u64 GetFSBase() const {
-        return state.fsbase;
+        return thread_state.fsbase;
     }
 
     void SetFSBase(u64 value) {
-        state.fsbase = value;
+        thread_state.fsbase = value;
     }
 
     void Run();
 
 private:
-    FunctionCache cache;
-    ThreadState state;
+    ThreadState thread_state;
+    Backend backend;
+    FunctionCache function_cache;
     Filesystem fs;
     Config config;
 };

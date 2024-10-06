@@ -1,4 +1,4 @@
-#include "felix86/ir/passes.hpp"
+#include "felix86/ir/passes/passes.hpp"
 
 void ir_copy_propagate_node(const IRDominatorTreeNode* node, std::unordered_map<IRInstruction*, IRInstruction*> map) {
     std::list<IRInstruction>& insts = node->block->GetInstructions();
@@ -6,8 +6,24 @@ void ir_copy_propagate_node(const IRDominatorTreeNode* node, std::unordered_map<
     auto end = insts.end();
     while (it != end) {
         if (it->GetOpcode() == IROpcode::Mov) {
-            map[&*it] = it->GetOperand(0);
-            it->Invalidate();
+            IRInstruction* value_final = it->GetOperand(0);
+            bool found_once = false;
+            while (map.find(value_final) != map.end()) {
+                found_once = true;
+                value_final = map[value_final];
+            }
+            map[&*it] = value_final;
+            // If it's the mov operand was already in the map, that means it was also removed
+            // This can happen if you have sequential movs like so:
+            // mov a, b
+            // mov c, a
+            // When the pass go through, it will remove `a`. So we don't need to remove a use
+            // from a as it's removed from the list and it would be invalid to do so anyway.
+            // We still need to keep it in the map though for instructions that could be using
+            // it further down the line.
+            if (!found_once) {
+                it->Invalidate();
+            }
             it = insts.erase(it);
         } else {
             switch (it->GetExpressionType()) {
@@ -38,26 +54,17 @@ void ir_copy_propagate_node(const IRDominatorTreeNode* node, std::unordered_map<
             }
             case ExpressionType::Phi: {
                 Phi& phi = it->AsPhi();
-                for (PhiNode& node : phi.nodes) {
-                    auto found = map.find(node.value);
+                for (auto& value : phi.values) {
+                    auto found = map.find(value);
                     if (found != map.end()) {
-                        node.value = found->second;
-                        node.value->AddUse();
+                        value = found->second;
+                        value->AddUse();
                     }
                 }
                 break;
             }
-            case ExpressionType::TupleAccess: {
-                TupleAccess& tuple_access = it->AsTupleAccess();
-                auto found = map.find(tuple_access.tuple);
-                if (found != map.end()) {
-                    tuple_access.tuple = found->second;
-                    tuple_access.tuple->AddUse();
-                }
-                break;
-            }
             default: {
-                ERROR("Unreachable");
+                UNREACHABLE();
             }
             }
             ++it;
@@ -69,7 +76,23 @@ void ir_copy_propagate_node(const IRDominatorTreeNode* node, std::unordered_map<
     }
 }
 
+void replace_setguest_with_mov(IRFunction* function) {
+    for (IRBlock* block : function->GetBlocksPostorder()) {
+        std::list<IRInstruction>& insts = block->GetInstructions();
+        auto it = insts.begin();
+        auto end = insts.end();
+        while (it != end) {
+            if (it->GetOpcode() == IROpcode::SetGuest) {
+                it->ReplaceExpressionWithMov(it->AsSetGuest().source);
+            }
+            ++it;
+        }
+    }
+}
+
 void ir_copy_propagation_pass(IRFunction* function) {
+    replace_setguest_with_mov(function);
+
     const IRDominatorTree& dominator_tree = function->GetDominatorTree();
 
     const IRDominatorTreeNode& node = dominator_tree.nodes[0];

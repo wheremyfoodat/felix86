@@ -119,11 +119,6 @@ void ir_print_instruction(const IRInstruction& instruction, const IRBlock* block
         print_one_op(instruction, "sext32");
         break;
     }
-    case IROpcode::Lea: {
-        printf("t%d = ptr[t%d + t%d * t%d + t%d]", instruction.GetName(), instruction.GetOperandName(0), instruction.GetOperandName(1),
-               instruction.GetOperandName(2), instruction.GetOperandName(3));
-        break;
-    }
     case IROpcode::GetGuest: {
         printf(VAR EQUALS OP, instruction.GetName(), "get_guest");
         print_guest(instruction.AsGetGuest().ref);
@@ -182,9 +177,9 @@ void ir_print_instruction(const IRInstruction& instruction, const IRBlock* block
     case IROpcode::Phi: {
         printf("t%d = φ&lt;", instruction.GetName());
         const Phi& phi = instruction.AsPhi();
-        for (auto& node : phi.nodes) {
-            printf("t%d @ %p", node.value->GetName(), node.block);
-            if (&node != &phi.nodes.back()) {
+        for (size_t i = 0; i < phi.values.size(); i++) {
+            printf("t%d @ %p", phi.values[i]->GetName(), phi.blocks[i]);
+            if (i != phi.values.size() - 1) {
                 printf(", ");
             }
         }

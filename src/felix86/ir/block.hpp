@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <functional>
 #include <list>
 #include "felix86/common/utility.hpp"
 #include "felix86/ir/instruction.hpp"
@@ -40,9 +41,10 @@ struct IRBlock {
         termination = Termination::Exit;
     }
 
-    IRInstruction* InsertAtEnd(IRInstruction&& instr) {
-        instructions.push_back(std::move(instr));
-        return &instructions.back();
+    IRInstruction* InsertAtEnd(IRInstruction&& instr);
+
+    const IRInstruction* GetCondition() const {
+        return condition;
     }
 
     bool IsCompiled() const {
@@ -125,7 +127,9 @@ struct IRBlock {
         instructions.push_front(std::move(instr));
     }
 
-    std::string Print() const;
+    bool IsUsedInPhi(IRInstruction* instr) const;
+
+    std::string Print(const std::function<std::string(const IRInstruction*)>& callback) const;
 
 private:
     void AddPredecessor(IRBlock* pred) {

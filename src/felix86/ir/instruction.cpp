@@ -5,14 +5,14 @@
 #include "felix86/ir/instruction.hpp"
 
 bool IRInstruction::IsSameExpression(const IRInstruction& other) const {
-    if (expression.index() != other.expression.index()) {
+    if (expression_type != other.expression_type) {
         return false;
     }
 
-    switch (expression.index()) {
-    case 0: {
-        const Operands& operands = std::get<Operands>(expression);
-        const Operands& other_operands = std::get<Operands>(other.expression);
+    switch (expression_type) {
+    case ExpressionType::Operands: {
+        const Operands& operands = AsOperands();
+        const Operands& other_operands = other.AsOperands();
 
         for (u8 i = 0; i < 6; i++) {
             if (operands.operands[i] != other_operands.operands[i]) {
@@ -26,71 +26,69 @@ bool IRInstruction::IsSameExpression(const IRInstruction& other) const {
 
         return true;
     }
-    case 1: {
-        const Immediate& immediate = std::get<Immediate>(expression);
-        const Immediate& other_immediate = std::get<Immediate>(other.expression);
+    case ExpressionType::Immediate: {
+        const Immediate& immediate = AsImmediate();
+        const Immediate& other_immediate = other.AsImmediate();
 
         return immediate.immediate == other_immediate.immediate;
     }
-    case 2: {
-        const GetGuest& get_guest = std::get<GetGuest>(expression);
-        const GetGuest& other_get_guest = std::get<GetGuest>(other.expression);
+    case ExpressionType::GetGuest: {
+        const GetGuest& get_guest = AsGetGuest();
+        const GetGuest& other_get_guest = other.AsGetGuest();
 
         return get_guest.ref == other_get_guest.ref;
     }
-    case 3: {
-        const SetGuest& set_guest = std::get<SetGuest>(expression);
-        const SetGuest& other_set_guest = std::get<SetGuest>(other.expression);
+    case ExpressionType::SetGuest: {
+        const SetGuest& set_guest = AsSetGuest();
+        const SetGuest& other_set_guest = other.AsSetGuest();
 
         return set_guest.ref == other_set_guest.ref && set_guest.source == other_set_guest.source;
     }
-    case 4: {
-        const Phi& phi = std::get<Phi>(expression);
-        const Phi& other_phi = std::get<Phi>(other.expression);
+    case ExpressionType::Phi: {
+        const Phi& phi = AsPhi();
+        const Phi& other_phi = other.AsPhi();
 
         if (phi.ref != other_phi.ref) {
             return false;
         }
 
-        if (phi.nodes.size() != other_phi.nodes.size()) {
+        if (phi.values.size() != other_phi.values.size()) {
             return false;
         }
 
-        for (u8 i = 0; i < phi.nodes.size(); i++) {
-            if (phi.nodes[i].block != other_phi.nodes[i].block || phi.nodes[i].value != other_phi.nodes[i].value) {
+        for (u16 i = 0; i < phi.values.size(); i++) {
+            if (phi.values[i] != other_phi.values[i] || phi.blocks[i] != other_phi.blocks[i]) {
                 return false;
             }
         }
 
         return true;
     }
-    case 5: {
-        const Comment& comment = std::get<Comment>(expression);
-        const Comment& other_comment = std::get<Comment>(other.expression);
+    case ExpressionType::Comment: {
+        const Comment& comment = AsComment();
+        const Comment& other_comment = other.AsComment();
 
         return comment.comment == other_comment.comment;
     }
-    case 6: {
-        const TupleAccess& tuple_get = std::get<TupleAccess>(expression);
-        const TupleAccess& other_tuple_get = std::get<TupleAccess>(other.expression);
-
-        return tuple_get.tuple == other_tuple_get.tuple && tuple_get.index == other_tuple_get.index;
-    }
     default:
-        ERROR("Unreachable");
+        UNREACHABLE();
         return false;
     }
 }
 
 IRType IRInstruction::getTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
     switch (opcode) {
-    case IROpcode::TupleExtract:
     case IROpcode::Mov: {
         ERROR("Should not be used in GetTypeFromOpcode: %d", (int)opcode);
         return IRType::Void;
     }
     case IROpcode::Null:
-    case IROpcode::Comment: {
+    case IROpcode::Comment:
+    case IROpcode::Syscall:
+    case IROpcode::Cpuid:
+    case IROpcode::Rdtsc:
+    case IROpcode::Div128:
+    case IROpcode::Divu128: {
         return IRType::Void;
     }
     case IROpcode::Select:
@@ -111,7 +109,6 @@ IRType IRInstruction::getTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
     case IROpcode::Or:
     case IROpcode::Xor:
     case IROpcode::Not:
-    case IROpcode::Lea:
     case IROpcode::Equal:
     case IROpcode::NotEqual:
     case IROpcode::IGreaterThan:
@@ -122,28 +119,20 @@ IRType IRInstruction::getTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
     case IROpcode::ReadWord:
     case IROpcode::ReadDWord:
     case IROpcode::ReadQWord:
-    case IROpcode::Syscall:
     case IROpcode::CastVectorToInteger:
     case IROpcode::VExtractInteger:
     case IROpcode::Sext8:
     case IROpcode::Sext16:
-    case IROpcode::Sext32: {
+    case IROpcode::Sext32:
+    case IROpcode::Div:
+    case IROpcode::Divu:
+    case IROpcode::Divw:
+    case IROpcode::Divuw:
+    case IROpcode::Rem:
+    case IROpcode::Remu:
+    case IROpcode::Remw:
+    case IROpcode::Remuw: {
         return IRType::Integer64;
-    }
-    case IROpcode::IMul64:
-    case IROpcode::IDiv8:
-    case IROpcode::IDiv16:
-    case IROpcode::IDiv32:
-    case IROpcode::IDiv64:
-    case IROpcode::UDiv8:
-    case IROpcode::UDiv16:
-    case IROpcode::UDiv32:
-    case IROpcode::UDiv64:
-    case IROpcode::Rdtsc: {
-        return IRType::TupleTwoInteger64;
-    }
-    case IROpcode::Cpuid: {
-        return IRType::TupleFourInteger64;
     }
     case IROpcode::ReadXmmWord:
     case IROpcode::CastIntegerToVector:
@@ -172,15 +161,15 @@ IRType IRInstruction::getTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
     case IROpcode::WriteWord:
     case IROpcode::WriteDWord:
     case IROpcode::WriteQWord:
-    case IROpcode::WriteXmmWord: {
+    case IROpcode::WriteXmmWord:
+    case IROpcode::StoreGuestToMemory: {
         return IRType::Void;
     }
 
     case IROpcode::Phi:
     case IROpcode::GetGuest:
     case IROpcode::SetGuest:
-    case IROpcode::LoadGuestFromMemory:
-    case IROpcode::StoreGuestToMemory: {
+    case IROpcode::LoadGuestFromMemory: {
         switch (ref) {
         case X86_REF_RAX ... X86_REF_R15:
         case X86_REF_RIP:
@@ -206,89 +195,13 @@ IRType IRInstruction::getTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
     }
 }
 
-IRType IRInstruction::getTypeFromTuple(IRType type, u8 index) {
-    switch (type) {
-    case IRType::TupleFourInteger64: {
-        if (index < 4) {
-            return IRType::Integer64;
-        } else {
-            ERROR("Invalid index for TupleFourInteger64: %d", index);
-            return IRType::Void;
-        }
-    }
-    case IRType::TupleTwoInteger64: {
-        if (index < 2) {
-            return IRType::Integer64;
-        } else {
-            ERROR("Invalid index for TupleTwoInteger64: %d", index);
-            return IRType::Void;
-        }
-    }
-    default: {
-        ERROR("Invalid type for tuple: %d", static_cast<u8>(type));
-        return IRType::Void;
-    }
-    }
-}
-
 void IRInstruction::Invalidate() {
     if (locked) {
         ERROR("Tried to invalidate locked instruction");
     }
 
-    switch (expression.index()) {
-    case 0: {
-        Operands& operands = std::get<Operands>(expression);
-        for (IRInstruction* operand : operands.operands) {
-            if (operand != nullptr) {
-                operand->RemoveUse();
-            } else {
-                ERROR("Operand is null");
-            }
-        }
-        break;
-    }
-    case 1: {
-        break;
-    }
-    case 2: {
-        break;
-    }
-    case 3: {
-        SetGuest& set_guest = std::get<SetGuest>(expression);
-        if (set_guest.source != nullptr) {
-            set_guest.source->RemoveUse();
-        } else {
-            ERROR("Source is null");
-        }
-        break;
-    }
-    case 4: {
-        Phi& phi = std::get<Phi>(expression);
-        for (const PhiNode& node : phi.nodes) {
-            if (node.value != nullptr) {
-                node.value->RemoveUse();
-            } else {
-                ERROR("Value is null");
-            }
-        }
-        break;
-    }
-    case 5: {
-        break;
-    }
-    case 6: {
-        TupleAccess& tuple_access = std::get<TupleAccess>(expression);
-        if (tuple_access.tuple != nullptr) {
-            tuple_access.tuple->RemoveUse();
-        } else {
-            ERROR("Tuple is null");
-        }
-        break;
-    }
-    default:
-        ERROR("Unreachable");
-        break;
+    for (IRInstruction* used : GetUsedInstructions()) {
+        used->RemoveUse();
     }
 }
 
@@ -341,11 +254,12 @@ void IRInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         BAD(SetGuest);
         BAD(LoadGuestFromMemory);
         BAD(StoreGuestToMemory);
-        BAD(TupleExtract);
         BAD(Comment);
         BAD(Immediate);
 
         VALIDATE_0OP(Rdtsc);
+        VALIDATE_0OP(Syscall);
+        VALIDATE_0OP(Cpuid);
 
         VALIDATE_OPS_INT(Sext8, 1);
         VALIDATE_OPS_INT(Sext16, 1);
@@ -360,6 +274,8 @@ void IRInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         VALIDATE_OPS_INT(ReadDWord, 1);
         VALIDATE_OPS_INT(ReadQWord, 1);
         VALIDATE_OPS_INT(ReadXmmWord, 1);
+        VALIDATE_OPS_INT(Div128, 1);
+        VALIDATE_OPS_INT(Divu128, 1);
 
         VALIDATE_OPS_INT(WriteByte, 2);
         VALIDATE_OPS_INT(WriteWord, 2);
@@ -383,22 +299,19 @@ void IRInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         VALIDATE_OPS_INT(LeftRotate16, 2);
         VALIDATE_OPS_INT(LeftRotate32, 2);
         VALIDATE_OPS_INT(LeftRotate64, 2);
-        VALIDATE_OPS_INT(IDiv8, 2);
-        VALIDATE_OPS_INT(UDiv8, 2);
-        VALIDATE_OPS_INT(Cpuid, 2);
-        VALIDATE_OPS_INT(IMul64, 2);
+        VALIDATE_OPS_INT(Div, 2);
+        VALIDATE_OPS_INT(Divu, 2);
+        VALIDATE_OPS_INT(Divw, 2);
+        VALIDATE_OPS_INT(Divuw, 2);
+        VALIDATE_OPS_INT(Rem, 2);
+        VALIDATE_OPS_INT(Remu, 2);
+        VALIDATE_OPS_INT(Remw, 2);
+        VALIDATE_OPS_INT(Remuw, 2);
+        VALIDATE_OPS_INT(Mul, 2);
+        VALIDATE_OPS_INT(Mulh, 2);
+        VALIDATE_OPS_INT(Mulhu, 2);
 
-        VALIDATE_OPS_INT(IDiv16, 3);
-        VALIDATE_OPS_INT(UDiv16, 3);
-        VALIDATE_OPS_INT(IDiv32, 3);
-        VALIDATE_OPS_INT(UDiv32, 3);
-        VALIDATE_OPS_INT(IDiv64, 3);
-        VALIDATE_OPS_INT(UDiv64, 3);
         VALIDATE_OPS_INT(Select, 3);
-
-        VALIDATE_OPS_INT(Lea, 4);
-
-        VALIDATE_OPS_INT(Syscall, 7);
 
         VALIDATE_OPS_VECTOR(CastVectorToInteger, 1);
         VALIDATE_OPS_VECTOR(VExtractInteger, 1);
@@ -435,317 +348,494 @@ void IRInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         if (operands.operands[1]->GetType() != IRType::Vector128) {
             ERROR("Invalid operand type for opcode %d", static_cast<u8>(opcode));
         }
+        break;
+    }
+
+    default: {
+        UNREACHABLE();
     }
     }
 }
 
 std::string IRInstruction::GetNameString() const {
-    switch (return_type) {
+    return fmt::format("%{}", GetName());
+}
+
+std::string IRInstruction::GetTypeString() const {
+    switch (GetType()) {
     case IRType::Integer64: {
-        return fmt::format("i{}", GetName());
+        return "Int64";
     }
     case IRType::Vector128: {
-        return fmt::format("v{}", GetName());
+        return "Vec128";
+    }
+    case IRType::Float64: {
+        return "Float64";
     }
     case IRType::Float80: {
-        return fmt::format("f{}", GetName());
-    }
-    case IRType::TupleTwoInteger64: {
-        return fmt::format("t{}<int, int>", GetName());
-    }
-    case IRType::TupleFourInteger64: {
-        return fmt::format("t{}<i64, i64, i64, i64>", GetName());
+        return "Float80";
     }
     case IRType::Void: {
-        return "void";
+        return "Void";
     }
     default: {
-        ERROR("Unreachable");
+        UNREACHABLE();
         return "";
     }
     }
 }
 
-#define OP2(op) fmt::format("{} ← {} {} {}", GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
-#define SOP2(op) fmt::format("{} ← (i64){} {} (i64){}", GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
-#define U8OP2(op) fmt::format("{} ← (u8){} {} (u8){}", GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
-#define S8OP2(op) fmt::format("{} ← (i8){} {} (i8){}", GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
-#define S16OP2(op) fmt::format("{} ← (i16){} {} (i16){}", GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
-#define S32OP2(op) fmt::format("{} ← (i32){} {} (i32){}", GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
+#define OP2(op) fmt::format("{} {} ← {} {} {}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
+#define SOP2(op) fmt::format("{} {} ← (i64){} {} (i64){}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
+#define U8OP2(op) fmt::format("{} {} ← (u8){} {} (u8){}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
+#define S8OP2(op) fmt::format("{} {} ← (i8){} {} (i8){}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
+#define S16OP2(op) fmt::format("{} {} ← (i16){} {} (i16){}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
+#define S32OP2(op) fmt::format("{} {} ← (i32){} {} (i32){}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
 
-#define FOP(func) fmt::format("{} ← {}()", GetNameString(), #func)
-#define FOP1(func, param) fmt::format("{} ← {}({}: {})", GetNameString(), #func, #param, GetOperandNameString(0))
+#define FOP(func) fmt::format("{} {} ← {}()", GetTypeString(), GetNameString(), #func)
+#define FOP1(func, param) fmt::format("{} {} ← {}({}: {})", GetTypeString(), GetNameString(), #func, #param, GetOperandNameString(0))
 #define FOP2(func, param1, param2)                                                                                                                   \
-    fmt::format("{} ← {}({}: {}, {}: {})", GetNameString(), #func, #param1, GetOperandNameString(0), #param2, GetOperandNameString(1))
+    fmt::format("{} {} ← {}({}: {}, {}: {})", GetTypeString(), GetNameString(), #func, #param1, GetOperandNameString(0), #param2,                    \
+                GetOperandNameString(1))
 #define FOP3(func, param1, param2, param3)                                                                                                           \
-    fmt::format("{} ← {}({}: {}, {}: {}, {}: {})", GetNameString(), #func, #param1, GetOperandNameString(0), #param2, GetOperandNameString(1),       \
-                #param3, GetOperandNameString(2))
+    fmt::format("{} {} ← {}({}: {}, {}: {}, {}: {})", GetTypeString(), GetNameString(), #func, #param1, GetOperandNameString(0), #param2,            \
+                GetOperandNameString(1), #param3, GetOperandNameString(2))
 #define FOP7(func, param1, param2, param3, param4, param5, param6, param7)                                                                           \
-    fmt::format("{} ← {}({}: {}, {}: {}, {}: {}, {}: {}, {}: {}, {}: {}, {}: {})", GetNameString(), #func, #param1, GetOperandNameString(0),         \
-                #param2, GetOperandNameString(1), #param3, GetOperandNameString(2), #param4, GetOperandNameString(3), #param5,                       \
-                GetOperandNameString(4), #param6, GetOperandNameString(5), #param7, GetOperandNameString(6))
+    fmt::format("{} {} ← {}({}: {}, {}: {}, {}: {}, {}: {}, {}: {}, {}: {}, {}: {})", GetTypeString(), GetNameString(), #func, #param1,              \
+                GetOperandNameString(0), #param2, GetOperandNameString(1), #param3, GetOperandNameString(2), #param4, GetOperandNameString(3),       \
+                #param5, GetOperandNameString(4), #param6, GetOperandNameString(5), #param7, GetOperandNameString(6))
 
-std::string IRInstruction::Print() const {
+std::string IRInstruction::Print(const std::function<std::string(const IRInstruction*)>& callback) const {
     IROpcode opcode = GetOpcode();
+    std::string ret;
     switch (opcode) {
     case IROpcode::Null: {
         return "Null";
     }
     case IROpcode::Phi: {
         const Phi& phi = AsPhi();
-        std::string ret = fmt::format("{} ← φ<%{}>(", GetNameString(), print_guest_register(phi.ref));
-        for (size_t i = 0; i < phi.nodes.size(); i++) {
-            ret += fmt::format("{} @ Block {}", phi.nodes[i].value->GetNameString(), phi.nodes[i].block->GetIndex());
+        std::string ret = fmt::format("{} {} ← φ<a{}>(", GetTypeString(), GetNameString(), print_guest_register(phi.ref));
+        for (size_t i = 0; i < phi.values.size(); i++) {
+            ret += fmt::format("{} @ Block {}", phi.values[i]->GetNameString(), phi.blocks[i]->GetIndex());
 
-            if (i != phi.nodes.size() - 1) {
+            if (i != phi.values.size() - 1) {
                 ret += ", ";
             }
         }
         ret += ")";
-        return ret;
+        break;
     }
     case IROpcode::Comment: {
         return AsComment().comment;
     }
-    case IROpcode::TupleExtract: {
-        const TupleAccess& tup = AsTupleAccess();
-        return fmt::format("{} ← get<{}>({})", GetNameString(), tup.index, tup.tuple->GetNameString());
-    }
     case IROpcode::Select: {
-        return fmt::format("{} ← {} ? {} : {}", GetNameString(), GetOperandNameString(0), GetOperandNameString(1), GetOperandNameString(2));
-    }
-    case IROpcode::Lea: {
-        return fmt::format("{} ← [{} + {} * {} + 0x{:x}]", GetNameString(), GetOperandNameString(0), GetOperandNameString(1),
-                           GetOperand(2)->AsImmediate().immediate, GetOperand(3)->AsImmediate().immediate);
+        ret += fmt::format("{} {} ← {} ? {} : {}", GetTypeString(), GetNameString(), GetOperandNameString(0), GetOperandNameString(1),
+                           GetOperandNameString(2));
+        break;
     }
     case IROpcode::Mov: {
-        return fmt::format("{} ← {}", GetNameString(), GetOperandNameString(0));
+        ret += fmt::format("{} {} ← {}", GetTypeString(), GetNameString(), GetOperandNameString(0));
+        break;
     }
     case IROpcode::Immediate: {
-        return fmt::format("{} ← {:x}", GetNameString(), AsImmediate().immediate);
+        ret += fmt::format("{} {} ← 0x{:x}", GetTypeString(), GetNameString(), AsImmediate().immediate);
+        break;
     }
     case IROpcode::Rdtsc: {
         return FOP(rdtsc);
     }
     case IROpcode::GetGuest: {
-        return fmt::format("{} ← get_guest %{}", GetNameString(), print_guest_register(AsGetGuest().ref));
+        ret += fmt::format("{} ← get_guest {}", GetNameString(), print_guest_register(AsGetGuest().ref));
+        break;
     }
     case IROpcode::SetGuest: {
-        return fmt::format("{} ← set_guest %{}, {}", GetNameString(), print_guest_register(AsSetGuest().ref), AsSetGuest().source->GetNameString());
+        ret += fmt::format("{} ← set_guest {}, {}", GetNameString(), print_guest_register(AsSetGuest().ref), AsSetGuest().source->GetNameString());
+        break;
     }
     case IROpcode::LoadGuestFromMemory: {
-        return fmt::format("{} ← load_from_vm %{}", GetNameString(), print_guest_register(AsGetGuest().ref));
+        ret += fmt::format("{} ← load_from_vm {}", GetNameString(), print_guest_register(AsGetGuest().ref));
+        break;
     }
     case IROpcode::StoreGuestToMemory: {
-        return fmt::format("{} ← store_to_vm %{}, {}", GetNameString(), print_guest_register(AsSetGuest().ref), AsSetGuest().source->GetNameString());
+        ret += fmt::format("store_to_vm {}, {}", print_guest_register(AsSetGuest().ref), AsSetGuest().source->GetNameString());
+        break;
     }
     case IROpcode::Add: {
-        return OP2(+);
+        ret += OP2(+);
+        break;
     }
     case IROpcode::Sub: {
-        return OP2(-);
+        ret += OP2(-);
+        break;
     }
     case IROpcode::And: {
-        return OP2(&);
+        ret += OP2(&);
+        break;
     }
     case IROpcode::Or: {
-        return OP2(|);
+        ret += OP2(|);
+        break;
     }
     case IROpcode::Xor: {
-        return OP2(^);
+        ret += OP2(^);
+        break;
     }
     case IROpcode::ShiftLeft: {
-        return OP2(<<);
+        ret += OP2(<<);
+        break;
     }
     case IROpcode::ShiftRight: {
-        return OP2(>>);
+        ret += OP2(>>);
+        break;
     }
     case IROpcode::ShiftRightArithmetic: {
-        return SOP2(>>);
+        ret += SOP2(>>);
+        break;
     }
     case IROpcode::Equal: {
-        return OP2(==);
+        ret += OP2(==);
+        break;
     }
     case IROpcode::NotEqual: {
-        return OP2(!=);
+        ret += OP2(!=);
+        break;
     }
     case IROpcode::UGreaterThan: {
-        return OP2(>);
+        ret += OP2(>);
+        break;
     }
     case IROpcode::IGreaterThan: {
-        return SOP2(>);
+        ret += SOP2(>);
+        break;
     }
     case IROpcode::ULessThan: {
-        return OP2(<);
+        ret += OP2(<);
+        break;
     }
     case IROpcode::ILessThan: {
-        return SOP2(<);
+        ret += SOP2(<);
+        break;
     }
-    case IROpcode::UDiv8: {
-        return U8OP2(/);
-    }
-    case IROpcode::IDiv8: {
-        return S8OP2(/);
-    }
-    case IROpcode::IMul64: {
-        return SOP2(*);
+    case IROpcode::Mul:
+    case IROpcode::Mulh:
+    case IROpcode::Mulhu: {
+        ret += SOP2(*);
+        break;
     }
     case IROpcode::LeftRotate8: {
-        return FOP2(rol8, src, amount);
+        ret += FOP2(rol8, src, amount);
+        break;
     }
     case IROpcode::LeftRotate16: {
-        return FOP2(rol16, src, amount);
+        ret += FOP2(rol16, src, amount);
+        break;
     }
     case IROpcode::LeftRotate32: {
-        return FOP2(rol32, src, amount);
+        ret += FOP2(rol32, src, amount);
+        break;
     }
     case IROpcode::LeftRotate64: {
-        return FOP2(rol64, src, amount);
+        ret += FOP2(rol64, src, amount);
+        break;
     }
     case IROpcode::Cpuid: {
-        return FOP2(cpuid, rax, rcx);
+        ret += FOP2(cpuid, rax, rcx);
+        break;
     }
     case IROpcode::WriteByte: {
-        return FOP2(write8, address, src);
+        ret += FOP2(write8, address, src);
+        break;
     }
     case IROpcode::WriteWord: {
-        return FOP2(write16, address, src);
+        ret += FOP2(write16, address, src);
+        break;
     }
     case IROpcode::WriteDWord: {
-        return FOP2(write32, address, src);
+        ret += FOP2(write32, address, src);
+        break;
     }
     case IROpcode::WriteQWord: {
-        return FOP2(write64, address, src);
+        ret += FOP2(write64, address, src);
+        break;
     }
     case IROpcode::WriteXmmWord: {
-        return FOP2(write128, address, src);
+        ret += FOP2(write128, address, src);
+        break;
     }
     case IROpcode::Sext8: {
-        return FOP1(sext8, src);
+        ret += FOP1(sext8, src);
+        break;
     }
     case IROpcode::Sext16: {
-        return FOP1(sext16, src);
+        ret += FOP1(sext16, src);
+        break;
     }
     case IROpcode::Sext32: {
-        return FOP1(sext32, src);
+        ret += FOP1(sext32, src);
+        break;
     }
     case IROpcode::CastIntegerToVector: {
-        return FOP1(int_to_vec, integer);
+        ret += FOP1(int_to_vec, integer);
+        break;
     }
     case IROpcode::CastVectorToInteger: {
-        return FOP1(vec_to_int, vector);
+        ret += FOP1(vec_to_int, vector);
+        break;
     }
     case IROpcode::Clz: {
-        return FOP1(clz, src);
+        ret += FOP1(clz, src);
+        break;
     }
     case IROpcode::Ctz: {
-        return FOP1(ctz, src);
+        ret += FOP1(ctz, src);
+        break;
     }
     case IROpcode::Not: {
-        return FOP1(not, src);
+        ret += FOP1(not, src);
+        break;
     }
     case IROpcode::Popcount: {
-        return FOP1(popcount, src);
+        ret += FOP1(popcount, src);
+        break;
     }
     case IROpcode::ReadByte: {
-        return FOP1(read8, address);
+        ret += FOP1(read8, address);
+        break;
     }
     case IROpcode::ReadWord: {
-        return FOP1(read16, address);
+        ret += FOP1(read16, address);
+        break;
     }
     case IROpcode::ReadDWord: {
-        return FOP1(read32, address);
+        ret += FOP1(read32, address);
+        break;
     }
     case IROpcode::ReadQWord: {
-        return FOP1(read64, address);
+        ret += FOP1(read64, address);
+        break;
     }
     case IROpcode::ReadXmmWord: {
-        return FOP1(read128, address);
+        ret += FOP1(read128, address);
+        break;
     }
-    case IROpcode::IDiv16: {
-        return FOP3(idiv16, rdx, rax, divisor);
+    case IROpcode::Div: {
+        ret += FOP2(div, dividend, divisor);
+        break;
     }
-    case IROpcode::IDiv32: {
-        return FOP3(idiv32, rdx, rax, divisor);
+    case IROpcode::Divu: {
+        ret += FOP2(divu, dividend, divisor);
+        break;
     }
-    case IROpcode::IDiv64: {
-        return FOP3(idiv64, rdx, rax, divisor);
+    case IROpcode::Divw: {
+        ret += FOP2(divw, dividend, divisor);
+        break;
     }
-    case IROpcode::UDiv16: {
-        return FOP3(udiv16, rdx, rax, divisor);
+    case IROpcode::Divuw: {
+        ret += FOP2(divuw, dividend, divisor);
+        break;
     }
-    case IROpcode::UDiv32: {
-        return FOP3(udiv32, rdx, rax, divisor);
+    case IROpcode::Rem: {
+        ret += FOP2(rem, dividend, divisor);
+        break;
     }
-    case IROpcode::UDiv64: {
-        return FOP3(udiv64, rdx, rax, divisor);
+    case IROpcode::Remu: {
+        ret += FOP2(remu, dividend, divisor);
+        break;
+    }
+    case IROpcode::Remw: {
+        ret += FOP2(remw, dividend, divisor);
+        break;
+    }
+    case IROpcode::Remuw: {
+        ret += FOP2(remuw, dividend, divisor);
+        break;
+    }
+    case IROpcode::Div128: {
+        ret += FOP1(div128, divisor);
+        break;
+    }
+    case IROpcode::Divu128: {
+        ret += FOP1(divu128, divisor);
+        break;
     }
     case IROpcode::Syscall: {
-        return FOP7(syscall, rax, rdi, rsi, rdx, r10, r8, r9);
+        ret += FOP7(syscall, rax, rdi, rsi, rdx, r10, r8, r9);
+        break;
     }
     case IROpcode::VAnd: {
-        return FOP2(vand, src1, src2);
+        ret += FOP2(vand, src1, src2);
+        break;
     }
     case IROpcode::VOr: {
-        return FOP2(vor, src1, src2);
+        ret += FOP2(vor, src1, src2);
+        break;
     }
     case IROpcode::VXor: {
-        return FOP2(vxor, src1, src2);
+        ret += FOP2(vxor, src1, src2);
+        break;
     }
     case IROpcode::VShl: {
-        return FOP2(vshl, src1, src2);
+        ret += FOP2(vshl, src1, src2);
+        break;
     }
     case IROpcode::VShr: {
-        return FOP2(vshr, src1, src2);
+        ret += FOP2(vshr, src1, src2);
+        break;
     }
     case IROpcode::VZext64: {
-        return FOP1(vzext64, src);
+        ret += FOP1(vzext64, src);
+        break;
     }
     case IROpcode::VPackedAddQWord: {
-        return FOP2(vpaddqword, src1, src2);
+        ret += FOP2(vpaddqword, src1, src2);
+        break;
     }
     case IROpcode::VPackedEqualByte: {
-        return FOP2(vpeqbyte, src1, src2);
+        ret += FOP2(vpeqbyte, src1, src2);
+        break;
     }
     case IROpcode::VPackedEqualWord: {
-        return FOP2(vpeqword, src1, src2);
+        ret += FOP2(vpeqword, src1, src2);
+        break;
     }
     case IROpcode::VPackedEqualDWord: {
-        return FOP2(vpeqdword, src1, src2);
+        ret += FOP2(vpeqdword, src1, src2);
+        break;
     }
     case IROpcode::VPackedShuffleDWord: {
-        return fmt::format("{} ← vpshufdword({}, {:x})", GetNameString(), GetOperandNameString(0), (u8)GetExtraData());
+        ret += fmt::format("{} {} ← vpshufdword({}, 0x{:x})", GetTypeString(), GetNameString(), GetOperandNameString(0), (u8)GetExtraData());
+        break;
     }
     case IROpcode::VPackedMinByte: {
-        return FOP2(vpminbyte, src1, src2);
+        ret += FOP2(vpminbyte, src1, src2);
+        break;
     }
     case IROpcode::VPackedSubByte: {
-        return FOP2(vpsubbyte, src1, src2);
+        ret += FOP2(vpsubbyte, src1, src2);
+        break;
     }
     case IROpcode::VMoveByteMask: {
-        return FOP1(vmovbytemask, src);
+        ret += FOP1(vmovbytemask, src);
+        break;
     }
     case IROpcode::VExtractInteger: {
-        return FOP1(vextractint, src);
+        ret += FOP1(vextractint, src);
+        break;
     }
     case IROpcode::VInsertInteger: {
-        return FOP2(vinsertint, vector, integer);
+        ret += FOP2(vinsertint, vector, integer);
+        break;
     }
     case IROpcode::VUnpackByteLow: {
-        return FOP2(vunpackbytelow, src1, src2);
+        ret += FOP2(vunpackbytelow, src1, src2);
+        break;
     }
     case IROpcode::VUnpackWordLow: {
-        return FOP2(vunpackwordlow, src1, src2);
+        ret += FOP2(vunpackwordlow, src1, src2);
+        break;
     }
     case IROpcode::VUnpackDWordLow: {
-        return FOP2(vunpackdwordlow, src1, src2);
+        ret += FOP2(vunpackdwordlow, src1, src2);
+        break;
     }
     case IROpcode::VUnpackQWordLow: {
-        return FOP2(vunpackqwordlow, src1, src2);
+        ret += FOP2(vunpackqwordlow, src1, src2);
+        break;
     }
     default: {
         ERROR("Unimplemented op: %d", (int)GetOpcode());
         return "";
+    }
+    }
+
+    if (opcode != IROpcode::Comment) {
+        u64 size = ret.size();
+        while (size < 50) {
+            ret += " ";
+            size++;
+        }
+
+        ret += "(uses: " + std::to_string(GetUseCount());
+        if (IsLocked()) {
+            ret += " *locked*";
+        }
+        ret += ")";
+    }
+
+    if (callback)
+        ret += callback(this);
+
+    return ret;
+}
+
+bool IRInstruction::IsVoid() const {
+    return return_type == IRType::Void;
+}
+
+bool IRInstruction::NeedsAllocation() const {
+    bool already_allocated = allocation.index() != 0;
+    bool dont_allocate = IsVoid();
+    return !already_allocated && !dont_allocate;
+}
+
+std::span<IRInstruction*> IRInstruction::GetUsedInstructions() {
+    switch (expression_type) {
+    case ExpressionType::Operands: {
+        return AsOperands().operands;
+    }
+    case ExpressionType::Comment:
+    case ExpressionType::Immediate:
+    case ExpressionType::GetGuest: {
+        break;
+    }
+    case ExpressionType::SetGuest: {
+        return {&AsSetGuest().source, 1};
+    }
+    case ExpressionType::Phi: {
+        return AsPhi().values;
+    }
+    default: {
+        break;
+    }
+    }
+    return {};
+}
+
+bool IRInstruction::ExitsVM() const {
+    switch (GetOpcode()) {
+    case IROpcode::Syscall:
+    case IROpcode::Cpuid:
+    case IROpcode::Rdtsc:
+    case IROpcode::Div128:
+    case IROpcode::Divu128:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IRInstruction::IsCallerSaved() const {
+    switch (GetAllocationType()) {
+    case AllocationType::GPR: {
+        return Registers::IsCallerSaved(GetGPR());
+    }
+    case AllocationType::FPR: {
+        return Registers::IsCallerSaved(GetFPR());
+    }
+    case AllocationType::Vec: {
+        return true;
+    }
+    case AllocationType::Spill: {
+        WARN("Called with spilled instruction");
+        return false;
+    }
+    case AllocationType::Null: {
+        ERROR("Uninitialized allocation");
+        return false;
+    }
+    default: {
+        UNREACHABLE();
+        return false;
     }
     }
 }

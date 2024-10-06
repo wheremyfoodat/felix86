@@ -77,7 +77,7 @@ void IRFunction::deallocateAll() {
     }
 }
 
-std::string IRFunction::Print() const {
+std::string IRFunction::Print(const std::function<std::string(const IRInstruction*)>& callback) const {
     if (!IsCompiled()) {
         WARN("Print called on not compiled function");
         return "";
@@ -95,7 +95,7 @@ std::string IRFunction::Print() const {
         blocks.pop_back();
         work->SetVisited(true);
 
-        ret += work->Print();
+        ret += work->Print(callback);
 
         const IRBlock* succ1 = work->GetSuccessor(false);
         const IRBlock* succ2 = work->GetSuccessor(true);
@@ -133,55 +133,8 @@ bool IRFunction::Validate() const {
         auto add_uses = [&uses](IRInstruction* inst) {
             uses[inst].want = inst->GetUseCount();
 
-            switch (inst->GetExpressionType()) {
-            case ExpressionType::Operands: {
-                Operands& operands = inst->AsOperands();
-                for (IRInstruction* operand : operands.operands) {
-                    if (operand != nullptr) {
-                        uses[operand].have += 1;
-                    } else {
-                        ERROR("Operand is null");
-                    }
-                }
-                break;
-            }
-            case ExpressionType::GetGuest:
-            case ExpressionType::Immediate:
-            case ExpressionType::Comment: {
-                break;
-            }
-            case ExpressionType::SetGuest: {
-                SetGuest& set_guest = inst->AsSetGuest();
-                if (set_guest.source != nullptr) {
-                    uses[set_guest.source].have += 1;
-                } else {
-                    ERROR("Source is null");
-                }
-                break;
-            }
-            case ExpressionType::Phi: {
-                Phi& phi = inst->AsPhi();
-                for (const PhiNode& node : phi.nodes) {
-                    if (node.value != nullptr) {
-                        uses[node.value].have += 1;
-                    } else {
-                        ERROR("Value is null");
-                    }
-                }
-                break;
-            }
-            case ExpressionType::TupleAccess: {
-                TupleAccess& tuple_access = inst->AsTupleAccess();
-                if (tuple_access.tuple != nullptr) {
-                    uses[tuple_access.tuple].have += 1;
-                } else {
-                    ERROR("Tuple is null");
-                }
-                break;
-            }
-            default: {
-                ERROR("Unreachable");
-            }
+            for (auto& inst : inst->GetUsedInstructions()) {
+                uses[inst].have++;
             }
         };
 
@@ -192,7 +145,7 @@ bool IRFunction::Validate() const {
 
     for (const auto& [inst, use] : uses) {
         if (use.have != use.want) {
-            WARN("Mismatch on uses on instruction: %s", inst->Print().c_str());
+            WARN("Mismatch on uses on instruction: %s", inst->Print({}).c_str());
             return false;
         }
     }

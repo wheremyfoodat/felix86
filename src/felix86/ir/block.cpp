@@ -3,7 +3,7 @@
 #include "felix86/common/print.hpp"
 #include "felix86/ir/block.hpp"
 
-std::string IRBlock::Print() const {
+std::string IRBlock::Print(const std::function<std::string(const IRInstruction*)>& callback) const {
     std::string ret;
 
     ret += fmt::format("Block {}", GetIndex());
@@ -13,20 +13,30 @@ std::string IRBlock::Print() const {
     ret += "\n";
 
     for (const IRInstruction& inst : GetInstructions()) {
-        std::string inst_string = inst.Print();
-        if (inst.GetOpcode() != IROpcode::Comment) {
-            ret += "    ";
-            size_t size = inst_string.size();
-            while (size < 50) {
-                inst_string += " ";
-                size++;
-            }
-        }
-        ret += inst_string;
-        if (inst.GetOpcode() != IROpcode::Comment)
-            ret += "(uses: " + std::to_string(inst.GetUseCount()) + ")";
+        ret += inst.Print(callback);
         ret += "\n";
     }
 
     return ret;
+}
+
+IRInstruction* IRBlock::InsertAtEnd(IRInstruction&& instr) {
+    instructions.push_back(std::move(instr));
+    IRInstruction* ret = &instructions.back();
+    return ret;
+}
+
+bool IRBlock::IsUsedInPhi(IRInstruction* target) const {
+    for (auto& instr : instructions) {
+        if (instr.IsPhi()) {
+            const Phi& phi = instr.AsPhi();
+            for (auto& value : phi.values) {
+                if (value == target) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
 }
