@@ -173,6 +173,12 @@ IRInstruction* ir_emit_ctz(IRBlock* block, IRInstruction* source) {
     return ir_emit_one_operand(block, IROpcode::Ctz, source);
 }
 
+IRInstruction* ir_emit_addi(IRBlock* block, IRInstruction* source, i64 imm) {
+    IRInstruction* instruction = ir_emit_one_operand(block, IROpcode::Addi, source);
+    instruction->SetImmediateData(imm);
+    return instruction;
+}
+
 IRInstruction* ir_emit_and(IRBlock* block, IRInstruction* source1, IRInstruction* source2) {
     return ir_emit_two_operands(block, IROpcode::And, source1, source2);
 }
@@ -283,12 +289,19 @@ IRInstruction* ir_emit_lea(IRBlock* block, x86_operand_t* rm_operand) {
         base_final = ir_emit_add(block, base, gs);
     }
 
-    IRInstruction* index = rm_operand->memory.index != X86_REF_COUNT ? get_guest(block, rm_operand->memory.index) : ir_emit_immediate(block, 0);
-    IRInstruction* displacement = ir_emit_immediate(block, rm_operand->memory.displacement);
-    IRInstruction* scale = ir_emit_immediate(block, rm_operand->memory.scale);
-    IRInstruction* scaled_index = ir_emit_shift_left(block, index, scale);
-    IRInstruction* address = ir_emit_add(block, base_final, scaled_index);
-    IRInstruction* displaced_address = ir_emit_add(block, address, displacement);
+    IRInstruction* index = rm_operand->memory.index != X86_REF_COUNT ? get_guest(block, rm_operand->memory.index) : nullptr;
+
+    IRInstruction* address = base_final;
+    if (index) {
+        IRInstruction* scale = ir_emit_immediate(block, rm_operand->memory.scale);
+        IRInstruction* scaled_index = ir_emit_shift_left(block, index, scale);
+        address = ir_emit_add(block, base_final, scaled_index);
+    }
+
+    IRInstruction* displaced_address = address;
+    if (rm_operand->memory.displacement) {
+        displaced_address = ir_emit_addi(block, address, rm_operand->memory.displacement);
+    }
 
     IRInstruction* final_address = displaced_address;
     if (rm_operand->memory.address_override) {
@@ -357,16 +370,16 @@ void ir_terminate_jump_conditional(IRBlock* block, IRInstruction* condition, IRB
 }
 
 IRInstruction* ir_emit_insert_integer_to_vector(IRBlock* block, IRInstruction* source, IRInstruction* dest, u8 idx, x86_size_e sz) {
-    u64 extra_data = (u64)sz << 8 | idx;
+    u64 immediate_data = (u64)sz << 8 | idx;
     IRInstruction* instruction = ir_emit_two_operands(block, IROpcode::VInsertInteger, source, dest);
-    instruction->SetExtraData(extra_data);
+    instruction->SetImmediateData(immediate_data);
     return instruction;
 }
 
 IRInstruction* ir_emit_extract_integer_from_vector(IRBlock* block, IRInstruction* src, u8 idx, x86_size_e sz) {
-    u64 extra_data = (u64)sz << 8 | idx;
+    u64 immediate_data = (u64)sz << 8 | idx;
     IRInstruction* instruction = ir_emit_one_operand(block, IROpcode::VExtractInteger, src);
-    instruction->SetExtraData(extra_data);
+    instruction->SetImmediateData(immediate_data);
     return instruction;
 }
 
@@ -436,7 +449,7 @@ IRInstruction* ir_emit_vector_packed_compare_eq_dword(IRBlock* block, IRInstruct
 
 IRInstruction* ir_emit_vector_packed_shuffle_dword(IRBlock* block, IRInstruction* source, u8 control_byte) {
     IRInstruction instruction(IROpcode::VPackedShuffleDWord, {source});
-    instruction.SetExtraData(control_byte);
+    instruction.SetImmediateData(control_byte);
     return block->InsertAtEnd(std::move(instruction));
 }
 

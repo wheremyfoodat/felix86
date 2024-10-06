@@ -104,7 +104,7 @@ static void reverse_postorder_creation(IRFunction* function, std::vector<IRBlock
     postorder(entry, order);
 
     if (order.size() != function->GetBlocks().size()) {
-        ERROR("Postorder traversal did not visit all blocks");
+        ERROR("Postorder traversal did not visit all blocks: %zu vs %zu", order.size(), function->GetBlocks().size());
     }
 
     for (size_t i = 0; i < order.size(); i++) {
@@ -219,6 +219,10 @@ static void search(IRDominatorTreeNode* node, std::array<std::stack<IRInstructio
             int ref = inst.AsSetGuest().ref;
             stacks[ref].push(&inst);
             pop_count[ref]++;
+        } else if (inst.GetOpcode() == IROpcode::Phi) {
+            int ref = inst.AsPhi().ref;
+            stacks[ref].push(&inst);
+            pop_count[ref]++;
         } else if (inst.GetOpcode() == IROpcode::GetGuest) {
             IRInstruction* def = stacks[inst.AsGetGuest().ref].top();
             inst.ReplaceExpressionWithMov(def);
@@ -231,6 +235,21 @@ static void search(IRDominatorTreeNode* node, std::array<std::stack<IRInstructio
     if (successor1) {
         int j = which_pred(block, successor1);
         for (IRInstruction& inst : successor1->GetInstructions()) {
+            if (!inst.IsPhi()) {
+                break;
+            }
+
+            Phi& phi = inst.AsPhi();
+            phi.blocks[j] = block;
+            phi.values[j] = stacks[phi.ref].top();
+            phi.values[j]->AddUse();
+        }
+    }
+
+    IRBlock* successor2 = block->GetSuccessor(1);
+    if (successor2) {
+        int j = which_pred(block, successor2);
+        for (IRInstruction& inst : successor2->GetInstructions()) {
             if (!inst.IsPhi()) {
                 break;
             }

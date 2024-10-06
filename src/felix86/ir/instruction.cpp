@@ -24,7 +24,7 @@ bool IRInstruction::IsSameExpression(const IRInstruction& other) const {
             }
         }
 
-        if (operands.extra_data != other_operands.extra_data) {
+        if (operands.immediate_data != other_operands.immediate_data) {
             return false;
         }
 
@@ -99,6 +99,7 @@ IRType IRInstruction::getTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
     case IROpcode::Immediate:
     case IROpcode::Parity:
     case IROpcode::Add:
+    case IROpcode::Addi:
     case IROpcode::Sub:
     case IROpcode::Clz:
     case IROpcode::Ctzh:
@@ -267,11 +268,14 @@ void IRInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         VALIDATE_0OP(Syscall);
         VALIDATE_0OP(Cpuid);
 
+        VALIDATE_OPS_INT(Addi, 1);
         VALIDATE_OPS_INT(Sext8, 1);
         VALIDATE_OPS_INT(Sext16, 1);
         VALIDATE_OPS_INT(Sext32, 1);
         VALIDATE_OPS_INT(CastIntegerToVector, 1);
         VALIDATE_OPS_INT(Clz, 1);
+        VALIDATE_OPS_INT(Ctzh, 1);
+        VALIDATE_OPS_INT(Ctzw, 1);
         VALIDATE_OPS_INT(Ctz, 1);
         VALIDATE_OPS_INT(Not, 1);
         VALIDATE_OPS_INT(Parity, 1);
@@ -391,23 +395,25 @@ std::string IRInstruction::GetTypeString() const {
     }
 }
 
-#define OP2(op) fmt::format("{} {} ← {} {} {}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
-#define SOP2(op) fmt::format("{} {} ← (i64){} {} (i64){}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
-#define U8OP2(op) fmt::format("{} {} ← (u8){} {} (u8){}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
-#define S8OP2(op) fmt::format("{} {} ← (i8){} {} (i8){}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
-#define S16OP2(op) fmt::format("{} {} ← (i16){} {} (i16){}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
-#define S32OP2(op) fmt::format("{} {} ← (i32){} {} (i32){}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
+#define OP2(op) fmt::format("{} {} <- {} {} {}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
+#define OP2I(op) fmt::format("{} {} <- {} {} {}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, (i64)GetImmediateData())
+#define SOP2(op) fmt::format("{} {} <- (i64){} {} (i64){}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
+#define U8OP2(op) fmt::format("{} {} <- (u8){} {} (u8){}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
+#define S8OP2(op) fmt::format("{} {} <- (i8){} {} (i8){}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
+#define S16OP2(op) fmt::format("{} {} <- (i16){} {} (i16){}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
+#define S32OP2(op) fmt::format("{} {} <- (i32){} {} (i32){}", GetTypeString(), GetNameString(), GetOperandNameString(0), #op, GetOperandNameString(1))
 
-#define FOP(func) fmt::format("{} {} ← {}()", GetTypeString(), GetNameString(), #func)
-#define FOP1(func, param) fmt::format("{} {} ← {}({}: {})", GetTypeString(), GetNameString(), #func, #param, GetOperandNameString(0))
+#define FOP(func) fmt::format("{} {} <- {}()", GetTypeString(), GetNameString(), #func)
+#define FOP1(func, param) fmt::format("{} {} <- {}({}: {})", GetTypeString(), GetNameString(), #func, #param, GetOperandNameString(0))
 #define FOP2(func, param1, param2)                                                                                                                   \
-    fmt::format("{} {} ← {}({}: {}, {}: {})", GetTypeString(), GetNameString(), #func, #param1, GetOperandNameString(0), #param2,                    \
+    fmt::format("{} {} <- {}({}: {}, {}: {})", GetTypeString(), GetNameString(), #func, #param1, GetOperandNameString(0), #param2,                   \
                 GetOperandNameString(1))
+#define VOP2(func, param1, param2) fmt::format("{}({}: {}, {}: {})", #func, #param1, GetOperandNameString(0), #param2, GetOperandNameString(1))
 #define FOP3(func, param1, param2, param3)                                                                                                           \
-    fmt::format("{} {} ← {}({}: {}, {}: {}, {}: {})", GetTypeString(), GetNameString(), #func, #param1, GetOperandNameString(0), #param2,            \
+    fmt::format("{} {} <- {}({}: {}, {}: {}, {}: {})", GetTypeString(), GetNameString(), #func, #param1, GetOperandNameString(0), #param2,           \
                 GetOperandNameString(1), #param3, GetOperandNameString(2))
 #define FOP7(func, param1, param2, param3, param4, param5, param6, param7)                                                                           \
-    fmt::format("{} {} ← {}({}: {}, {}: {}, {}: {}, {}: {}, {}: {}, {}: {}, {}: {})", GetTypeString(), GetNameString(), #func, #param1,              \
+    fmt::format("{} {} <- {}({}: {}, {}: {}, {}: {}, {}: {}, {}: {}, {}: {}, {}: {})", GetTypeString(), GetNameString(), #func, #param1,             \
                 GetOperandNameString(0), #param2, GetOperandNameString(1), #param3, GetOperandNameString(2), #param4, GetOperandNameString(3),       \
                 #param5, GetOperandNameString(4), #param6, GetOperandNameString(5), #param7, GetOperandNameString(6))
 
@@ -420,8 +426,16 @@ std::string IRInstruction::Print(const std::function<std::string(const IRInstruc
     }
     case IROpcode::Phi: {
         const Phi& phi = AsPhi();
-        std::string ret = fmt::format("{} {} ← φ<a{}>(", GetTypeString(), GetNameString(), print_guest_register(phi.ref));
+        ret = fmt::format("{} {} <- φ<{}>(", GetTypeString(), GetNameString(), print_guest_register(phi.ref));
         for (size_t i = 0; i < phi.values.size(); i++) {
+            if (!phi.blocks[i]) {
+                ERROR("Block is null");
+            }
+
+            if (!phi.values[i]) {
+                ERROR("Value is null");
+            }
+
             ret += fmt::format("{} @ Block {}", phi.values[i]->GetNameString(), phi.blocks[i]->GetIndex());
 
             if (i != phi.values.size() - 1) {
@@ -435,31 +449,31 @@ std::string IRInstruction::Print(const std::function<std::string(const IRInstruc
         return AsComment().comment;
     }
     case IROpcode::Select: {
-        ret += fmt::format("{} {} ← {} ? {} : {}", GetTypeString(), GetNameString(), GetOperandNameString(0), GetOperandNameString(1),
+        ret += fmt::format("{} {} <- {} ? {} : {}", GetTypeString(), GetNameString(), GetOperandNameString(0), GetOperandNameString(1),
                            GetOperandNameString(2));
         break;
     }
     case IROpcode::Mov: {
-        ret += fmt::format("{} {} ← {}", GetTypeString(), GetNameString(), GetOperandNameString(0));
+        ret += fmt::format("{} {} <- {}", GetTypeString(), GetNameString(), GetOperandNameString(0));
         break;
     }
     case IROpcode::Immediate: {
-        ret += fmt::format("{} {} ← 0x{:x}", GetTypeString(), GetNameString(), AsImmediate().immediate);
+        ret += fmt::format("{} {} <- 0x{:x}", GetTypeString(), GetNameString(), AsImmediate().immediate);
         break;
     }
     case IROpcode::Rdtsc: {
         return FOP(rdtsc);
     }
     case IROpcode::GetGuest: {
-        ret += fmt::format("{} ← get_guest {}", GetNameString(), print_guest_register(AsGetGuest().ref));
+        ret += fmt::format("{} <- get_guest {}", GetNameString(), print_guest_register(AsGetGuest().ref));
         break;
     }
     case IROpcode::SetGuest: {
-        ret += fmt::format("{} ← set_guest {}, {}", GetNameString(), print_guest_register(AsSetGuest().ref), AsSetGuest().source->GetNameString());
+        ret += fmt::format("{} <- set_guest {}, {}", GetNameString(), print_guest_register(AsSetGuest().ref), AsSetGuest().source->GetNameString());
         break;
     }
     case IROpcode::LoadGuestFromMemory: {
-        ret += fmt::format("{} ← load_from_vm {}", GetNameString(), print_guest_register(AsGetGuest().ref));
+        ret += fmt::format("{} <- load_from_vm {}", GetNameString(), print_guest_register(AsGetGuest().ref));
         break;
     }
     case IROpcode::StoreGuestToMemory: {
@@ -468,6 +482,10 @@ std::string IRInstruction::Print(const std::function<std::string(const IRInstruc
     }
     case IROpcode::Add: {
         ret += OP2(+);
+        break;
+    }
+    case IROpcode::Addi: {
+        ret += OP2I(+);
         break;
     }
     case IROpcode::Sub: {
@@ -549,23 +567,23 @@ std::string IRInstruction::Print(const std::function<std::string(const IRInstruc
         break;
     }
     case IROpcode::WriteByte: {
-        ret += FOP2(write8, address, src);
+        ret += VOP2(write8, address, src);
         break;
     }
     case IROpcode::WriteWord: {
-        ret += FOP2(write16, address, src);
+        ret += VOP2(write16, address, src);
         break;
     }
     case IROpcode::WriteDWord: {
-        ret += FOP2(write32, address, src);
+        ret += VOP2(write32, address, src);
         break;
     }
     case IROpcode::WriteQWord: {
-        ret += FOP2(write64, address, src);
+        ret += VOP2(write64, address, src);
         break;
     }
     case IROpcode::WriteXmmWord: {
-        ret += FOP2(write128, address, src);
+        ret += VOP2(write128, address, src);
         break;
     }
     case IROpcode::Sext8: {
@@ -717,7 +735,7 @@ std::string IRInstruction::Print(const std::function<std::string(const IRInstruc
         break;
     }
     case IROpcode::VPackedShuffleDWord: {
-        ret += fmt::format("{} {} ← vpshufdword({}, 0x{:x})", GetTypeString(), GetNameString(), GetOperandNameString(0), (u8)GetExtraData());
+        ret += fmt::format("{} {} <- vpshufdword({}, 0x{:x})", GetTypeString(), GetNameString(), GetOperandNameString(0), (u8)GetImmediateData());
         break;
     }
     case IROpcode::VPackedMinByte: {

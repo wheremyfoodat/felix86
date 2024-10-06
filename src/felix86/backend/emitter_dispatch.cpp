@@ -139,6 +139,11 @@ void Emitter::Emit(Backend& backend, const IRInstruction& inst) {
         break;
     }
 
+    case IROpcode::Addi: {
+        EmitAddi(backend, _RegWO_(&inst), _RegRO_(inst.GetOperand(0)), inst.AsImmediate().immediate);
+        break;
+    }
+
     case IROpcode::Sub: {
         EmitSub(backend, _RegWO_(&inst), _RegRO_(inst.GetOperand(0)), _RegRO_(inst.GetOperand(1)));
         break;
@@ -288,12 +293,14 @@ void Emitter::Emit(Backend& backend, const IRInstruction& inst) {
         EmitCastIntegerToVector(backend, _RegWO_(&inst), _RegRO_(inst.GetOperand(0)));
         break;
     }
+
     case IROpcode::VInsertInteger: {
-        EmitVInsertInteger(backend, _RegWO_(&inst), _RegRO_(inst.GetOperand(0)), _RegRO_(inst.GetOperand(1)), inst.AsOperands().extra_data);
+        EmitVInsertInteger(backend, _RegWO_(&inst), _RegRO_(inst.GetOperand(0)), _RegRO_(inst.GetOperand(1)), inst.AsOperands().immediate_data);
         break;
     }
+
     case IROpcode::VExtractInteger: {
-        EmitVExtractInteger(backend, _RegWO_(&inst), _RegRO_(inst.GetOperand(0)), inst.AsOperands().extra_data);
+        EmitVExtractInteger(backend, _RegWO_(&inst), _RegRO_(inst.GetOperand(0)), inst.AsOperands().immediate_data);
         break;
     }
 
@@ -323,7 +330,7 @@ void Emitter::Emit(Backend& backend, const IRInstruction& inst) {
     }
 
     case IROpcode::VPackedShuffleDWord: {
-        EmitVPackedShuffleDWord(backend, _RegWO_(&inst), _RegRO_(inst.GetOperand(0)), inst.AsOperands().extra_data);
+        EmitVPackedShuffleDWord(backend, _RegWO_(&inst), _RegRO_(inst.GetOperand(0)), inst.AsOperands().immediate_data);
         break;
     }
 

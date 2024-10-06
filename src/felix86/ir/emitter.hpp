@@ -11,6 +11,7 @@ x86_operand_t get_full_reg(x86_ref_e ref);
 void ir_emit_runtime_comment(IRBlock* block, const std::string& comment);
 
 IRInstruction* ir_emit_add(IRBlock* block, IRInstruction* source1, IRInstruction* source2);
+IRInstruction* ir_emit_addi(IRBlock* block, IRInstruction* source, i64 imm);
 IRInstruction* ir_emit_sub(IRBlock* block, IRInstruction* source1, IRInstruction* source2);
 IRInstruction* ir_emit_shift_left(IRBlock* block, IRInstruction* source1, IRInstruction* source2);
 IRInstruction* ir_emit_shift_right(IRBlock* block, IRInstruction* source1, IRInstruction* source2);

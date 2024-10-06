@@ -109,6 +109,8 @@ std::string IRFunction::Print(const std::function<std::string(const IRInstructio
         }
     }
 
+    UnvisitAll();
+
     return ret;
 }
 

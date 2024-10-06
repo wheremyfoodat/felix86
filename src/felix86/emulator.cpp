@@ -7,7 +7,8 @@
 #include "felix86/ir/passes/passes.hpp"
 
 void Emulator::Run() {
-    IRFunction* function = function_cache.CreateOrGetFunctionAt(GetRip());
+    u64 rip = 0x00403C60; // GetRip();
+    IRFunction* function = function_cache.CreateOrGetFunctionAt(rip);
     frontend_compile_function(function);
     ir_ssa_pass(function);
     ir_replace_setguest_pass(function);
@@ -16,6 +17,7 @@ void Emulator::Run() {
     ir_dead_code_elimination_pass(function);
     ir_local_cse_pass(function);
     ir_copy_propagation_pass(function);
+    ir_dead_code_elimination_pass(function);
     ir_naming_pass(function);
     // ir_graph_coloring_pass(function);
     ir_spill_everything_pass(function);

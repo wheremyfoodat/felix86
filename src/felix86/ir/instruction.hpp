@@ -58,6 +58,7 @@
     X(LeftRotate32)                                                                                                                                  \
     X(LeftRotate64)                                                                                                                                  \
     X(Select)                                                                                                                                        \
+    X(Addi)                                                                                                                                          \
     X(And)                                                                                                                                           \
     X(Or)                                                                                                                                            \
     X(Xor)                                                                                                                                           \
@@ -123,7 +124,7 @@ struct IRBlock;
 
 struct Operands {
     std::vector<IRInstruction*> operands = {};
-    u64 extra_data = 0; // for some sse instructions
+    u64 immediate_data = 0; // for some sse instructions
 };
 
 struct Immediate {
@@ -444,12 +445,12 @@ struct IRInstruction {
         mov->AddUse();
     }
 
-    u64 GetExtraData() const {
-        return AsOperands().extra_data;
+    u64 GetImmediateData() const {
+        return AsOperands().immediate_data;
     }
 
-    void SetExtraData(u64 extra_data) {
-        AsOperands().extra_data = extra_data;
+    void SetImmediateData(u64 immediate_data) {
+        AsOperands().immediate_data = immediate_data;
     }
 
     std::string Print(const std::function<std::string(const IRInstruction*)>& callback) const;

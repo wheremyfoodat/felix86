@@ -343,14 +343,15 @@ IR_HANDLE(push_r64) { // push r16/64 - 0x50-0x57
     bool is_word = inst->operand_reg.size == X86_SIZE_WORD;
     x86_operand_t rsp_reg = get_full_reg(X86_REF_RSP);
     IRInstruction* rsp = ir_emit_get_reg(BLOCK, &rsp_reg);
-    IRInstruction* size = ir_emit_immediate(BLOCK, is_word ? 2 : 8);
-    IRInstruction* rsp_sub = ir_emit_sub(BLOCK, rsp, size);
+    IRInstruction* rsp_sub = ir_emit_addi(BLOCK, rsp, is_word ? -2 : -8);
     IRInstruction* reg = ir_emit_get_reg(BLOCK, &inst->operand_reg);
+
     if (is_word == X86_SIZE_WORD) {
         ir_emit_write_word(BLOCK, rsp_sub, reg);
     } else {
         ir_emit_write_qword(BLOCK, rsp_sub, reg);
     }
+
     ir_emit_set_reg(BLOCK, &rsp_reg, rsp_sub);
 }
 
@@ -359,13 +360,14 @@ IR_HANDLE(pop_r64) { // pop r16/64 - 0x58-0x5f
     x86_operand_t rsp_reg = get_full_reg(X86_REF_RSP);
     IRInstruction* rsp = ir_emit_get_reg(BLOCK, &rsp_reg);
     IRInstruction* reg;
+
     if (is_word) {
         reg = ir_emit_read_word(BLOCK, rsp);
     } else {
         reg = ir_emit_read_qword(BLOCK, rsp);
     }
-    IRInstruction* size = ir_emit_immediate(BLOCK, is_word ? 2 : 8);
-    IRInstruction* rsp_add = ir_emit_add(BLOCK, rsp, size);
+
+    IRInstruction* rsp_add = ir_emit_addi(BLOCK, rsp, is_word ? 2 : 8);
     ir_emit_set_reg(BLOCK, &inst->operand_reg, reg);
     ir_emit_set_reg(BLOCK, &rsp_reg, rsp_add);
 }
@@ -380,7 +382,7 @@ IR_HANDLE(push_imm8) { // push imm8 - 0x6a
     IRInstruction* imm = ir_emit_immediate_sext(BLOCK, &inst->operand_imm);
     x86_operand_t rsp_reg = get_full_reg(X86_REF_RSP);
     IRInstruction* rsp = ir_emit_get_reg(BLOCK, &rsp_reg);
-    IRInstruction* rsp_sub = ir_emit_sub(BLOCK, rsp, ir_emit_immediate(BLOCK, 8));
+    IRInstruction* rsp_sub = ir_emit_addi(BLOCK, rsp, -8);
     ir_emit_write_byte(BLOCK, rsp_sub, imm);
     ir_emit_set_reg(BLOCK, &rsp_reg, rsp_sub);
 }
@@ -397,6 +399,9 @@ IR_HANDLE(jcc_rel) { // jcc rel8 - 0x70-0x7f
     IRBlock* block_false = state->function->CreateBlockAt(jump_address_false);
     BLOCK->TerminateJumpConditional(condition, block_true, block_false);
     state->exit = true;
+
+    frontend_compile_block(state->function, block_false);
+    frontend_compile_block(state->function, block_true);
 }
 
 IR_HANDLE(group1_rm8_imm8) { // add/or/adc/sbb/and/sub/xor/cmp rm8, imm8 - 0x80
@@ -517,7 +522,7 @@ IR_HANDLE(stosd) { // stosd - 0xab
     ir_emit_write_memory(BLOCK, rdi, rax, size_e);
 
     // Assume DF is 0 for now
-    IRInstruction* rdi_add = ir_emit_add(BLOCK, rdi, ir_emit_immediate(BLOCK, get_bit_size(size_e) / 8));
+    IRInstruction* rdi_add = ir_emit_addi(BLOCK, rdi, get_bit_size(size_e) / 8);
     ir_emit_set_reg(BLOCK, &rdi_reg, rdi_add);
 }
 

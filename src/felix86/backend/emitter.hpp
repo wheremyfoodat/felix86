@@ -40,6 +40,7 @@ private:
     static void EmitWriteDWord(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitWriteQWord(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitWriteXmmWord(Backend&, biscuit::GPR, biscuit::Vec);
+    static void EmitAddi(Backend&, biscuit::GPR, biscuit::GPR, u64);
     static void EmitAdd(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitSub(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitAnd(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);

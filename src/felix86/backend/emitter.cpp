@@ -35,6 +35,10 @@ void SoftwareCtz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u32 size) {
     AS.MV(Rd, counter);
 }
 
+[[nodiscard]] constexpr bool IsValidSigned12BitImm(ptrdiff_t value) {
+    return value >= -2048 && value <= 2047;
+}
+
 } // namespace
 
 void Emitter::EmitJump(Backend& backend, void* target) {
@@ -353,6 +357,16 @@ void Emitter::EmitWriteQWord(Backend& backend, biscuit::GPR address, biscuit::GP
 
 void Emitter::EmitWriteXmmWord(Backend&, biscuit::GPR, biscuit::Vec) {
     UNREACHABLE();
+}
+
+void Emitter::EmitAddi(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u64 immediate) {
+    if (IsValidSigned12BitImm((i64)immediate)) {
+        AS.ADDI(Rd, Rs, (i64)immediate);
+    } else {
+        biscuit::GPR scratch = backend.AcquireScratchGPR();
+        AS.LI(scratch, immediate);
+        AS.ADD(Rd, Rs, scratch);
+    }
 }
 
 void Emitter::EmitAdd(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {

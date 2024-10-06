@@ -54,11 +54,11 @@ void ir_copy_propagate_node(const IRDominatorTreeNode* node, std::unordered_map<
             }
             case ExpressionType::Phi: {
                 Phi& phi = it->AsPhi();
-                for (auto& value : phi.values) {
-                    auto found = map.find(value);
+                for (size_t i = 0; i < phi.blocks.size(); i++) {
+                    auto found = map.find(phi.values[i]);
                     if (found != map.end()) {
-                        value = found->second;
-                        value->AddUse();
+                        phi.values[i] = found->second;
+                        phi.values[i]->AddUse();
                     }
                 }
                 break;
@@ -76,10 +76,71 @@ void ir_copy_propagate_node(const IRDominatorTreeNode* node, std::unordered_map<
     }
 }
 
+void ir_replace_operand(IRInstruction*& operand) {
+    if (operand->GetOpcode() != IROpcode::Mov) {
+        return;
+    }
+
+    bool is_mov = true;
+    IRInstruction* value_final = operand->GetOperand(0);
+    do {
+        is_mov = false;
+        if (value_final->GetOpcode() == IROpcode::Mov) {
+            value_final = value_final->GetOperand(0);
+            is_mov = true;
+        }
+    } while (is_mov);
+    operand->RemoveUse();
+    operand = value_final;
+    operand->AddUse();
+}
+
+void ir_copy_propagate_node_v2(const IRDominatorTreeNode* node) {
+    IRBlock* block = node->block;
+
+    for (IRInstruction& inst : block->GetInstructions()) {
+        if (inst.GetOpcode() != IROpcode::Mov) {
+            switch (inst.GetExpressionType()) {
+            case ExpressionType::Operands: {
+                Operands& operands = inst.AsOperands();
+                for (IRInstruction*& operand : operands.operands) {
+                    ir_replace_operand(operand);
+                }
+                break;
+            }
+            case ExpressionType::Immediate:
+            case ExpressionType::GetGuest:
+            case ExpressionType::Comment: {
+                break;
+            }
+            case ExpressionType::SetGuest: {
+                SetGuest& set_guest = inst.AsSetGuest();
+                ir_replace_operand(set_guest.source);
+                break;
+            }
+            case ExpressionType::Phi: {
+                Phi& phi = inst.AsPhi();
+                for (size_t i = 0; i < phi.blocks.size(); i++) {
+                    ir_replace_operand(phi.values[i]);
+                }
+                break;
+            }
+            default: {
+                UNREACHABLE();
+            }
+            }
+        }
+    }
+
+    for (const auto& child : node->children) {
+        ir_copy_propagate_node_v2(child);
+    }
+}
+
 void ir_copy_propagation_pass(IRFunction* function) {
     const IRDominatorTree& dominator_tree = function->GetDominatorTree();
 
     const IRDominatorTreeNode& node = dominator_tree.nodes[0];
     std::unordered_map<IRInstruction*, IRInstruction*> copy_map;
-    ir_copy_propagate_node(&node, copy_map);
+    ir_copy_propagate_node_v2(&node);
 }

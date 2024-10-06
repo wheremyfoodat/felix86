@@ -17,6 +17,28 @@ std::string IRBlock::Print(const std::function<std::string(const IRInstruction*)
         ret += "\n";
     }
 
+    switch (GetTermination()) {
+    case Termination::Jump: {
+        ret += fmt::format("Termination -> Jump to Block {}\n", GetSuccessor(false)->GetIndex());
+        break;
+    }
+    case Termination::JumpConditional: {
+        ret += fmt::format("Termination -> JumpConditional ({}) to Block {} or Block {}\n", GetCondition()->GetNameString(),
+                           GetSuccessor(false)->GetIndex(), GetSuccessor(true)->GetIndex());
+        break;
+    }
+    case Termination::Exit: {
+        ret += "Termination -> Exit\n";
+        break;
+    }
+    case Termination::Null: {
+        ret += "Termination -> Null\n";
+        break;
+    }
+    }
+
+    ret += "\n";
+
     return ret;
 }
 
