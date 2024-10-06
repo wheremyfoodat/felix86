@@ -85,31 +85,12 @@ std::string IRFunction::Print(const std::function<std::string(const IRInstructio
 
     std::string ret;
 
-    UnvisitAll();
-
-    std::vector<const IRBlock*> blocks;
-    blocks.push_back(GetEntry());
-
-    while (!blocks.empty()) {
-        const IRBlock* work = blocks.back();
-        blocks.pop_back();
-        work->SetVisited(true);
-
-        ret += work->Print(callback);
-
-        const IRBlock* succ1 = work->GetSuccessor(false);
-        const IRBlock* succ2 = work->GetSuccessor(true);
-
-        if (succ1 && !succ1->IsVisited()) {
-            blocks.push_back(succ1);
-        }
-
-        if (succ2 && !succ2->IsVisited()) {
-            blocks.push_back(succ2);
-        }
+    auto& blocks = GetBlocksPostorder();
+    auto it = blocks.rbegin();
+    while (it != blocks.rend()) {
+        ret += (*it)->Print(callback);
+        ++it;
     }
-
-    UnvisitAll();
 
     return ret;
 }

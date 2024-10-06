@@ -6,7 +6,13 @@
 std::string IRBlock::Print(const std::function<std::string(const IRInstruction*)>& callback) const {
     std::string ret;
 
-    ret += fmt::format("Block {}", GetIndex());
+    if (GetIndex() == 0) {
+        ret += "Entry Block";
+    } else if (GetIndex() == 1) {
+        ret += "Exit Block";
+    } else {
+        ret += fmt::format("Block {}", GetIndex() - 2);
+    }
     if (GetStartAddress() != IR_NO_ADDRESS) {
         ret += fmt::format(" @ 0x{:016x}", GetStartAddress());
     }
@@ -19,12 +25,12 @@ std::string IRBlock::Print(const std::function<std::string(const IRInstruction*)
 
     switch (GetTermination()) {
     case Termination::Jump: {
-        ret += fmt::format("Termination -> Jump to Block {}\n", GetSuccessor(false)->GetIndex());
+        ret += fmt::format("Termination -> Jump to Block {}\n", GetSuccessor(false)->GetIndex() - 2);
         break;
     }
     case Termination::JumpConditional: {
         ret += fmt::format("Termination -> JumpConditional ({}) to Block {} or Block {}\n", GetCondition()->GetNameString(),
-                           GetSuccessor(false)->GetIndex(), GetSuccessor(true)->GetIndex());
+                           GetSuccessor(false)->GetIndex() - 2, GetSuccessor(true)->GetIndex() - 2);
         break;
     }
     case Termination::Exit: {
