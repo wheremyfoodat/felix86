@@ -114,13 +114,23 @@ void Emitter::Emit(Backend& backend, const IRInstruction& inst) {
         break;
     }
 
+    case IROpcode::Ctzh: {
+        EmitCtzh(backend, _RegWO_(&inst), _RegRO_(inst.GetOperand(0)));
+        break;
+    }
+
+    case IROpcode::Ctzw: {
+        EmitCtzw(backend, _RegWO_(&inst), _RegRO_(inst.GetOperand(0)));
+        break;
+    }
+
     case IROpcode::Ctz: {
         EmitCtz(backend, _RegWO_(&inst), _RegRO_(inst.GetOperand(0)));
         break;
     }
 
-    case IROpcode::Popcount: {
-        EmitPopcount(backend, _RegWO_(&inst), _RegRO_(inst.GetOperand(0)));
+    case IROpcode::Parity: {
+        EmitParity(backend, _RegWO_(&inst), _RegRO_(inst.GetOperand(0)));
         break;
     }
 

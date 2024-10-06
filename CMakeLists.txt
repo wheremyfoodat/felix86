@@ -38,7 +38,9 @@ set(FELIX86_IR_SOURCES
     src/felix86/ir/passes/dead_code_elimination_pass.cpp
     src/felix86/ir/passes/extraneous_writeback_pass.cpp
     src/felix86/ir/passes/graph_coloring_pass.cpp
+    src/felix86/ir/passes/local_cse_pass.cpp
     src/felix86/ir/passes/naming_pass.cpp
+    src/felix86/ir/passes/replace_setguest_pass.cpp
     src/felix86/ir/passes/spill_everything_pass.cpp
     src/felix86/ir/passes/ssa_pass.cpp
 )

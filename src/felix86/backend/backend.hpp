@@ -59,6 +59,10 @@ struct Backend {
         return as;
     }
 
+    bool HasB() const {
+        return true; // TODO: proper way to check for bitmanip extension?
+    }
+
 private:
     static u8* allocateCodeCache();
     static void deallocateCodeCache(u8* memory);

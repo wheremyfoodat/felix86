@@ -9,3 +9,5 @@ void ir_copy_propagation_pass(IRFunction* function);
 void ir_graph_coloring_pass(IRFunction* function);
 void ir_dead_code_elimination_pass(IRFunction* function);
 void ir_spill_everything_pass(IRFunction* function);
+void ir_replace_setguest_pass(IRFunction* function);
+void ir_local_cse_pass(IRFunction* function);

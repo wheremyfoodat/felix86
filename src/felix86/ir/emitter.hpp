@@ -18,12 +18,14 @@ IRInstruction* ir_emit_shift_right_arithmetic(IRBlock* block, IRInstruction* sou
 IRInstruction* ir_emit_rotate(IRBlock* block, IRInstruction* source1, IRInstruction* source2, x86_size_e size, bool right);
 IRInstruction* ir_emit_select(IRBlock* block, IRInstruction* condition, IRInstruction* true_value, IRInstruction* false_value);
 IRInstruction* ir_emit_clz(IRBlock* block, IRInstruction* source);
+IRInstruction* ir_emit_ctzh(IRBlock* block, IRInstruction* source);
+IRInstruction* ir_emit_ctzw(IRBlock* block, IRInstruction* source);
 IRInstruction* ir_emit_ctz(IRBlock* block, IRInstruction* source);
 IRInstruction* ir_emit_and(IRBlock* block, IRInstruction* source1, IRInstruction* source2);
 IRInstruction* ir_emit_or(IRBlock* block, IRInstruction* source1, IRInstruction* source2);
 IRInstruction* ir_emit_xor(IRBlock* block, IRInstruction* source1, IRInstruction* source2);
 IRInstruction* ir_emit_not(IRBlock* block, IRInstruction* source);
-IRInstruction* ir_emit_popcount(IRBlock* block, IRInstruction* source);
+IRInstruction* ir_emit_get_parity(IRBlock* block, IRInstruction* source);
 IRInstruction* ir_emit_equal(IRBlock* block, IRInstruction* source1, IRInstruction* source2);
 IRInstruction* ir_emit_not_equal(IRBlock* block, IRInstruction* source1, IRInstruction* source2);
 IRInstruction* ir_emit_greater_than_signed(IRBlock* block, IRInstruction* source1, IRInstruction* source2);

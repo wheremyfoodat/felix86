@@ -10,9 +10,12 @@ void Emulator::Run() {
     IRFunction* function = function_cache.CreateOrGetFunctionAt(GetRip());
     frontend_compile_function(function);
     ir_ssa_pass(function);
+    ir_replace_setguest_pass(function);
     ir_copy_propagation_pass(function);
     ir_extraneous_writeback_pass(function);
     ir_dead_code_elimination_pass(function);
+    ir_local_cse_pass(function);
+    ir_copy_propagation_pass(function);
     ir_naming_pass(function);
     // ir_graph_coloring_pass(function);
     ir_spill_everything_pass(function);
@@ -24,8 +27,8 @@ void Emulator::Run() {
         ERROR("Function did not validate");
     }
 
-    void* emit = backend.EmitFunction(function);
-    std::string disassembly = Disassembler::Disassemble(emit, 0x100);
-    fmt::print("{}\n", disassembly);
+    // void* emit = backend.EmitFunction(function);
+    // std::string disassembly = Disassembler::Disassemble(emit, 0x100);
+    // fmt::print("{}\n", disassembly);
     // if recompiler testing, exit...
 }

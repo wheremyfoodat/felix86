@@ -13,6 +13,30 @@
         AS.operation(Rd, Rs1, Rs2);                                                                                                                  \
     }
 
+namespace {
+
+void SoftwareCtz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u32 size) {
+    WARN("Untested CTZ implementation");
+    biscuit::GPR mask = backend.AcquireScratchGPR();
+    biscuit::GPR counter = backend.AcquireScratchGPR();
+    AS.LI(mask, 1);
+
+    Label loop, end;
+    AS.Bind(&loop);
+    AS.AND(Rd, Rs, mask);
+    AS.BNEZ(Rd, &end);
+    AS.C_ADDI(counter, 1);
+    AS.C_SLLI(mask, 1);
+    AS.LI(Rd, size);
+    AS.SLTU(Rd, counter, Rd);
+    AS.BNEZ(Rd, &loop);
+
+    AS.Bind(&end);
+    AS.MV(Rd, counter);
+}
+
+} // namespace
+
 void Emitter::EmitJump(Backend& backend, void* target) {
     auto my_abs = [](u64 x) -> u64 { return x < 0 ? -x : x; };
 
@@ -221,8 +245,24 @@ void Emitter::EmitClz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
     AS.CLZ(Rd, Rs);
 }
 
+void Emitter::EmitCtzh(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    SoftwareCtz(backend, Rd, Rs, 16);
+}
+
+void Emitter::EmitCtzw(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    if (backend.HasB()) {
+        AS.CTZW(Rd, Rs);
+    } else {
+        SoftwareCtz(backend, Rd, Rs, 32);
+    }
+}
+
 void Emitter::EmitCtz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    AS.CTZ(Rd, Rs);
+    if (backend.HasB()) {
+        AS.CTZ(Rd, Rs);
+    } else {
+        SoftwareCtz(backend, Rd, Rs, 64);
+    }
 }
 
 void Emitter::EmitNot(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
@@ -233,8 +273,38 @@ void Emitter::EmitNot(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
     }
 }
 
-void Emitter::EmitPopcount(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    UNREACHABLE();
+void Emitter::EmitParity(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    if (backend.HasB()) {
+        AS.ANDI(Rd, Rs, 0xFF);
+        AS.CPOPW(Rd, Rd);
+    } else {
+        // clang-format off
+        static bool bitcount[] = {
+            1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
+            0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,
+            0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,
+            1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
+            0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,
+            1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
+            1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
+            0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,
+            0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,
+            1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
+            1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
+            0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,
+            1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
+            0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,
+            0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,
+            1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
+        };
+        // clang-format on
+
+        biscuit::GPR scratch = backend.AcquireScratchGPR();
+        AS.LI(scratch, (u64)&bitcount);
+        AS.ANDI(Rd, Rs, 0xFF);
+        AS.C_ADD(Rd, scratch);
+        AS.LB(Rd, 0, Rd);
+    }
 }
 
 void Emitter::EmitReadByte(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {

@@ -18,7 +18,7 @@
     X(Comment)                                                                                                                                       \
     X(Mov)                                                                                                                                           \
     X(Immediate)                                                                                                                                     \
-    X(Popcount)                                                                                                                                      \
+    X(Parity)                                                                                                                                        \
     X(Sext8)                                                                                                                                         \
     X(Sext16)                                                                                                                                        \
     X(Sext32)                                                                                                                                        \
@@ -47,6 +47,8 @@
     X(Mulh)                                                                                                                                          \
     X(Mulhu)                                                                                                                                         \
     X(Clz)                                                                                                                                           \
+    X(Ctzh)                                                                                                                                          \
+    X(Ctzw)                                                                                                                                          \
     X(Ctz)                                                                                                                                           \
     X(ShiftLeft)                                                                                                                                     \
     X(ShiftRight)                                                                                                                                    \

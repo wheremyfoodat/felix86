@@ -14,7 +14,11 @@ bool IRInstruction::IsSameExpression(const IRInstruction& other) const {
         const Operands& operands = AsOperands();
         const Operands& other_operands = other.AsOperands();
 
-        for (u8 i = 0; i < 6; i++) {
+        if (operands.operands.size() != other_operands.operands.size()) {
+            return false;
+        }
+
+        for (u8 i = 0; i < operands.operands.size(); i++) {
             if (operands.operands[i] != other_operands.operands[i]) {
                 return false;
             }
@@ -93,10 +97,12 @@ IRType IRInstruction::getTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
     }
     case IROpcode::Select:
     case IROpcode::Immediate:
-    case IROpcode::Popcount:
+    case IROpcode::Parity:
     case IROpcode::Add:
     case IROpcode::Sub:
     case IROpcode::Clz:
+    case IROpcode::Ctzh:
+    case IROpcode::Ctzw:
     case IROpcode::Ctz:
     case IROpcode::ShiftLeft:
     case IROpcode::ShiftRight:
@@ -268,7 +274,7 @@ void IRInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         VALIDATE_OPS_INT(Clz, 1);
         VALIDATE_OPS_INT(Ctz, 1);
         VALIDATE_OPS_INT(Not, 1);
-        VALIDATE_OPS_INT(Popcount, 1);
+        VALIDATE_OPS_INT(Parity, 1);
         VALIDATE_OPS_INT(ReadByte, 1);
         VALIDATE_OPS_INT(ReadWord, 1);
         VALIDATE_OPS_INT(ReadDWord, 1);
@@ -586,6 +592,14 @@ std::string IRInstruction::Print(const std::function<std::string(const IRInstruc
         ret += FOP1(clz, src);
         break;
     }
+    case IROpcode::Ctzh: {
+        ret += FOP1(ctzh, src);
+        break;
+    }
+    case IROpcode::Ctzw: {
+        ret += FOP1(ctzw, src);
+        break;
+    }
     case IROpcode::Ctz: {
         ret += FOP1(ctz, src);
         break;
@@ -594,8 +608,8 @@ std::string IRInstruction::Print(const std::function<std::string(const IRInstruc
         ret += FOP1(not, src);
         break;
     }
-    case IROpcode::Popcount: {
-        ret += FOP1(popcount, src);
+    case IROpcode::Parity: {
+        ret += FOP1(parity, src);
         break;
     }
     case IROpcode::ReadByte: {

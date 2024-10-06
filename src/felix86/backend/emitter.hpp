@@ -23,9 +23,11 @@ private:
     static void EmitSext16(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitSext32(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitClz(Backend&, biscuit::GPR, biscuit::GPR);
+    static void EmitCtzh(Backend&, biscuit::GPR, biscuit::GPR);
+    static void EmitCtzw(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitCtz(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitNot(Backend&, biscuit::GPR, biscuit::GPR);
-    static void EmitPopcount(Backend&, biscuit::GPR, biscuit::GPR);
+    static void EmitParity(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitReadByte(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitReadWord(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitReadDWord(Backend&, biscuit::GPR, biscuit::GPR);

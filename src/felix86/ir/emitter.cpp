@@ -161,6 +161,14 @@ IRInstruction* ir_emit_clz(IRBlock* block, IRInstruction* source) {
     return ir_emit_one_operand(block, IROpcode::Clz, source);
 }
 
+IRInstruction* ir_emit_ctzh(IRBlock* block, IRInstruction* source) {
+    return ir_emit_one_operand(block, IROpcode::Ctzh, source);
+}
+
+IRInstruction* ir_emit_ctzw(IRBlock* block, IRInstruction* source) {
+    return ir_emit_one_operand(block, IROpcode::Ctzw, source);
+}
+
 IRInstruction* ir_emit_ctz(IRBlock* block, IRInstruction* source) {
     return ir_emit_one_operand(block, IROpcode::Ctz, source);
 }
@@ -250,11 +258,15 @@ IRInstruction* ir_emit_mulhu(IRBlock* block, IRInstruction* source1, IRInstructi
 }
 
 IRInstruction* ir_emit_div128(IRBlock* block, IRInstruction* divisor) {
-    return ir_emit_one_operand(block, IROpcode::Div128, divisor);
+    IRInstruction* instruction = ir_emit_one_operand(block, IROpcode::Div128, divisor);
+    instruction->Lock();
+    return instruction;
 }
 
 IRInstruction* ir_emit_divu128(IRBlock* block, IRInstruction* divisor) {
-    return ir_emit_one_operand(block, IROpcode::Divu128, divisor);
+    IRInstruction* instruction = ir_emit_one_operand(block, IROpcode::Divu128, divisor);
+    instruction->Lock();
+    return instruction;
 }
 
 IRInstruction* ir_emit_lea(IRBlock* block, x86_operand_t* rm_operand) {
@@ -287,8 +299,8 @@ IRInstruction* ir_emit_lea(IRBlock* block, x86_operand_t* rm_operand) {
     return final_address;
 }
 
-IRInstruction* ir_emit_popcount(IRBlock* block, IRInstruction* source) {
-    return ir_emit_one_operand(block, IROpcode::Popcount, source);
+IRInstruction* ir_emit_get_parity(IRBlock* block, IRInstruction* source) {
+    return ir_emit_one_operand(block, IROpcode::Parity, source);
 }
 
 IRInstruction* ir_emit_sext8(IRBlock* block, IRInstruction* source) {
@@ -549,6 +561,7 @@ void ir_emit_cpuid(IRBlock* block) {
     ir_store_partial_state(block, in_regs);
 
     IRInstruction instruction(IROpcode::Cpuid, {});
+    instruction.Lock();
     block->InsertAtEnd(std::move(instruction));
 
     ir_load_partial_state(block, out_regs);
@@ -559,6 +572,7 @@ void ir_emit_rdtsc(IRBlock* block) {
     constexpr static std::array out_regs = {X86_REF_RAX, X86_REF_RDX};
 
     IRInstruction instruction(IROpcode::Rdtsc, {});
+    instruction.Lock();
     block->InsertAtEnd(std::move(instruction));
 
     ir_load_partial_state(block, out_regs);
@@ -825,17 +839,6 @@ void ir_emit_set_gpr64(IRBlock* block, x86_ref_e reg, IRInstruction* source) {
 
 void ir_emit_set_vector(IRBlock* block, x86_ref_e reg, IRInstruction* source) {
     ir_emit_set_guest(block, reg, source);
-}
-
-IRInstruction* ir_emit_get_parity(IRBlock* block, IRInstruction* source) {
-    IRInstruction* mask = ir_emit_immediate(block, 0xFF);
-    IRInstruction* masked = ir_emit_and(block, source, mask);
-    IRInstruction* popcount = ir_emit_popcount(block, masked);
-    IRInstruction* one = ir_emit_immediate(block, 1);
-    IRInstruction* result = ir_emit_and(block, popcount, one);
-    IRInstruction* instruction = ir_emit_xor(block, result, one);
-
-    return instruction;
 }
 
 IRInstruction* ir_emit_get_zero(IRBlock* block, IRInstruction* source, x86_size_e size_e) {

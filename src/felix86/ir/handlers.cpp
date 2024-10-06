@@ -890,8 +890,8 @@ IR_HANDLE(bsr) { // bsr - 0x0f 0xbd
     IRInstruction* rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
     IRInstruction* zero = ir_emit_get_zero(BLOCK, rm, size_e);
     IRInstruction* clz = ir_emit_clz(BLOCK, rm);
-    // CLZ always deals on 64-bit values, so we need to subtract the result from
-    // 63
+    // CLZ always deals on 64-bit values, so we need to subtract the result from 63
+    // TODO: make clzw and clzh instead
     IRInstruction* sub = ir_emit_sub(BLOCK, ir_emit_immediate(BLOCK, 63), clz);
     ir_emit_set_reg(BLOCK, &inst->operand_reg, sub);
     ir_emit_set_flag(BLOCK, X86_REF_ZF, zero);
@@ -900,10 +900,28 @@ IR_HANDLE(bsr) { // bsr - 0x0f 0xbd
 IR_HANDLE(bsf) { // bsf - 0x0f 0xbc
     x86_size_e size_e = inst->operand_reg.size;
     IRInstruction* rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
-    IRInstruction* zero = ir_emit_get_zero(BLOCK, rm, size_e);
-    IRInstruction* ctz = ir_emit_ctz(BLOCK, rm);
+    IRInstruction* z = ir_emit_get_zero(BLOCK, rm, size_e);
+    IRInstruction* ctz;
+    switch (size_e) {
+    case X86_SIZE_QWORD: {
+        ctz = ir_emit_ctz(BLOCK, rm);
+        break;
+    }
+    case X86_SIZE_DWORD: {
+        ctz = ir_emit_ctzw(BLOCK, rm);
+        break;
+    }
+    case X86_SIZE_WORD: {
+        ctz = ir_emit_ctzh(BLOCK, rm);
+        break;
+    }
+    default: {
+        ERROR("Unknown size for bsf: %d", size_e);
+        break;
+    }
+    }
     ir_emit_set_reg(BLOCK, &inst->operand_reg, ctz);
-    ir_emit_set_flag(BLOCK, X86_REF_ZF, zero);
+    ir_emit_set_flag(BLOCK, X86_REF_ZF, z);
 }
 
 // ███████ ███████  ██████  ██████  ███    ██ ██████   █████  ██████  ██    ██      ██████   ██████

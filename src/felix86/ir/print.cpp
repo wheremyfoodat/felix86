@@ -75,8 +75,8 @@ void ir_print_instruction(const IRInstruction& instruction, const IRBlock* block
         print_two_op(instruction, "^");
         break;
     }
-    case IROpcode::Popcount: {
-        print_one_op(instruction, "popcount");
+    case IROpcode::Parity: {
+        print_one_op(instruction, "parity");
         break;
     }
     case IROpcode::Equal: {
