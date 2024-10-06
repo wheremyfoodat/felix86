@@ -45,11 +45,19 @@ struct Backend {
         return regs.AcquireScratchGPR();
     }
 
+    biscuit::GPR AcquireScratchGPRFromSpill(u64 spill_location) {
+        return regs.AcquireScratchGPRFromSpill(as, spill_location);
+    }
+
     void ReleaseScratchRegs() {
         regs.ReleaseScratchRegs();
     }
 
     void* EmitFunction(IRFunction* function);
+
+    Assembler& GetAssembler() {
+        return as;
+    }
 
 private:
     static u8* allocateCodeCache();

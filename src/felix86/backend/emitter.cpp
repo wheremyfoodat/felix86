@@ -1,192 +1,49 @@
+#include "felix86/backend/allocated_register.hpp"
 #include "felix86/backend/backend.hpp"
 #include "felix86/backend/emitter.hpp"
 
-struct AllocatedGPR {
-    AllocatedGPR(Backend& backend, Assembler& as, const IRInstruction* inst, bool load) : as(as) {
-        this->load = load;
-        if (inst->IsSpilled()) {
-            spilled = true;
-            spill_location = inst->GetSpillLocation() * (inst->IsVec() ? 16 : 8);
-            if (inst->IsGPR()) {
-                biscuit::GPR gpr = backend.AcquireScratchGPR();
-                if (load) {
-                    if (spill_location > 2047) {
-                        ERROR("Spill location too large");
-                    }
-                    as.LD(gpr, spill_location, Registers::SpillPointer());
-                }
-                reg = gpr;
-            } else {
-                ERROR("Implme");
-            }
-        } else {
-            reg = inst->GetGPR();
-        }
+#define AS (backend.GetAssembler())
+
+#define MAYBE_C(operation)                                                                                                                           \
+    if (Rd == Rs1) {                                                                                                                                 \
+        AS.C_##operation(Rd, Rs2);                                                                                                                   \
+    } else if (Rd == Rs2) {                                                                                                                          \
+        AS.C_##operation(Rd, Rs1);                                                                                                                   \
+    } else {                                                                                                                                         \
+        AS.operation(Rd, Rs1, Rs2);                                                                                                                  \
     }
 
-    ~AllocatedGPR() {
-        if (spilled && !load) {
-            switch (reg.index()) {
-            case 0: {
-                biscuit::GPR gpr = std::get<biscuit::GPR>(reg);
-                // Store to spilled location
-                as.SD(gpr, spill_location, Registers::SpillPointer());
-                break;
-            }
-            case 1: {
-                biscuit::FPR fpr = std::get<biscuit::FPR>(reg);
-                as.FSD(fpr, spill_location, Registers::SpillPointer());
-                break;
-            }
-            case 2: {
-                ERROR("Implme, needs vector spill location instead because they are 128-bit");
-                break;
-            }
-            default: {
-                UNREACHABLE();
-            }
-            }
-        }
-    }
+void Emitter::EmitJump(Backend& backend, void* target) {
+    auto my_abs = [](u64 x) -> u64 { return x < 0 ? -x : x; };
 
-    AllocatedGPR(const AllocatedGPR&) = delete;
-    AllocatedGPR& operator=(const AllocatedGPR&) = delete;
-
-    AllocatedGPR(AllocatedGPR&& other) = delete;
-    AllocatedGPR& operator=(AllocatedGPR&& other) = delete;
-
-    operator biscuit::GPR() const {
-        return std::get<biscuit::GPR>(reg);
-    }
-
-    operator biscuit::FPR() const {
-        return std::get<biscuit::FPR>(reg);
-    }
-
-    operator biscuit::Vec() const {
-        return std::get<biscuit::Vec>(reg);
-    }
-
-    bool spilled = false;
-    bool load = false;
-    u64 spill_location = 0;
-    std::variant<biscuit::GPR, biscuit::FPR, biscuit::Vec> reg;
-    Assembler& as;
-};
-
-#define _RegRO_(instruction) AllocatedGPR(backend, as, instruction, true)
-#define _RegWO_(instruction) AllocatedGPR(backend, as, instruction, false)
-
-// Dispatch to correct function
-void Emitter::Emit(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-#define X(stuff)                                                                                                                                     \
-    case IROpcode::stuff: {                                                                                                                          \
-        Emit##stuff(backend, as, inst);                                                                                                              \
-        break;                                                                                                                                       \
-    }
-
-    switch (inst.GetOpcode()) {
-        IR_OPCODES
-    default: {
-        UNREACHABLE();
-    }
-    }
-
-#undef X
-
-    backend.ReleaseScratchRegs();
-}
-
-template <typename T>
-T my_abs(T val) {
-    return val < 0 ? -val : val;
-}
-
-void Emitter::EmitJump(Backend& backend, biscuit::Assembler& as, void* target) {
     // Check if target is in one MB range
-    void* cursor = as.GetCursorPointer();
+    void* cursor = AS.GetCursorPointer();
     if (my_abs((u64)cursor - (u64)target) > 0x100000) {
         biscuit::GPR scratch = backend.AcquireScratchGPR();
-        as.LI(scratch, (u64)target);
-        as.JR(scratch);
+        AS.LI(scratch, (u64)target);
+        AS.JR(scratch);
         backend.ReleaseScratchRegs();
     } else {
-        as.J((u64)target - (u64)cursor);
+        AS.J((u64)target - (u64)cursor);
     }
 }
 
-void Emitter::EmitJumpConditional(Backend& backend, biscuit::Assembler& as, const IRInstruction& condition, void* target_true, void* target_false) {
+void Emitter::EmitJumpConditional(Backend& backend, const IRInstruction& condition, void* target_true, void* target_false) {
     biscuit::GPR address_true = backend.AcquireScratchGPR();
     biscuit::GPR address_false = backend.AcquireScratchGPR();
     biscuit::GPR condition_reg = _RegRO_(&condition);
     Label false_label;
 
     // TODO: emit relative jumps if possible
-    as.BEQZ(condition_reg, &false_label);
-    as.LI(address_true, (u64)target_true);
-    as.JR(address_true);
-    as.Bind(&false_label);
-    as.LI(address_false, (u64)target_false);
-    as.JR(address_false);
+    AS.BEQZ(condition_reg, &false_label);
+    AS.LI(address_true, (u64)target_true);
+    AS.JR(address_true);
+    AS.Bind(&false_label);
+    AS.LI(address_false, (u64)target_false);
+    AS.JR(address_false);
 }
 
-void Emitter::EmitNull(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitPhi(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitComment(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {}
-
-void Emitter::EmitMov(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitImmediate(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    const Immediate& imm = inst.AsImmediate();
-    auto Rd = _RegWO_(&inst);
-    as.LI(Rd, imm.immediate);
-}
-
-void Emitter::EmitPopcount(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitSext8(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitSext16(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitSext32(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitSyscall(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitCpuid(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitRdtsc(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitGetGuest(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitSetGuest(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitLoadGuestFromMemory(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitLoadGuestFromMemory(Backend& backend, const IRInstruction& inst) {
     biscuit::GPR address = backend.GetRegisters().ThreadStatePointer();
 
     auto Rd = _RegWO_(&inst);
@@ -196,27 +53,27 @@ void Emitter::EmitLoadGuestFromMemory(Backend& backend, biscuit::Assembler& as, 
     switch (ref) {
     case X86_REF_RAX ... X86_REF_R15: {
         u64 offset = offsetof(ThreadState, gprs) + (ref - X86_REF_RAX) * sizeof(u64);
-        as.LD(Rd, offset, address);
+        AS.LD(Rd, offset, address);
         break;
     }
     case X86_REF_CF ... X86_REF_OF: {
         u64 offset = offsetof(ThreadState, cf) + (ref - X86_REF_CF) * sizeof(bool);
-        as.LB(Rd, offset, address);
+        AS.LB(Rd, offset, address);
         break;
     }
     case X86_REF_RIP: {
         u64 offset = offsetof(ThreadState, rip);
-        as.LD(Rd, offset, address);
+        AS.LD(Rd, offset, address);
         break;
     }
     case X86_REF_FS: {
         u64 offset = offsetof(ThreadState, fsbase);
-        as.LD(Rd, offset, address);
+        AS.LD(Rd, offset, address);
         break;
     }
     case X86_REF_GS: {
         u64 offset = offsetof(ThreadState, gsbase);
-        as.LD(Rd, offset, address);
+        AS.LD(Rd, offset, address);
         break;
     }
     default: {
@@ -225,7 +82,7 @@ void Emitter::EmitLoadGuestFromMemory(Backend& backend, biscuit::Assembler& as, 
     }
 }
 
-void Emitter::EmitStoreGuestToMemory(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitStoreGuestToMemory(Backend& backend, const IRInstruction& inst) {
     biscuit::GPR address = backend.GetRegisters().ThreadStatePointer();
 
     const SetGuest& set_guest = inst.AsSetGuest();
@@ -235,27 +92,27 @@ void Emitter::EmitStoreGuestToMemory(Backend& backend, biscuit::Assembler& as, c
     switch (ref) {
     case X86_REF_RAX ... X86_REF_R15: {
         u64 offset = offsetof(ThreadState, gprs) + (ref - X86_REF_RAX) * sizeof(u64);
-        as.SD(Rs, offset, address);
+        AS.SD(Rs, offset, address);
         break;
     }
     case X86_REF_CF ... X86_REF_OF: {
         u64 offset = offsetof(ThreadState, cf) + (ref - X86_REF_CF) * sizeof(bool);
-        as.SB(Rs, offset, address);
+        AS.SB(Rs, offset, address);
         break;
     }
     case X86_REF_RIP: {
         u64 offset = offsetof(ThreadState, rip);
-        as.SD(Rs, offset, address);
+        AS.SD(Rs, offset, address);
         break;
     }
     case X86_REF_FS: {
         u64 offset = offsetof(ThreadState, fsbase);
-        as.SD(Rs, offset, address);
+        AS.SD(Rs, offset, address);
         break;
     }
     case X86_REF_GS: {
         u64 offset = offsetof(ThreadState, gsbase);
-        as.SD(Rs, offset, address);
+        AS.SD(Rs, offset, address);
         break;
     }
     default: {
@@ -264,23 +121,23 @@ void Emitter::EmitStoreGuestToMemory(Backend& backend, biscuit::Assembler& as, c
     }
 }
 
-void Emitter::EmitPushHost(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitPushHost(Backend& backend, const IRInstruction& inst) {
     const PushHost& push_host = inst.AsPushHost();
     biscuit::GPR vm_state = backend.GetRegisters().AcquireScratchGPR();
-    as.LI(vm_state, backend.GetVMStatePointer());
+    AS.LI(vm_state, backend.GetVMStatePointer());
     switch (push_host.ref) {
     case RISCV_REF_X0 ... RISCV_REF_X31: {
         u32 index = push_host.ref - RISCV_REF_X0;
         u32 offset = index * sizeof(u64);
         biscuit::GPR to_push = biscuit::GPR(index);
-        as.SD(to_push, offset, vm_state);
+        AS.SD(to_push, offset, vm_state);
         break;
     }
     case RISCV_REF_F0 ... RISCV_REF_F31: {
         u32 index = push_host.ref - RISCV_REF_F0;
         u32 offset = index * sizeof(double) + (32 * sizeof(u64));
         biscuit::FPR to_push = biscuit::FPR(index);
-        as.FSD(to_push, offset, vm_state);
+        AS.FSD(to_push, offset, vm_state);
         break;
     }
     case RISCV_REF_VEC0 ... RISCV_REF_VEC31: {
@@ -293,17 +150,17 @@ void Emitter::EmitPushHost(Backend& backend, biscuit::Assembler& as, const IRIns
     }
 }
 
-void Emitter::EmitPopHost(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitPopHost(Backend& backend, const IRInstruction& inst) {
     const PopHost& pop_host = inst.AsPopHost();
     biscuit::GPR vm_state = backend.GetRegisters().AcquireScratchGPR();
-    as.LI(vm_state, backend.GetVMStatePointer());
+    AS.LI(vm_state, backend.GetVMStatePointer());
     switch (pop_host.ref) {
     case RISCV_REF_X0 ... RISCV_REF_X31: {
         u32 index = pop_host.ref - RISCV_REF_X0;
         u32 offset = index * sizeof(u64);
         biscuit::GPR to_pop = biscuit::GPR(index);
         biscuit::GPR base = vm_state;
-        as.LD(to_pop, offset, base);
+        AS.LD(to_pop, offset, base);
         break;
     }
     case RISCV_REF_F0 ... RISCV_REF_F31: {
@@ -311,7 +168,7 @@ void Emitter::EmitPopHost(Backend& backend, biscuit::Assembler& as, const IRInst
         u32 offset = index * sizeof(double) + (32 * sizeof(u64));
         biscuit::FPR to_pop = biscuit::FPR(index);
         biscuit::GPR base = vm_state;
-        as.FLD(to_pop, offset, base);
+        AS.FLD(to_pop, offset, base);
         break;
     }
     case RISCV_REF_VEC0 ... RISCV_REF_VEC31: {
@@ -324,287 +181,340 @@ void Emitter::EmitPopHost(Backend& backend, biscuit::Assembler& as, const IRInst
     }
 }
 
-void Emitter::EmitAdd(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    auto Rs1 = _RegRO_(inst.GetOperand(0));
-    auto Rs2 = _RegRO_(inst.GetOperand(1));
-    auto Rd = _RegWO_(&inst);
-    as.ADD(Rd, Rs1, Rs2);
+void Emitter::EmitImmediate(Backend& backend, biscuit::GPR Rd, u64 immediate) {
+    AS.LI(Rd, immediate);
 }
 
-void Emitter::EmitSub(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    auto Rs1 = _RegRO_(inst.GetOperand(0));
-    auto Rs2 = _RegRO_(inst.GetOperand(1));
-    auto Rd = _RegWO_(&inst);
-    as.SUB(Rd, Rs1, Rs2);
-}
-
-void Emitter::EmitDivu(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitRdtsc(Backend& backend) {
     UNREACHABLE();
 }
 
-void Emitter::EmitDiv(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitSyscall(Backend& backend) {
     UNREACHABLE();
 }
 
-void Emitter::EmitRemu(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitCpuid(Backend& backend) {
     UNREACHABLE();
 }
 
-void Emitter::EmitRem(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitSext8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    if (Rd == Rs) {
+        AS.C_SEXT_B(Rd);
+    } else {
+        AS.SEXTB(Rd, Rs);
+    }
+}
+
+void Emitter::EmitSext16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    if (Rd == Rs) {
+        AS.C_SEXT_H(Rd);
+    } else {
+        AS.SEXTH(Rd, Rs);
+    }
+}
+
+void Emitter::EmitSext32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
     UNREACHABLE();
 }
 
-void Emitter::EmitDivuw(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitClz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    AS.CLZ(Rd, Rs);
+}
+
+void Emitter::EmitCtz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    AS.CTZ(Rd, Rs);
+}
+
+void Emitter::EmitNot(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    if (Rd == Rs) {
+        AS.C_NOT(Rd);
+    } else {
+        AS.NOT(Rd, Rs);
+    }
+}
+
+void Emitter::EmitPopcount(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
     UNREACHABLE();
 }
 
-void Emitter::EmitDivw(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitReadByte(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    AS.LB(Rd, 0, Rs);
+}
+
+void Emitter::EmitReadWord(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    AS.LH(Rd, 0, Rs);
+}
+
+void Emitter::EmitReadDWord(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    AS.LW(Rd, 0, Rs);
+}
+
+void Emitter::EmitReadQWord(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    AS.LD(Rd, 0, Rs);
+}
+
+void Emitter::EmitReadXmmWord(Backend&, biscuit::Vec, biscuit::GPR) {
     UNREACHABLE();
 }
 
-void Emitter::EmitRemuw(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitDiv128(Backend&, biscuit::GPR Rs) {
     UNREACHABLE();
 }
 
-void Emitter::EmitRemw(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitDivu128(Backend&, biscuit::GPR Rs) {
     UNREACHABLE();
 }
 
-void Emitter::EmitDiv128(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitWriteByte(Backend& backend, biscuit::GPR address, biscuit::GPR Rs) {
+    AS.SB(Rs, 0, address);
+}
+
+void Emitter::EmitWriteWord(Backend& backend, biscuit::GPR address, biscuit::GPR Rs) {
+    AS.SH(Rs, 0, address);
+}
+
+void Emitter::EmitWriteDWord(Backend& backend, biscuit::GPR address, biscuit::GPR Rs) {
+    AS.SW(Rs, 0, address);
+}
+
+void Emitter::EmitWriteQWord(Backend& backend, biscuit::GPR address, biscuit::GPR Rs) {
+    AS.SD(Rs, 0, address);
+}
+
+void Emitter::EmitWriteXmmWord(Backend&, biscuit::GPR, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitDivu128(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitAdd(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    MAYBE_C(ADD);
+}
+
+void Emitter::EmitSub(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    if (Rd == Rs1) {
+        AS.C_SUB(Rd, Rs2);
+    } else {
+        AS.SUB(Rd, Rs1, Rs2);
+    }
+}
+
+void Emitter::EmitAnd(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    MAYBE_C(AND);
+}
+
+void Emitter::EmitOr(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    MAYBE_C(OR);
+}
+
+void Emitter::EmitXor(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    MAYBE_C(XOR);
+}
+
+void Emitter::EmitEqual(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    MAYBE_C(XOR);
+    AS.SEQZ(Rd, Rd);
+}
+
+void Emitter::EmitNotEqual(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    MAYBE_C(XOR);
+    AS.SNEZ(Rd, Rd);
+}
+
+void Emitter::EmitIGreaterThan(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.SLT(Rd, Rs2, Rs1);
+}
+
+void Emitter::EmitILessThan(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.SLT(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitUGreaterThan(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.SLTU(Rd, Rs2, Rs1);
+}
+
+void Emitter::EmitULessThan(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.SLTU(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitShiftLeft(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.SLL(Rd, Rs1, Rs2); // TODO: add more robust shift IR instructions to abuse C_SLLI & co
+}
+
+void Emitter::EmitShiftRight(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.SRL(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitShiftRightArithmetic(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.SRA(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitLeftRotate8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    biscuit::GPR scratch = backend.AcquireScratchGPR();
+    AS.ANDI(scratch, Rs2, 0x7);
+    AS.SLLW(Rd, Rs1, scratch);
+    AS.NEG(scratch, scratch);
+    AS.ANDI(scratch, scratch, 0x7);
+    AS.SRLW(scratch, Rs1, scratch);
+    AS.OR(Rd, Rd, scratch);
+    AS.ANDI(Rd, Rd, 0xFF);
+}
+
+void Emitter::EmitLeftRotate16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    biscuit::GPR scratch = backend.AcquireScratchGPR();
+    AS.ANDI(scratch, Rs2, 0x1F);
+    AS.SLLW(Rd, Rs1, scratch);
+    AS.NEG(scratch, scratch);
+    AS.ANDI(scratch, scratch, 0x1F);
+    AS.SRLW(scratch, Rs1, scratch);
+    AS.OR(Rd, Rd, scratch);
+    AS.ZEXTH(Rd, Rd);
+}
+
+void Emitter::EmitLeftRotate32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.ROLW(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitLeftRotate64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.ROL(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitDiv(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.DIV(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitDivu(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.DIVU(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitDivw(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.DIVW(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitDivuw(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.DIVUW(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitRem(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.REM(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitRemu(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.REMU(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitRemw(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.REMW(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitRemuw(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.REMUW(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitMul(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.MUL(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitMulh(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.MULH(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitMulhu(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.MULHU(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitSelect(Backend& backend, biscuit::GPR Rd, biscuit::GPR Condition, biscuit::GPR RsTrue, biscuit::GPR RsFalse) {
+    Label true_label, end_label;
+    AS.C_BNEZ(Condition, &true_label);
+    AS.C_MV(Rd, RsFalse);
+    AS.C_J(&end_label);
+    AS.Bind(&true_label);
+    AS.C_MV(Rd, RsTrue);
+    AS.Bind(&end_label);
+}
+
+void Emitter::EmitCastIntegerToVector(Backend&, biscuit::Vec, biscuit::GPR) {
     UNREACHABLE();
 }
 
-void Emitter::EmitMul(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitCastVectorToInteger(Backend&, biscuit::GPR, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitMulh(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVInsertInteger(Backend&, biscuit::Vec, biscuit::GPR, biscuit::Vec, u64) {
     UNREACHABLE();
 }
 
-void Emitter::EmitMulhu(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVExtractInteger(Backend&, biscuit::GPR, biscuit::Vec, u64) {
     UNREACHABLE();
 }
 
-void Emitter::EmitClz(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVPackedShuffleDWord(Backend&, biscuit::Vec, biscuit::Vec, u64) {
     UNREACHABLE();
 }
 
-void Emitter::EmitCtz(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVMoveByteMask(Backend&, biscuit::Vec, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitShiftLeft(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVUnpackByteLow(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitShiftRight(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVUnpackWordLow(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitShiftRightArithmetic(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVUnpackDWordLow(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitLeftRotate8(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVUnpackQWordLow(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitLeftRotate16(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVAnd(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitLeftRotate32(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVOr(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitLeftRotate64(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVXor(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitSelect(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVShiftRight(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitAnd(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    auto Rs1 = _RegRO_(inst.GetOperand(0));
-    auto Rs2 = _RegRO_(inst.GetOperand(1));
-    auto Rd = _RegWO_(&inst);
-    as.AND(Rd, Rs1, Rs2);
-}
-
-void Emitter::EmitOr(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVShiftLeft(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitXor(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVPackedSubByte(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitNot(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVPackedAddQWord(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitEqual(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVPackedEqualByte(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitNotEqual(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVPackedEqualWord(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitIGreaterThan(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVPackedEqualDWord(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitILessThan(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVPackedMinByte(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
     UNREACHABLE();
 }
 
-void Emitter::EmitUGreaterThan(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitULessThan(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitReadByte(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitReadWord(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitReadDWord(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitReadQWord(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    auto address = _RegRO_(inst.GetOperand(0));
-    auto Rd = _RegWO_(&inst);
-    as.LD(Rd, 0, address);
-}
-
-void Emitter::EmitReadXmmWord(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitWriteByte(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitWriteWord(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitWriteDWord(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitWriteQWord(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    auto address = _RegRO_(inst.GetOperand(0));
-    auto Rs = _RegRO_(inst.GetOperand(1));
-    as.SD(Rs, 0, address);
-}
-
-void Emitter::EmitWriteXmmWord(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitCastIntegerToVector(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitCastVectorToInteger(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVInsertInteger(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVExtractInteger(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVUnpackByteLow(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVUnpackWordLow(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVUnpackDWordLow(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVUnpackQWordLow(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVAnd(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVOr(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVXor(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVShr(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVShl(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVPackedSubByte(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVPackedAddQWord(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVPackedEqualByte(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVPackedEqualWord(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVPackedEqualDWord(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVPackedShuffleDWord(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVMoveByteMask(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVPackedMinByte(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVZext64(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitCount(Backend& backend, biscuit::Assembler& as, const IRInstruction& inst) {
+void Emitter::EmitVZext64(Backend&, biscuit::Vec, biscuit::Vec) {
     UNREACHABLE();
 }

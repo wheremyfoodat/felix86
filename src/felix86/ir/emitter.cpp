@@ -395,11 +395,11 @@ IRInstruction* ir_emit_vector_packed_xor(IRBlock* block, IRInstruction* source1,
 }
 
 IRInstruction* ir_emit_vector_packed_shift_right(IRBlock* block, IRInstruction* source, IRInstruction* imm) {
-    return ir_emit_two_operands(block, IROpcode::VShr, source, imm);
+    return ir_emit_two_operands(block, IROpcode::VShiftRight, source, imm);
 }
 
 IRInstruction* ir_emit_vector_packed_shift_left(IRBlock* block, IRInstruction* source, IRInstruction* imm) {
-    return ir_emit_two_operands(block, IROpcode::VShl, source, imm);
+    return ir_emit_two_operands(block, IROpcode::VShiftLeft, source, imm);
 }
 
 IRInstruction* ir_emit_vector_packed_sub_byte(IRBlock* block, IRInstruction* source1, IRInstruction* source2) {

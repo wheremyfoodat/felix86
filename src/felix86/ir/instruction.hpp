@@ -14,10 +14,8 @@
 
 #define IR_OPCODES                                                                                                                                   \
     X(Null)                                                                                                                                          \
-                                                                                                                                                     \
     X(Phi)                                                                                                                                           \
     X(Comment)                                                                                                                                       \
-                                                                                                                                                     \
     X(Mov)                                                                                                                                           \
     X(Immediate)                                                                                                                                     \
     X(Popcount)                                                                                                                                      \
@@ -89,8 +87,8 @@
     X(VAnd)                                                                                                                                          \
     X(VOr)                                                                                                                                           \
     X(VXor)                                                                                                                                          \
-    X(VShr)                                                                                                                                          \
-    X(VShl)                                                                                                                                          \
+    X(VShiftRight)                                                                                                                                   \
+    X(VShiftLeft)                                                                                                                                    \
     X(VPackedSubByte)                                                                                                                                \
     X(VPackedAddQWord)                                                                                                                               \
     X(VPackedEqualByte)                                                                                                                              \
@@ -100,7 +98,6 @@
     X(VMoveByteMask)                                                                                                                                 \
     X(VPackedMinByte)                                                                                                                                \
     X(VZext64) /* zero extend the bottom 64-bits of a vector */                                                                                      \
-                                                                                                                                                     \
     X(Count)
 
 enum class IROpcode : u8 {

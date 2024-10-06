@@ -116,7 +116,7 @@ void* Backend::EmitFunction(IRFunction* function) {
     for (IRBlock* block : function->GetBlocks()) {
         block_map[block] = as.GetCursorPointer();
         for (const IRInstruction& inst : block->GetInstructions()) {
-            Emitter::Emit(*this, as, inst);
+            Emitter::Emit(*this, inst);
         }
 
         switch (block->GetTermination()) {
@@ -140,7 +140,7 @@ void* Backend::EmitFunction(IRFunction* function) {
             break;
         }
         case Termination::Exit: {
-            Emitter::EmitJump(*this, as, exit_dispatcher);
+            Emitter::EmitJump(*this, exit_dispatcher);
             break;
         }
         default: {
@@ -156,7 +156,7 @@ void* Backend::EmitFunction(IRFunction* function) {
 
         ptrdiff_t cursor = as.GetCodeBuffer().GetCursorOffset();
         as.RewindBuffer(jump.location);
-        Emitter::EmitJump(*this, as, block_map[jump.target]);
+        Emitter::EmitJump(*this, block_map[jump.target]);
         as.RewindBuffer(cursor);
     }
 
@@ -167,7 +167,7 @@ void* Backend::EmitFunction(IRFunction* function) {
 
         ptrdiff_t cursor = as.GetCodeBuffer().GetCursorOffset();
         as.RewindBuffer(jump.location);
-        Emitter::EmitJumpConditional(*this, as, *jump.inst, block_map[jump.target_true], block_map[jump.target_false]);
+        Emitter::EmitJumpConditional(*this, *jump.inst, block_map[jump.target_true], block_map[jump.target_false]);
         as.RewindBuffer(cursor);
     }
 

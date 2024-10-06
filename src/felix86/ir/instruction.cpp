@@ -143,8 +143,8 @@ IRType IRInstruction::getTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
     case IROpcode::VAnd:
     case IROpcode::VOr:
     case IROpcode::VXor:
-    case IROpcode::VShr:
-    case IROpcode::VShl:
+    case IROpcode::VShiftRight:
+    case IROpcode::VShiftLeft:
     case IROpcode::VPackedSubByte:
     case IROpcode::VPackedAddQWord:
     case IROpcode::VPackedEqualByte:
@@ -326,8 +326,8 @@ void IRInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         VALIDATE_OPS_VECTOR(VAnd, 2);
         VALIDATE_OPS_VECTOR(VOr, 2);
         VALIDATE_OPS_VECTOR(VXor, 2);
-        VALIDATE_OPS_VECTOR(VShr, 2);
-        VALIDATE_OPS_VECTOR(VShl, 2);
+        VALIDATE_OPS_VECTOR(VShiftRight, 2);
+        VALIDATE_OPS_VECTOR(VShiftLeft, 2);
         VALIDATE_OPS_VECTOR(VPackedSubByte, 2);
         VALIDATE_OPS_VECTOR(VPackedAddQWord, 2);
         VALIDATE_OPS_VECTOR(VPackedEqualByte, 2);
@@ -674,11 +674,11 @@ std::string IRInstruction::Print(const std::function<std::string(const IRInstruc
         ret += FOP2(vxor, src1, src2);
         break;
     }
-    case IROpcode::VShl: {
+    case IROpcode::VShiftLeft: {
         ret += FOP2(vshl, src1, src2);
         break;
     }
-    case IROpcode::VShr: {
+    case IROpcode::VShiftRight: {
         ret += FOP2(vshr, src1, src2);
         break;
     }

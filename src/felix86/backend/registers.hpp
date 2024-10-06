@@ -1,6 +1,7 @@
 #pragma once
 
 #include <span>
+#include "biscuit/assembler.hpp"
 #include "biscuit/registers.hpp"
 #include "felix86/common/log.hpp"
 #include "felix86/common/utility.hpp"
@@ -26,10 +27,31 @@ public:
 
         return scratch_gprs[scratch_gpr_index++];
     }
+
+    biscuit::GPR AcquireScratchGPRFromSpill(Assembler& as, u64 spill_location) {
+        if (scratch_gpr_index > 0) {
+            for (int i = 0; i < scratch_gpr_index; i++) {
+                // Same spill location, return the same register
+                if (scratch_spill_locations[i] == spill_location) {
+                    return scratch_gprs[i];
+                }
+            }
+        }
+
+        biscuit::GPR reg = AcquireScratchGPR();
+        if (spill_location > 2047) {
+            ERROR("Spill location too large");
+        }
+        as.LD(reg, spill_location, Registers::SpillPointer());
+        scratch_spill_locations[scratch_gpr_index - 1] = spill_location;
+        return reg;
+    }
+
     void ReleaseScratchRegs() {
         scratch_gpr_index = 0;
         scratch_fpr_index = 0;
         scratch_vec_index = 0;
+        std::fill(scratch_spill_locations.begin(), scratch_spill_locations.end(), -1ull);
     }
 
     std::span<const biscuit::GPR> GetAvailableGPRs() const {
@@ -93,6 +115,7 @@ public:
 private:
     constexpr static std::span<const biscuit::GPR> available_gprs = {total_gprs.begin(), AvailableGPRCount};
     constexpr static std::span<const biscuit::GPR> scratch_gprs = {total_gprs.begin() + AvailableGPRCount, total_gprs.size() - AvailableGPRCount};
+    std::array<u64, scratch_gprs.size()> scratch_spill_locations{};
     static_assert(scratch_gprs.size() + available_gprs.size() == total_gprs.size());
 
     constexpr static std::span<const biscuit::FPR> available_fprs = {total_fprs.begin(), AvailableFPRCount};
