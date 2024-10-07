@@ -59,7 +59,7 @@ using LivenessList = std::list<IRInstruction*>;
     To incorporate phi functions, this is recommended in SSA book:
 
     LiveIn(B) = PhiDefs(B) U UpwardExposed(B) U (LiveOut(B) \ Defs(B))
-    LiveOut(B) = ⋃ S∈succs(B)(LiveIn(S) \ PhiDefs(S)) ∪ PhiUses(B)
+    LiveOut(B) = ⋃ S∈succs(B)(LiveIn(S) \ PhiDefs(S)) U PhiUses(B)
 
     there's other non fixpoint algos but they are more complex
 */

@@ -15,7 +15,7 @@ struct Disassembler {
         std::string result;
         while (i < size) {
             u64 address = (u64)data + i;
-            inst_fetch((const uint8_t*)data + i, &inst, &length);
+            inst_fetch((u8*)data + i, &inst, &length);
             disasm_inst(buf, sizeof(buf), rv64, address, inst);
             result += fmt::format("0x{:x}: {}\n", address, (const char*)buf);
             i += length;

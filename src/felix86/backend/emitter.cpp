@@ -41,6 +41,7 @@ void SoftwareCtz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u32 size) {
 
 } // namespace
 
+// Should never be more than 4 instructions
 void Emitter::EmitJump(Backend& backend, void* target) {
     auto my_abs = [](u64 x) -> u64 { return x < 0 ? -x : x; };
 
@@ -56,6 +57,7 @@ void Emitter::EmitJump(Backend& backend, void* target) {
     }
 }
 
+// Should never be more than 6 instructions
 void Emitter::EmitJumpConditional(Backend& backend, const IRInstruction& condition, void* target_true, void* target_false) {
     biscuit::GPR address_true = backend.AcquireScratchGPR();
     biscuit::GPR address_false = backend.AcquireScratchGPR();
@@ -312,23 +314,23 @@ void Emitter::EmitParity(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
 }
 
 void Emitter::EmitReadByte(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    AS.LB(Rd, 0, Rs);
+    AS.LBU(Rd, 0, Rs);
 }
 
 void Emitter::EmitReadWord(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    AS.LH(Rd, 0, Rs);
+    AS.LHU(Rd, 0, Rs);
 }
 
 void Emitter::EmitReadDWord(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    AS.LW(Rd, 0, Rs);
+    AS.LWU(Rd, 0, Rs);
 }
 
 void Emitter::EmitReadQWord(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
     AS.LD(Rd, 0, Rs);
 }
 
-void Emitter::EmitReadXmmWord(Backend&, biscuit::Vec, biscuit::GPR) {
-    UNREACHABLE();
+void Emitter::EmitReadXmmWord(Backend& backend, biscuit::Vec Vd, biscuit::GPR address) {
+    AS.VLM(Vd, address);
 }
 
 void Emitter::EmitDiv128(Backend&, biscuit::GPR Rs) {
@@ -355,8 +357,8 @@ void Emitter::EmitWriteQWord(Backend& backend, biscuit::GPR address, biscuit::GP
     AS.SD(Rs, 0, address);
 }
 
-void Emitter::EmitWriteXmmWord(Backend&, biscuit::GPR, biscuit::Vec) {
-    UNREACHABLE();
+void Emitter::EmitWriteXmmWord(Backend& backend, biscuit::GPR address, biscuit::Vec Vs) {
+    AS.VSM(Vs, address);
 }
 
 void Emitter::EmitAddi(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u64 immediate) {
@@ -515,12 +517,12 @@ void Emitter::EmitSelect(Backend& backend, biscuit::GPR Rd, biscuit::GPR Conditi
     AS.Bind(&end_label);
 }
 
-void Emitter::EmitCastIntegerToVector(Backend&, biscuit::Vec, biscuit::GPR) {
-    UNREACHABLE();
+void Emitter::EmitCastIntegerToVector(Backend& backend, biscuit::Vec Vd, biscuit::GPR Rs) {
+    AS.VMV_SX(Vd, Rs);
 }
 
-void Emitter::EmitCastVectorToInteger(Backend&, biscuit::GPR, biscuit::Vec) {
-    UNREACHABLE();
+void Emitter::EmitCastVectorToInteger(Backend& backend, biscuit::GPR Rd, biscuit::Vec Vs) {
+    AS.VMV_XS(Rd, Vs);
 }
 
 void Emitter::EmitVInsertInteger(Backend&, biscuit::Vec, biscuit::GPR, biscuit::Vec, u64) {
@@ -555,16 +557,16 @@ void Emitter::EmitVUnpackQWordLow(Backend&, biscuit::Vec, biscuit::Vec, biscuit:
     UNREACHABLE();
 }
 
-void Emitter::EmitVAnd(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
-    UNREACHABLE();
+void Emitter::EmitVAnd(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
+    AS.VAND(Vd, Vs1, Vs2);
 }
 
-void Emitter::EmitVOr(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
-    UNREACHABLE();
+void Emitter::EmitVOr(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
+    AS.VOR(Vd, Vs1, Vs2);
 }
 
-void Emitter::EmitVXor(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {
-    UNREACHABLE();
+void Emitter::EmitVXor(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
+    AS.VXOR(Vd, Vs1, Vs2);
 }
 
 void Emitter::EmitVShiftRight(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec) {

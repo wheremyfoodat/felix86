@@ -7,7 +7,7 @@
 #include "felix86/ir/passes/passes.hpp"
 
 void Emulator::Run() {
-    u64 rip = 0x00403C60; // GetRip();
+    u64 rip = GetRip();
     IRFunction* function = function_cache.CreateOrGetFunctionAt(rip);
     frontend_compile_function(function);
     ir_ssa_pass(function);

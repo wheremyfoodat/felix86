@@ -231,7 +231,7 @@ IR_HANDLE(xor_rm_reg) { // xor rm8, r8 - 0x30
             // xor reg, reg when the reg is the same for size 32/64 is always 0
             IRInstruction* zero = ir_emit_immediate(BLOCK, 0);
             IRInstruction* one = ir_emit_immediate(BLOCK, 1);
-            ir_emit_set_reg(BLOCK, &inst->operand_reg, zero);
+            ir_emit_set_gpr64(BLOCK, inst->operand_reg.reg.ref, zero);
             ir_emit_set_cpazso(BLOCK, zero, one, nullptr, one, zero, zero);
             return;
         }
@@ -257,7 +257,7 @@ IR_HANDLE(xor_reg_rm) { // xor r16/32/64, rm16/32/64 - 0x33
             // xor reg, reg when the reg is the same for size 32/64 is always 0
             IRInstruction* zero = ir_emit_immediate(BLOCK, 0);
             IRInstruction* one = ir_emit_immediate(BLOCK, 1);
-            ir_emit_set_reg(BLOCK, &inst->operand_reg, zero);
+            ir_emit_set_gpr64(BLOCK, inst->operand_reg.reg.ref, zero);
             ir_emit_set_cpazso(BLOCK, zero, one, nullptr, one, zero, zero);
             return;
         }
@@ -577,8 +577,7 @@ IR_HANDLE(leave) { // leave - 0xc9
     IRInstruction* rbp = ir_emit_get_reg(BLOCK, &rbp_reg);
 
     IRInstruction* popped_value = size == X86_SIZE_WORD ? ir_emit_read_word(BLOCK, rbp) : ir_emit_read_qword(BLOCK, rbp);
-    IRInstruction* imm = ir_emit_immediate(BLOCK, size == X86_SIZE_WORD ? 2 : 8);
-    IRInstruction* rbp_add = ir_emit_add(BLOCK, rbp, imm);
+    IRInstruction* rbp_add = ir_emit_addi(BLOCK, rbp, size == X86_SIZE_WORD ? 2 : 8);
 
     ir_emit_set_reg(BLOCK, &rbp_reg, popped_value);
     ir_emit_set_reg(BLOCK, &rsp_reg, rbp_add);
@@ -606,8 +605,7 @@ IR_HANDLE(call_rel32) { // call rel32 - 0xe8
     IRInstruction* rip = ir_emit_immediate(BLOCK, jump_address);
     IRInstruction* return_rip = ir_emit_immediate(BLOCK, return_address);
     IRInstruction* rsp = ir_emit_get_guest(BLOCK, X86_REF_RSP);
-    IRInstruction* size = ir_emit_immediate(BLOCK, 8);
-    IRInstruction* rsp_sub = ir_emit_sub(BLOCK, rsp, size);
+    IRInstruction* rsp_sub = ir_emit_addi(BLOCK, rsp, -8);
     ir_emit_write_qword(BLOCK, rsp_sub, return_rip);
     ir_emit_set_guest(BLOCK, X86_REF_RSP, rsp_sub);
     ir_emit_set_guest(BLOCK, X86_REF_RIP, rip);
@@ -668,13 +666,13 @@ IR_HANDLE(group4) { // inc/dec rm8 - 0xfe
 
     switch (opcode) {
     case X86_GROUP4_INC: {
-        result = ir_emit_add(BLOCK, rm, one);
+        result = ir_emit_addi(BLOCK, rm, 1);
         o = ir_emit_get_overflow_add(BLOCK, rm, one, result, size_e);
         a = ir_emit_get_aux_add(BLOCK, rm, one);
         break;
     }
     case X86_GROUP4_DEC: {
-        result = ir_emit_sub(BLOCK, rm, one);
+        result = ir_emit_addi(BLOCK, rm, -1);
         o = ir_emit_get_overflow_sub(BLOCK, rm, one, result, size_e);
         a = ir_emit_get_aux_sub(BLOCK, rm, one);
         break;
@@ -700,7 +698,7 @@ IR_HANDLE(group5) { // inc/dec/call/jmp/push rm32
         x86_size_e size_e = inst->operand_rm.size;
         IRInstruction* rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
         IRInstruction* one = ir_emit_immediate(BLOCK, 1);
-        IRInstruction* result = ir_emit_add(BLOCK, rm, one);
+        IRInstruction* result = ir_emit_addi(BLOCK, rm, 1);
         IRInstruction* o = ir_emit_get_overflow_add(BLOCK, rm, one, result, size_e);
         IRInstruction* a = ir_emit_get_aux_add(BLOCK, rm, one);
         IRInstruction* p = ir_emit_get_parity(BLOCK, result);
@@ -714,7 +712,7 @@ IR_HANDLE(group5) { // inc/dec/call/jmp/push rm32
         x86_size_e size_e = inst->operand_rm.size;
         IRInstruction* rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
         IRInstruction* one = ir_emit_immediate(BLOCK, 1);
-        IRInstruction* result = ir_emit_sub(BLOCK, rm, one);
+        IRInstruction* result = ir_emit_addi(BLOCK, rm, -1);
         IRInstruction* o = ir_emit_get_overflow_sub(BLOCK, rm, one, result, size_e);
         IRInstruction* a = ir_emit_get_aux_sub(BLOCK, rm, one);
         IRInstruction* p = ir_emit_get_parity(BLOCK, result);
@@ -731,8 +729,7 @@ IR_HANDLE(group5) { // inc/dec/call/jmp/push rm32
         IRInstruction* rip = ir_emit_get_rm(BLOCK, &rm_op);
         IRInstruction* return_rip = ir_emit_immediate(BLOCK, return_address);
         IRInstruction* rsp = ir_emit_get_guest(BLOCK, X86_REF_RSP);
-        IRInstruction* size = ir_emit_immediate(BLOCK, 8);
-        IRInstruction* rsp_sub = ir_emit_sub(BLOCK, rsp, size);
+        IRInstruction* rsp_sub = ir_emit_addi(BLOCK, rsp, -8);
         ir_emit_write_qword(BLOCK, rsp_sub, return_rip);
         ir_emit_set_guest(BLOCK, X86_REF_RSP, rsp_sub);
         ir_emit_set_guest(BLOCK, X86_REF_RIP, rip);

@@ -116,6 +116,13 @@ public:
     }
 
     /**
+     * Set the cursor to some arbitrary location
+     */
+    void SetCursor(uint8_t* cursor) noexcept {
+        m_cursor = cursor;
+    }
+
+    /**
      * Whether or not the underlying buffer has enough room for the
      * given number of bytes.
      *

@@ -17,11 +17,11 @@ Backend::Backend(ThreadState& thread_state) : thread_state(thread_state), memory
     bool has_fpu = cpuinfo.Has(RISCVExtension::D) && cpuinfo.Has(RISCVExtension::F);
     bool has_vector = cpuinfo.Has(RISCVExtension::V);
 
-    if (!has_atomic || !has_compressed || !has_integer || !has_mul || !has_fpu || !has_vector || cpuinfo.GetVlenb() < 128) {
+    if (!has_atomic || !has_compressed || !has_integer || !has_mul || !has_fpu || !has_vector || cpuinfo.GetVlenb() != 128) {
 #ifdef __x86_64__
         WARN("Running in x86-64 environment");
 #else
-        ERROR("Backend is missing some extensions");
+        ERROR("Backend is missing some extensions or doesn't have VLEN=128");
 #endif
     }
 
@@ -123,8 +123,9 @@ void* Backend::EmitFunction(IRFunction* function) {
         case Termination::Jump: {
             direct_jumps.push_back({as.GetCodeBuffer().GetCursorOffset(), block->GetSuccessor(0)});
             // Some space for the backpatched jump
-            as.EBREAK();
-            as.EBREAK();
+            as.NOP();
+            as.NOP();
+            as.NOP();
             as.EBREAK();
             break;
         }
@@ -132,6 +133,7 @@ void* Backend::EmitFunction(IRFunction* function) {
             conditional_jumps.push_back(
                 {as.GetCodeBuffer().GetCursorOffset(), block->GetCondition(), block->GetSuccessor(0), block->GetSuccessor(1)});
             // Some space for the backpatched jump
+            as.NOP();
             as.NOP();
             as.NOP();
             as.NOP();
@@ -154,10 +156,10 @@ void* Backend::EmitFunction(IRFunction* function) {
             ERROR("Block not found");
         }
 
-        ptrdiff_t cursor = as.GetCodeBuffer().GetCursorOffset();
+        u8* cursor = as.GetCursorPointer();
         as.RewindBuffer(jump.location);
         Emitter::EmitJump(*this, block_map[jump.target]);
-        as.RewindBuffer(cursor);
+        as.GetCodeBuffer().SetCursor(cursor);
     }
 
     for (const ConditionalJump& jump : conditional_jumps) {
@@ -165,10 +167,10 @@ void* Backend::EmitFunction(IRFunction* function) {
             ERROR("Block not found");
         }
 
-        ptrdiff_t cursor = as.GetCodeBuffer().GetCursorOffset();
+        u8* cursor = as.GetCursorPointer();
         as.RewindBuffer(jump.location);
         Emitter::EmitJumpConditional(*this, *jump.inst, block_map[jump.target_true], block_map[jump.target_false]);
-        as.RewindBuffer(cursor);
+        as.GetCodeBuffer().SetCursor(cursor);
     }
 
     return start;
