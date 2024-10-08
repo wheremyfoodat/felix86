@@ -79,53 +79,16 @@
     t0-t3 and the rest of the temporaries down the road are in SSA form already,
    it's just the registers that need to be renamed
 */
-static void postorder(IRBlock* block, std::vector<IRBlock*>& output) {
-    if (block->IsVisited()) {
-        return;
-    }
-
-    block->SetVisited(true);
-
-    IRBlock* first_successor = block->GetSuccessor(0);
-    if (first_successor) {
-        postorder(first_successor, output);
-    }
-
-    IRBlock* second_successor = block->GetSuccessor(1);
-    if (second_successor) {
-        postorder(second_successor, output);
-    }
-
-    output.push_back(block); // TODO: don't use vector in the future
-}
-
-static void reverse_postorder_creation(IRFunction* function, std::vector<IRBlock*>& order) {
-    IRBlock* entry = function->GetEntry();
-    postorder(entry, order);
-
-    if (order.size() != function->GetBlocks().size()) {
-        ERROR("Postorder traversal did not visit all blocks: %zu vs %zu", order.size(), function->GetBlocks().size());
-    }
-
-    for (size_t i = 0; i < order.size(); i++) {
-        order[i]->SetPostorderIndex(i);
-    }
-
-    function->SetPostorder(order);
-
-    std::reverse(order.begin(), order.end());
-}
-
-static IRBlock* intersect(IRBlock* a, IRBlock* b) {
+static IRBlock* intersect(IRBlock* a, IRBlock* b, const std::vector<u32>& postorder_index) {
     IRBlock* finger1 = a;
     IRBlock* finger2 = b;
 
-    while (finger1->GetPostorderIndex() != finger2->GetPostorderIndex()) {
-        while (finger1->GetPostorderIndex() < finger2->GetPostorderIndex()) {
+    while (postorder_index[finger1->GetIndex()] != postorder_index[finger2->GetIndex()]) {
+        while (postorder_index[finger1->GetIndex()] < postorder_index[finger2->GetIndex()]) {
             finger1 = finger1->GetImmediateDominator();
         }
 
-        while (finger2->GetPostorderIndex() < finger1->GetPostorderIndex()) {
+        while (postorder_index[finger2->GetIndex()] < postorder_index[finger1->GetIndex()]) {
             finger2 = finger2->GetImmediateDominator();
         }
     }
@@ -149,8 +112,8 @@ static void place_phi_functions(IRFunction* function) {
 
     for (size_t i = 0; i < list.size(); i++) {
         IRBlock* block = list[i];
-        std::list<IRInstruction>& instructions = block->GetInstructions();
-        for (const IRInstruction& inst : instructions) {
+        std::list<SSAInstruction>& instructions = block->GetInstructions();
+        for (const SSAInstruction& inst : instructions) {
             // Make sure it wasn't already added in this list of instructions
             if (inst.GetOpcode() == IROpcode::SetGuest) {
                 x86_ref_e ref = inst.AsSetGuest().ref;
@@ -184,7 +147,7 @@ static void place_phi_functions(IRFunction* function) {
                     phi.values.resize(pred_count);
                     phi.blocks.resize(pred_count);
 
-                    IRInstruction instruction(std::move(phi));
+                    SSAInstruction instruction(std::move(phi));
                     df->AddPhi(std::move(instruction));
 
                     has_already[df->GetIndex()] = iter_count;
@@ -209,11 +172,11 @@ int which_pred(IRBlock* pred, IRBlock* block) {
     return -1;
 }
 
-static void search(IRDominatorTreeNode* node, std::array<std::stack<IRInstruction*>, X86_REF_COUNT>& stacks) {
+static void search(IRDominatorTreeNode* node, std::array<std::stack<SSAInstruction*>, X86_REF_COUNT>& stacks) {
     IRBlock* block = node->block;
     std::array<int, X86_REF_COUNT> pop_count = {};
     for (auto it = block->GetInstructions().begin(); it != block->GetInstructions().end();) {
-        IRInstruction& inst = *it;
+        SSAInstruction& inst = *it;
         // These are the only instructions we care about moving to SSA.
         if (inst.GetOpcode() == IROpcode::SetGuest) {
             int ref = inst.AsSetGuest().ref;
@@ -224,32 +187,16 @@ static void search(IRDominatorTreeNode* node, std::array<std::stack<IRInstructio
             stacks[ref].push(&inst);
             pop_count[ref]++;
         } else if (inst.GetOpcode() == IROpcode::GetGuest) {
-            IRInstruction* def = stacks[inst.AsGetGuest().ref].top();
+            SSAInstruction* def = stacks[inst.AsGetGuest().ref].top();
             inst.ReplaceExpressionWithMov(def);
         }
 
         it++;
     }
 
-    IRBlock* successor1 = block->GetSuccessor(0);
-    if (successor1) {
-        int j = which_pred(block, successor1);
-        for (IRInstruction& inst : successor1->GetInstructions()) {
-            if (!inst.IsPhi()) {
-                break;
-            }
-
-            Phi& phi = inst.AsPhi();
-            phi.blocks[j] = block;
-            phi.values[j] = stacks[phi.ref].top();
-            phi.values[j]->AddUse();
-        }
-    }
-
-    IRBlock* successor2 = block->GetSuccessor(1);
-    if (successor2) {
-        int j = which_pred(block, successor2);
-        for (IRInstruction& inst : successor2->GetInstructions()) {
+    for (IRBlock* succesor : block->GetSuccessors()) {
+        int j = which_pred(block, succesor);
+        for (SSAInstruction& inst : succesor->GetInstructions()) {
             if (!inst.IsPhi()) {
                 break;
             }
@@ -280,7 +227,7 @@ static void search(IRDominatorTreeNode* node, std::array<std::stack<IRInstructio
 // before the use, by loading the register from memory.
 // This should effectively forward sets to gets and get rid of get_guest instructions
 static void rename(std::vector<IRDominatorTreeNode>& list) {
-    std::array<std::stack<IRInstruction*>, X86_REF_COUNT> stacks = {};
+    std::array<std::stack<SSAInstruction*>, X86_REF_COUNT> stacks = {};
 
     search(&list[0], stacks);
 }
@@ -288,8 +235,13 @@ static void rename(std::vector<IRDominatorTreeNode>& list) {
 void ir_ssa_pass(IRFunction* function) {
     size_t count = function->GetBlocks().size();
 
-    std::vector<IRBlock*> rpo;
-    reverse_postorder_creation(function, rpo);
+    std::vector<IRBlock*> rpo = function->GetBlocksPostorder();
+    std::vector<u32> postorder_index(count);
+    for (size_t i = 0; i < count; i++) {
+        postorder_index[rpo[i]->GetIndex()] = i;
+    }
+
+    std::reverse(rpo.begin(), rpo.end());
 
     if (rpo[0] != function->GetEntry()) {
         ERROR("Entry block is not the first block");
@@ -316,7 +268,7 @@ void ir_ssa_pass(IRFunction* function) {
             for (size_t j = 1; j < predecessors.size(); j++) {
                 IRBlock* p = predecessors[j];
                 if (p->GetImmediateDominator()) {
-                    new_idom = intersect(p, new_idom);
+                    new_idom = intersect(p, new_idom, postorder_index);
                 }
             }
 

@@ -1,11 +1,37 @@
 #include <fmt/format.h>
 #include "felix86/common/log.hpp"
-#include "felix86/common/print.hpp"
 #include "felix86/ir/block.hpp"
 
-std::string IRBlock::Print(const std::function<std::string(const IRInstruction*)>& callback) const {
+std::string IRBlock::Print(const std::function<std::string(const SSAInstruction*)>& callback) const {
     std::string ret;
 
+    ret += printBlock() + "\n";
+
+    for (const SSAInstruction& inst : GetInstructions()) {
+        ret += inst.Print(callback);
+        ret += "\n";
+    }
+
+    ret += printTermination() + "\n";
+
+    return ret;
+}
+
+std::string IRBlock::PrintReduced(const std::function<std::string(const ReducedInstruction*)>& callback) const {
+    std::string ret;
+
+    ret += printBlock() + "\n";
+    for (const ReducedInstruction& inst : GetReducedInstructions()) {
+        ret += inst.Print(callback);
+        ret += "\n";
+    }
+    ret += printTermination() + "\n";
+
+    return ret;
+}
+
+std::string IRBlock::printBlock() const {
+    std::string ret;
     if (GetIndex() == 0) {
         ret += "Entry Block";
     } else if (GetIndex() == 1) {
@@ -16,21 +42,19 @@ std::string IRBlock::Print(const std::function<std::string(const IRInstruction*)
     if (GetStartAddress() != IR_NO_ADDRESS) {
         ret += fmt::format(" @ 0x{:016x}", GetStartAddress());
     }
-    ret += "\n";
+    return ret;
+}
 
-    for (const IRInstruction& inst : GetInstructions()) {
-        ret += inst.Print(callback);
-        ret += "\n";
-    }
-
+std::string IRBlock::printTermination() const {
+    std::string ret;
     switch (GetTermination()) {
     case Termination::Jump: {
-        ret += fmt::format("Termination -> Jump to Block {}\n", GetSuccessor(false)->GetIndex() - 2);
+        ret += fmt::format("Termination -> Jump to Block {}\n", GetSuccessor(0)->GetName());
         break;
     }
     case Termination::JumpConditional: {
-        ret += fmt::format("Termination -> JumpConditional ({}) to Block {} or Block {}\n", GetCondition()->GetNameString(),
-                           GetSuccessor(false)->GetIndex() - 2, GetSuccessor(true)->GetIndex() - 2);
+        ret += fmt::format("Termination -> JumpConditional ({}) to Block {} or Block {}\n", GetNameString(GetCondition()->GetName()),
+                           GetSuccessor(0)->GetName(), GetSuccessor(1)->GetName());
         break;
     }
     case Termination::Exit: {
@@ -42,19 +66,17 @@ std::string IRBlock::Print(const std::function<std::string(const IRInstruction*)
         break;
     }
     }
-
-    ret += "\n";
-
     return ret;
 }
 
-IRInstruction* IRBlock::InsertAtEnd(IRInstruction&& instr) {
+SSAInstruction* IRBlock::InsertAtEnd(SSAInstruction&& instr) {
     instructions.push_back(std::move(instr));
-    IRInstruction* ret = &instructions.back();
+    SSAInstruction* ret = &instructions.back();
+    ret->SetName(GetNextName());
     return ret;
 }
 
-bool IRBlock::IsUsedInPhi(IRInstruction* target) const {
+bool IRBlock::IsUsedInPhi(SSAInstruction* target) const {
     for (auto& instr : instructions) {
         if (instr.IsPhi()) {
             const Phi& phi = instr.AsPhi();

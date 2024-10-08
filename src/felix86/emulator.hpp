@@ -1,6 +1,7 @@
 #pragma once
 
 #include "felix86/backend/backend.hpp"
+#include "felix86/common/elf.hpp"
 #include "felix86/common/log.hpp"
 #include "felix86/common/x86.hpp"
 #include "felix86/frontend/instruction.hpp"
@@ -14,21 +15,16 @@ struct Config {
     bool optimize = false;
     bool print_blocks = false;
     bool use_interpreter = false;
-    u64 base_address = 0;
-    u64 brk_base_address = 0;
     std::vector<std::string> argv;
     std::vector<std::string> envp;
 };
 
 struct Emulator {
     Emulator(const Config& config) : thread_state(), backend(thread_state), config(config) {
-        // Sometimes we run without rootfs, such as for testing
-        if (!config.rootfs_path.empty()) {
-            fs.LoadRootFS(config.rootfs_path);
-            if (!fs.Good()) {
-                ERROR("Failed to initialize filesystem");
-            }
-        }
+        fs.LoadRootFS(config.rootfs_path);
+        fs.LoadExecutable(config.executable_path);
+        setupStack();
+        SetRip((u64)fs.GetEntrypoint());
     }
 
     ~Emulator() = default;
@@ -170,6 +166,8 @@ struct Emulator {
     void Run();
 
 private:
+    void setupStack();
+
     ThreadState thread_state;
     Backend backend;
     FunctionCache function_cache;

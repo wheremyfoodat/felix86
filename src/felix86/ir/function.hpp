@@ -47,11 +47,15 @@ struct IRFunction {
         return start_address_block->GetStartAddress();
     }
 
-    [[nodiscard]] std::string Print(const std::function<std::string(const IRInstruction*)>& callback) const;
+    [[nodiscard]] std::string Print(const std::function<std::string(const SSAInstruction*)>& callback);
+
+    [[nodiscard]] std::string PrintReduced(const std::function<std::string(const ReducedInstruction*)>& callback);
 
     void UnvisitAll() const;
 
     bool Validate() const;
+
+    bool ValidatePhis() const;
 
     const IRDominatorTree& GetDominatorTree() const {
         return dominator_tree;
@@ -65,13 +69,7 @@ struct IRFunction {
         }
     }
 
-    const std::vector<IRBlock*>& GetBlocksPostorder() const {
-        return blocks_postorder;
-    }
-
-    void SetPostorder(const std::vector<IRBlock*>& postorder) {
-        blocks_postorder = postorder;
-    }
+    std::vector<IRBlock*> GetBlocksPostorder();
 
 private:
     IRBlock* allocateBlock();
@@ -82,7 +80,6 @@ private:
     IRBlock* exit = nullptr;
     IRBlock* start_address_block = nullptr;
     std::vector<IRBlock*> blocks;
-    std::vector<IRBlock*> blocks_postorder;
     tsl::robin_map<u64, IRBlock*> block_map;
     IRDominatorTree dominator_tree;
     bool compiled = false;

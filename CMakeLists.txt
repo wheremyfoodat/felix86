@@ -33,20 +33,21 @@ set(FELIX86_IR_SOURCES
     src/felix86/ir/handlers_weak.cpp
     src/felix86/ir/handlers.cpp
     src/felix86/ir/instruction.cpp
+    src/felix86/ir/opcode.cpp
     src/felix86/ir/passes/copy_propagation_pass.cpp
     src/felix86/ir/passes/dead_code_elimination_pass.cpp
     src/felix86/ir/passes/extraneous_writeback_pass.cpp
     src/felix86/ir/passes/graph_coloring_pass.cpp
     src/felix86/ir/passes/local_cse_pass.cpp
-    src/felix86/ir/passes/naming_pass.cpp
     src/felix86/ir/passes/replace_setguest_pass.cpp
     src/felix86/ir/passes/spill_everything_pass.cpp
+    src/felix86/ir/passes/ssa_destruction_pass.cpp
     src/felix86/ir/passes/ssa_pass.cpp
 )
 
 set(FELIX86_COMMON_SOURCES
+    src/felix86/common/elf.cpp
     src/felix86/common/exit.cpp
-    src/felix86/common/file.cpp
     src/felix86/common/global.cpp
     src/felix86/common/log.cpp
     src/felix86/common/print.cpp
@@ -56,11 +57,6 @@ set(FELIX86_BACKEND_SOURCES
     src/felix86/backend/backend.cpp
     src/felix86/backend/emitter.cpp
     src/felix86/backend/emitter_dispatch.cpp
-)
-
-set(FELIX86_LOADER_SOURCES
-    src/felix86/loader/elf.cpp
-    src/felix86/loader/loader.cpp
 )
 
 set(FELIX86_HLE_SOURCES
@@ -75,7 +71,6 @@ set(FELIX86_CORE_SOURCES
     ${FELIX86_FRONTEND_SOURCES}
     ${FELIX86_IR_SOURCES}
     ${FELIX86_BACKEND_SOURCES}
-    ${FELIX86_LOADER_SOURCES}
     ${FELIX86_HLE_SOURCES}
     src/felix86/emulator.cpp
 )

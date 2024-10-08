@@ -3,8 +3,10 @@
 #include <array>
 #include <functional>
 #include <list>
+#include "felix86/backend/instruction.hpp"
 #include "felix86/common/utility.hpp"
 #include "felix86/ir/instruction.hpp"
+#include "fmt/format.h"
 
 #define IR_NO_ADDRESS (0)
 
@@ -23,28 +25,51 @@ struct IRBlock {
         termination = Termination::Jump;
         successors[0] = target;
 
-        successors[0]->AddPredecessor(this);
+        successors[0]->addPredecessor(this);
     }
 
-    void TerminateJumpConditional(IRInstruction* condition, IRBlock* target_true, IRBlock* target_false) {
+    void TerminateJumpConditional(SSAInstruction* condition, IRBlock* target_true, IRBlock* target_false) {
         termination = Termination::JumpConditional;
         successors[0] = target_true;
         successors[1] = target_false;
         this->condition = condition;
+        condition_name = condition->GetName();
         condition->Lock(); // this is used by the termination, don't optimize away
 
-        successors[0]->AddPredecessor(this);
-        successors[1]->AddPredecessor(this);
+        successors[0]->addPredecessor(this);
+        successors[1]->addPredecessor(this);
     }
+
+    using iterator = std::list<SSAInstruction>::iterator;
 
     void TerminateExit() {
         termination = Termination::Exit;
     }
 
-    IRInstruction* InsertAtEnd(IRInstruction&& instr);
+    SSAInstruction* InsertAtEnd(SSAInstruction&& instr);
 
-    const IRInstruction* GetCondition() const {
+    void InsertReducedInstruction(ReducedInstruction&& instr) {
+        reduced_instructions.push_back(std::move(instr));
+    }
+
+    void InsertBackendInstruction(BackendInstruction&& instr) {
+        backend_instructions.push_back(std::move(instr));
+    }
+
+    const SSAInstruction* GetCondition() const {
         return condition;
+    }
+
+    u32 GetConditionName() const {
+        return condition_name;
+    }
+
+    void SetConditionAllocation(Allocation allocation) {
+        condition_allocation = allocation;
+    }
+
+    Allocation GetConditionAllocation() const {
+        return condition_allocation;
     }
 
     bool IsCompiled() const {
@@ -71,16 +96,48 @@ struct IRBlock {
         return list_index;
     }
 
+    std::string GetName() const {
+        if (GetIndex() == 0) {
+            return "Entry";
+        } else if (GetIndex() == 1) {
+            return "Exit";
+        } else {
+            return fmt::format("{}", GetIndex() - 2);
+        }
+    }
+
+    u32 GetNextName() {
+        return (GetIndex() << 20) | next_name++;
+    }
+
     void SetIndex(u32 index) {
         list_index = index;
     }
 
-    u32 GetPostorderIndex() const {
-        return postorder_index;
+    std::span<IRBlock* const> GetSuccessors() const {
+        if (termination == Termination::Jump) {
+            return {&successors[0], 1};
+        } else if (termination == Termination::JumpConditional) {
+            return {&successors[0], 2};
+        } else {
+            return {};
+        }
     }
 
-    void SetPostorderIndex(u32 index) {
-        postorder_index = index;
+    void ReplaceSuccessor(IRBlock* old_block, IRBlock* new_block) {
+        for (size_t i = 0; i < successors.size(); i++) {
+            if (successors[i] == old_block) {
+                successors[i] = new_block;
+                return;
+            }
+        }
+
+        ERROR("Block is not a successor of the other block");
+    }
+
+    // The IRFunction::ValidatePhis should guarantee that phis only appear at the start of the block
+    bool HasPhis() const {
+        return !instructions.empty() && instructions.front().IsPhi();
     }
 
     IRBlock* GetSuccessor(bool index) {
@@ -99,6 +156,17 @@ struct IRBlock {
         immediate_dominator = block;
     }
 
+    void RemovePredecessor(IRBlock* pred) {
+        for (size_t i = 0; i < predecessors.size(); i++) {
+            if (predecessors[i] == pred) {
+                predecessors.erase(predecessors.begin() + i);
+                return;
+            }
+        }
+
+        ERROR("Block is not a predecessor of the other block");
+    }
+
     std::vector<IRBlock*>& GetPredecessors() {
         return predecessors;
     }
@@ -107,12 +175,20 @@ struct IRBlock {
         return termination;
     }
 
-    std::list<IRInstruction>& GetInstructions() {
+    std::list<SSAInstruction>& GetInstructions() {
         return instructions;
     }
 
-    const std::list<IRInstruction>& GetInstructions() const {
+    const std::list<SSAInstruction>& GetInstructions() const {
         return instructions;
+    }
+
+    const std::vector<ReducedInstruction>& GetReducedInstructions() const {
+        return reduced_instructions;
+    }
+
+    const std::vector<BackendInstruction>& GetBackendInstructions() const {
+        return backend_instructions;
     }
 
     std::vector<IRBlock*>& GetDominanceFrontiers() {
@@ -123,29 +199,41 @@ struct IRBlock {
         dominance_frontiers.push_back(block);
     }
 
-    void AddPhi(IRInstruction&& instr) {
+    void AddPhi(SSAInstruction&& instr) {
         instructions.push_front(std::move(instr));
+        SSAInstruction* phi = &instructions.front();
+        phi->SetName(GetNextName());
     }
 
-    bool IsUsedInPhi(IRInstruction* instr) const;
+    bool IsUsedInPhi(SSAInstruction* instr) const;
 
-    std::string Print(const std::function<std::string(const IRInstruction*)>& callback) const;
+    [[nodiscard]] std::string Print(const std::function<std::string(const SSAInstruction*)>& callback) const;
+
+    [[nodiscard]] std::string PrintReduced(const std::function<std::string(const ReducedInstruction*)>& callback) const;
 
 private:
-    void AddPredecessor(IRBlock* pred) {
+    void addPredecessor(IRBlock* pred) {
         predecessors.push_back(pred);
     }
 
+    [[nodiscard]] std::string printBlock() const;
+
+    [[nodiscard]] std::string printTermination() const;
+
     u64 start_address = IR_NO_ADDRESS;
-    std::list<IRInstruction> instructions;
+    std::list<SSAInstruction> instructions;
+    std::vector<ReducedInstruction> reduced_instructions;
+    std::vector<BackendInstruction> backend_instructions;
     std::vector<IRBlock*> predecessors;
     std::array<IRBlock*, 2> successors = {nullptr, nullptr};
     std::vector<IRBlock*> dominance_frontiers;
     IRBlock* immediate_dominator = nullptr;
     Termination termination = Termination::Null;
-    IRInstruction* condition = nullptr;
+    const SSAInstruction* condition = nullptr;
+    Allocation condition_allocation;
+    u32 condition_name = 0;
     bool compiled = false;
     mutable bool visited = false;
     u32 list_index = 0;
-    u32 postorder_index = 0;
+    u32 next_name = 1;
 };

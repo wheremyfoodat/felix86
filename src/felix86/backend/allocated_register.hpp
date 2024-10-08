@@ -2,21 +2,22 @@
 
 #include "felix86/backend/backend.hpp"
 #include "felix86/backend/emitter.hpp"
+#include "felix86/ir/allocation.hpp"
 
 // RAII generic allocated reg, can be gpr/fpr/vec and if it's spilled it will load/store
 struct AllocatedReg {
-    AllocatedReg(Backend& backend, const IRInstruction* inst, bool load) : backend(backend) {
+    AllocatedReg(Backend& backend, const Allocation& allocation, bool load) : backend(backend) {
         this->load = load;
-        if (inst->IsSpilled()) {
+        if (allocation.IsSpilled()) {
             spilled = true;
-            spill_location = inst->GetSpillLocation() * (inst->IsVec() ? 16 : 8);
-            if (inst->IsGPR()) {
-                reg = backend.AcquireScratchGPRFromSpill(spill_location);
+            spill_location = allocation.GetSpillLocation() * (allocation.IsVec() ? 16 : 8);
+            if (load) {
+                reg = backend.AcquireScratchGPRFromSpill(spill_location); // TODO: FPR/Vec
             } else {
-                ERROR("Implme");
+                reg = backend.AcquireScratchGPR();
             }
         } else {
-            reg = inst->GetGPR();
+            reg = allocation.AsGPR();
         }
     }
 
@@ -60,6 +61,18 @@ struct AllocatedReg {
     }
 
     operator biscuit::Vec() const {
+        return std::get<biscuit::Vec>(reg);
+    }
+
+    biscuit::GPR AsGPR() const {
+        return std::get<biscuit::GPR>(reg);
+    }
+
+    biscuit::FPR AsFPR() const {
+        return std::get<biscuit::FPR>(reg);
+    }
+
+    biscuit::Vec AsVec() const {
         return std::get<biscuit::Vec>(reg);
     }
 
