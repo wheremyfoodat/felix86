@@ -3,10 +3,12 @@
 #include "felix86/ir/function.hpp"
 
 IRFunction::IRFunction(u64 address) {
-    blocks.push_back(allocateBlock());
-    blocks.push_back(allocateBlock());
+    blocks.push_back(new IRBlock());
+    blocks.push_back(new IRBlock());
     entry = blocks[0];
     exit = blocks[1];
+
+    thread_state_pointer = ir_emit_get_thread_state_pointer(entry);
 
     for (u8 i = 0; i < X86_REF_COUNT; i++) {
         // Load all state from memory and run the set_guest instruction
@@ -29,7 +31,7 @@ IRFunction::IRFunction(u64 address) {
     start_address_block = CreateBlockAt(address);
 
     entry->TerminateJump(start_address_block);
-    exit->TerminateExit();
+    exit->TerminateBackToDispatcher();
 }
 
 IRFunction::~IRFunction() {
@@ -61,14 +63,10 @@ IRBlock* IRFunction::GetBlockAt(u64 address) {
 }
 
 IRBlock* IRFunction::CreateBlock() {
-    blocks.push_back(allocateBlock());
+    blocks.push_back(new IRBlock());
     IRBlock* block = blocks.back();
     block->SetIndex(blocks.size() - 1);
     return block;
-}
-
-IRBlock* IRFunction::allocateBlock() {
-    return new IRBlock(); // TODO: use a memory pool
 }
 
 void IRFunction::deallocateAll() {
@@ -89,24 +87,6 @@ std::string IRFunction::Print(const std::function<std::string(const SSAInstructi
     auto it = blocks.rbegin();
     while (it != blocks.rend()) {
         ret += (*it)->Print(callback);
-        ++it;
-    }
-
-    return ret;
-}
-
-std::string IRFunction::PrintReduced(const std::function<std::string(const ReducedInstruction*)>& callback) {
-    if (!IsCompiled()) {
-        WARN("Print called on not compiled function");
-        return "";
-    }
-
-    std::string ret;
-
-    auto blocks = GetBlocksPostorder();
-    auto it = blocks.rbegin();
-    while (it != blocks.rend()) {
-        ret += (*it)->PrintReduced(callback);
         ++it;
     }
 
@@ -146,7 +126,7 @@ bool IRFunction::Validate() const {
 
     for (const auto& [inst, use] : uses) {
         if (use.have != use.want) {
-            WARN("Mismatch on uses on instruction: %s", inst->Print({}).c_str());
+            WARN("Mismatch on uses on instruction: %d, want: %d, have: %d", inst->GetName(), use.want, use.have);
             return false;
         }
     }
@@ -214,7 +194,7 @@ static void postorder(IRBlock* block, std::vector<IRBlock*>& output) {
     output.push_back(block); // TODO: don't use vector in the future
 }
 
-static void reverse_postorder_creation(IRFunction* function, std::vector<IRBlock*>& order) {
+static void postorder_creation(IRFunction* function, std::vector<IRBlock*>& order) {
     IRBlock* entry = function->GetEntry();
     postorder(entry, order);
 
@@ -225,7 +205,7 @@ static void reverse_postorder_creation(IRFunction* function, std::vector<IRBlock
 
 std::vector<IRBlock*> IRFunction::GetBlocksPostorder() {
     std::vector<IRBlock*> order; // TODO: cache this
-    reverse_postorder_creation(this, order);
+    postorder_creation(this, order);
     UnvisitAll();
     return order;
 }

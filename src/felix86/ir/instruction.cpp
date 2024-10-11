@@ -4,27 +4,6 @@
 #include "felix86/ir/block.hpp"
 #include "felix86/ir/instruction.hpp"
 
-namespace {
-std::string GetBlockName(u32 name) {
-    u32 block_index = name >> 20;
-    if (block_index == 0) {
-        return "Entry";
-    } else if (block_index == 1) {
-        return "Exit";
-    } else {
-        return fmt::format("{}", block_index - 2);
-    }
-}
-
-std::string ToVarName(u32 name) {
-    return std::to_string(name & ((1 << 20) - 1));
-}
-} // namespace
-
-std::string GetNameString(u32 name) {
-    return fmt::format("%{}@{}", ToVarName(name), GetBlockName(name));
-}
-
 bool SSAInstruction::IsSameExpression(const SSAInstruction& other) const {
     if (expression_type != other.expression_type) {
         return false;
@@ -95,13 +74,14 @@ bool SSAInstruction::IsSameExpression(const SSAInstruction& other) const {
     }
 }
 
-IRType SSAInstruction::getTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
+IRType SSAInstruction::GetTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
     switch (opcode) {
     case IROpcode::Mov: {
-        ERROR("Should not be used in GetTypeFromOpcode: %d", (int)opcode);
+        ERROR("Should not be used with Mov");
         return IRType::Void;
     }
     case IROpcode::Null:
+    case IROpcode::SetExitReason:
     case IROpcode::Comment:
     case IROpcode::Syscall:
     case IROpcode::Cpuid:
@@ -110,6 +90,7 @@ IRType SSAInstruction::getTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
     case IROpcode::Divu128: {
         return IRType::Void;
     }
+    case IROpcode::GetThreadStatePointer:
     case IROpcode::Select:
     case IROpcode::Immediate:
     case IROpcode::Parity:
@@ -131,17 +112,16 @@ IRType SSAInstruction::getTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
     case IROpcode::Or:
     case IROpcode::Xor:
     case IROpcode::Not:
+    case IROpcode::Neg:
     case IROpcode::Equal:
     case IROpcode::NotEqual:
-    case IROpcode::IGreaterThan:
-    case IROpcode::ILessThan:
-    case IROpcode::UGreaterThan:
-    case IROpcode::ULessThan:
+    case IROpcode::SetLessThanSigned:
+    case IROpcode::SetLessThanUnsigned:
     case IROpcode::ReadByte:
     case IROpcode::ReadWord:
     case IROpcode::ReadDWord:
     case IROpcode::ReadQWord:
-    case IROpcode::CastVectorToInteger:
+    case IROpcode::CastIntegerFromVector:
     case IROpcode::VExtractInteger:
     case IROpcode::Sext8:
     case IROpcode::Sext16:
@@ -153,11 +133,42 @@ IRType SSAInstruction::getTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
     case IROpcode::Rem:
     case IROpcode::Remu:
     case IROpcode::Remw:
-    case IROpcode::Remuw: {
+    case IROpcode::Remuw:
+    case IROpcode::Mul:
+    case IROpcode::Mulh:
+    case IROpcode::Mulhu:
+    case IROpcode::AmoAdd8:
+    case IROpcode::AmoAdd16:
+    case IROpcode::AmoAdd32:
+    case IROpcode::AmoAdd64:
+    case IROpcode::AmoAnd8:
+    case IROpcode::AmoAnd16:
+    case IROpcode::AmoAnd32:
+    case IROpcode::AmoAnd64:
+    case IROpcode::AmoOr8:
+    case IROpcode::AmoOr16:
+    case IROpcode::AmoOr32:
+    case IROpcode::AmoOr64:
+    case IROpcode::AmoXor8:
+    case IROpcode::AmoXor16:
+    case IROpcode::AmoXor32:
+    case IROpcode::AmoXor64:
+    case IROpcode::AmoSwap8:
+    case IROpcode::AmoSwap16:
+    case IROpcode::AmoSwap32:
+    case IROpcode::AmoSwap64:
+    case IROpcode::AmoCAS8:
+    case IROpcode::AmoCAS16:
+    case IROpcode::AmoCAS32:
+    case IROpcode::AmoCAS64:
+    case IROpcode::AmoCAS128:
+    case IROpcode::ReadByteRelative:
+    case IROpcode::ReadQWordRelative: {
         return IRType::Integer64;
     }
     case IROpcode::ReadXmmWord:
-    case IROpcode::CastIntegerToVector:
+    case IROpcode::ReadXmmWordRelative:
+    case IROpcode::CastVectorFromInteger:
     case IROpcode::VUnpackByteLow:
     case IROpcode::VUnpackWordLow:
     case IROpcode::VUnpackDWordLow:
@@ -184,7 +195,10 @@ IRType SSAInstruction::getTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
     case IROpcode::WriteDWord:
     case IROpcode::WriteQWord:
     case IROpcode::WriteXmmWord:
-    case IROpcode::StoreGuestToMemory: {
+    case IROpcode::StoreGuestToMemory:
+    case IROpcode::WriteByteRelative:
+    case IROpcode::WriteQWordRelative:
+    case IROpcode::WriteXmmWordRelative: {
         return IRType::Void;
     }
 
@@ -209,12 +223,14 @@ IRType SSAInstruction::getTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
             return IRType::Void;
         }
     }
-
-    default: {
-        ERROR("Unimplemented opcode: %d", static_cast<u8>(opcode));
+    case IROpcode::Count: {
+        UNREACHABLE();
         return IRType::Void;
     }
     }
+
+    UNREACHABLE();
+    return IRType::Void;
 }
 
 void SSAInstruction::Invalidate() {
@@ -226,13 +242,6 @@ void SSAInstruction::Invalidate() {
         used->RemoveUse();
     }
 }
-
-#define VALIDATE_0OP(opcode)                                                                                                                         \
-    case IROpcode::opcode:                                                                                                                           \
-        if (operands.operand_count != 0) {                                                                                                           \
-            ERROR("Invalid operands for opcode %d", static_cast<u8>(IROpcode::opcode));                                                              \
-        }                                                                                                                                            \
-        break
 
 #define VALIDATE_OPS_INT(opcode, num_ops)                                                                                                            \
     case IROpcode::opcode:                                                                                                                           \
@@ -272,6 +281,7 @@ void SSAInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         break;
     }
 
+        BAD(Count);
         BAD(Mov);
         BAD(Phi);
         BAD(GetGuest);
@@ -280,16 +290,20 @@ void SSAInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         BAD(StoreGuestToMemory);
         BAD(Comment);
         BAD(Immediate);
+        BAD(AmoCAS128); // implme
 
-        VALIDATE_0OP(Rdtsc);
-        VALIDATE_0OP(Syscall);
-        VALIDATE_0OP(Cpuid);
+        VALIDATE_OPS_INT(GetThreadStatePointer, 0);
+        VALIDATE_OPS_INT(Rdtsc, 0);
+        VALIDATE_OPS_INT(Syscall, 0);
+        VALIDATE_OPS_INT(Cpuid, 0);
+        VALIDATE_OPS_INT(SetExitReason, 0);
 
+        VALIDATE_OPS_INT(Neg, 1);
         VALIDATE_OPS_INT(Addi, 1);
         VALIDATE_OPS_INT(Sext8, 1);
         VALIDATE_OPS_INT(Sext16, 1);
         VALIDATE_OPS_INT(Sext32, 1);
-        VALIDATE_OPS_INT(CastIntegerToVector, 1);
+        VALIDATE_OPS_INT(CastVectorFromInteger, 1);
         VALIDATE_OPS_INT(Clz, 1);
         VALIDATE_OPS_INT(Ctzh, 1);
         VALIDATE_OPS_INT(Ctzw, 1);
@@ -301,6 +315,9 @@ void SSAInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         VALIDATE_OPS_INT(ReadDWord, 1);
         VALIDATE_OPS_INT(ReadQWord, 1);
         VALIDATE_OPS_INT(ReadXmmWord, 1);
+        VALIDATE_OPS_INT(ReadByteRelative, 1);
+        VALIDATE_OPS_INT(ReadQWordRelative, 1);
+        VALIDATE_OPS_INT(ReadXmmWordRelative, 1);
         VALIDATE_OPS_INT(Div128, 1);
         VALIDATE_OPS_INT(Divu128, 1);
 
@@ -308,6 +325,8 @@ void SSAInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         VALIDATE_OPS_INT(WriteWord, 2);
         VALIDATE_OPS_INT(WriteDWord, 2);
         VALIDATE_OPS_INT(WriteQWord, 2);
+        VALIDATE_OPS_INT(WriteByteRelative, 2);
+        VALIDATE_OPS_INT(WriteQWordRelative, 2);
         VALIDATE_OPS_INT(Add, 2);
         VALIDATE_OPS_INT(Sub, 2);
         VALIDATE_OPS_INT(ShiftLeft, 2);
@@ -318,10 +337,8 @@ void SSAInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         VALIDATE_OPS_INT(Xor, 2);
         VALIDATE_OPS_INT(Equal, 2);
         VALIDATE_OPS_INT(NotEqual, 2);
-        VALIDATE_OPS_INT(IGreaterThan, 2);
-        VALIDATE_OPS_INT(ILessThan, 2);
-        VALIDATE_OPS_INT(UGreaterThan, 2);
-        VALIDATE_OPS_INT(ULessThan, 2);
+        VALIDATE_OPS_INT(SetLessThanSigned, 2);
+        VALIDATE_OPS_INT(SetLessThanUnsigned, 2);
         VALIDATE_OPS_INT(LeftRotate8, 2);
         VALIDATE_OPS_INT(LeftRotate16, 2);
         VALIDATE_OPS_INT(LeftRotate32, 2);
@@ -337,10 +354,34 @@ void SSAInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         VALIDATE_OPS_INT(Mul, 2);
         VALIDATE_OPS_INT(Mulh, 2);
         VALIDATE_OPS_INT(Mulhu, 2);
+        VALIDATE_OPS_INT(AmoAdd8, 2);
+        VALIDATE_OPS_INT(AmoAdd16, 2);
+        VALIDATE_OPS_INT(AmoAdd32, 2);
+        VALIDATE_OPS_INT(AmoAdd64, 2);
+        VALIDATE_OPS_INT(AmoAnd8, 2);
+        VALIDATE_OPS_INT(AmoAnd16, 2);
+        VALIDATE_OPS_INT(AmoAnd32, 2);
+        VALIDATE_OPS_INT(AmoAnd64, 2);
+        VALIDATE_OPS_INT(AmoOr8, 2);
+        VALIDATE_OPS_INT(AmoOr16, 2);
+        VALIDATE_OPS_INT(AmoOr32, 2);
+        VALIDATE_OPS_INT(AmoOr64, 2);
+        VALIDATE_OPS_INT(AmoXor8, 2);
+        VALIDATE_OPS_INT(AmoXor16, 2);
+        VALIDATE_OPS_INT(AmoXor32, 2);
+        VALIDATE_OPS_INT(AmoXor64, 2);
+        VALIDATE_OPS_INT(AmoSwap8, 2);
+        VALIDATE_OPS_INT(AmoSwap16, 2);
+        VALIDATE_OPS_INT(AmoSwap32, 2);
+        VALIDATE_OPS_INT(AmoSwap64, 2);
 
         VALIDATE_OPS_INT(Select, 3);
+        VALIDATE_OPS_INT(AmoCAS8, 3);
+        VALIDATE_OPS_INT(AmoCAS16, 3);
+        VALIDATE_OPS_INT(AmoCAS32, 3);
+        VALIDATE_OPS_INT(AmoCAS64, 3);
 
-        VALIDATE_OPS_VECTOR(CastVectorToInteger, 1);
+        VALIDATE_OPS_VECTOR(CastIntegerFromVector, 1);
         VALIDATE_OPS_VECTOR(VExtractInteger, 1);
         VALIDATE_OPS_VECTOR(VPackedShuffleDWord, 1);
         VALIDATE_OPS_VECTOR(VMoveByteMask, 1);
@@ -363,6 +404,7 @@ void SSAInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         VALIDATE_OPS_VECTOR(VPackedMinByte, 2);
 
     case IROpcode::WriteXmmWord:
+    case IROpcode::WriteXmmWordRelative:
     case IROpcode::VInsertInteger: {
         if (operands.operand_count != 2) {
             ERROR("Invalid operands for opcode %d", static_cast<u8>(opcode));
@@ -376,10 +418,6 @@ void SSAInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
             ERROR("Invalid operand type for opcode %d", static_cast<u8>(opcode));
         }
         break;
-    }
-
-    default: {
-        UNREACHABLE();
     }
     }
 }
@@ -407,413 +445,6 @@ std::string SSAInstruction::GetTypeString() const {
     }
     }
 }
-
-#define OP2(op)                                                                                                                                      \
-    fmt::format("{} {} <- {} {} {}", GetTypeString(), GetNameString(GetName()), GetNameString(GetOperandName(0)), #op,                               \
-                GetNameString(GetOperandName(1)))
-#define OP2I(op)                                                                                                                                     \
-    fmt::format("{} {} <- {} {} {}", GetTypeString(), GetNameString(GetName()), GetNameString(GetOperandName(0)), #op, (i64)GetImmediateData())
-#define FOP(func) fmt::format("{} {} <- {}()", GetTypeString(), GetNameString(GetName()), #func)
-#define FOP1(func, param)                                                                                                                            \
-    fmt::format("{} {} <- {}({}: {})", GetTypeString(), GetNameString(GetName()), #func, #param, GetNameString(GetOperandName(0)))
-#define FOP2(func, param1, param2)                                                                                                                   \
-    fmt::format("{} {} <- {}({}: {}, {}: {})", GetTypeString(), GetNameString(GetName()), #func, #param1, GetNameString(GetOperandName(0)), #param2, \
-                GetNameString(GetOperandName(1)))
-#define VOP2(func, param1, param2)                                                                                                                   \
-    fmt::format("{}({}: {}, {}: {})", #func, #param1, GetNameString(GetOperandName(0)), #param2, GetNameString(GetOperandName(1)))
-
-std::string SSAInstruction::Print(const std::function<std::string(const SSAInstruction*)>& callback) const {
-    IROpcode opcode = GetOpcode();
-    std::string ret;
-    switch (opcode) {
-    case IROpcode::Null: {
-        return "Null";
-    }
-    case IROpcode::Phi: {
-        const Phi& phi = AsPhi();
-        ret = fmt::format("{} {} <- φ<{}>(", GetTypeString(), GetNameString(GetName()), print_guest_register(phi.ref));
-        for (size_t i = 0; i < phi.values.size(); i++) {
-            if (!phi.blocks[i]) {
-                ERROR("Block is null");
-            }
-
-            if (!phi.values[i]) {
-                ERROR("Value is null");
-            }
-
-            ret += fmt::format("{} @ Block {}", GetNameString(phi.values[i]->GetName()), phi.blocks[i]->GetName());
-
-            if (i != phi.values.size() - 1) {
-                ret += ", ";
-            }
-        }
-        ret += ")";
-        break;
-    }
-    case IROpcode::Comment: {
-        return AsComment().comment;
-    }
-    case IROpcode::GetGuest: {
-        ret += fmt::format("{} <- get_guest {}", GetNameString(GetName()), print_guest_register(AsGetGuest().ref));
-        break;
-    }
-    case IROpcode::SetGuest: {
-        ret += fmt::format("{} <- set_guest {}, {}", GetNameString(GetName()), print_guest_register(AsSetGuest().ref),
-                           GetNameString(AsSetGuest().source->GetName()));
-        break;
-    }
-    case IROpcode::LoadGuestFromMemory: {
-        ret += fmt::format("{} <- load_from_vm {}", GetNameString(GetName()), print_guest_register(AsGetGuest().ref));
-        break;
-    }
-    case IROpcode::StoreGuestToMemory: {
-        ret += fmt::format("store_to_vm {}, {}", print_guest_register(AsSetGuest().ref), GetNameString(AsSetGuest().source->GetName()));
-        break;
-    }
-    case IROpcode::Immediate: {
-        ret += fmt::format("{} {} <- 0x{:x}", GetTypeString(), GetNameString(GetName()), GetImmediateData());
-        break;
-    }
-    case IROpcode::Select: {
-        ret += fmt::format("{} {} <- {} ? {} : {}", GetTypeString(), GetNameString(GetName()), GetNameString(GetOperandName(0)),
-                           GetNameString(GetOperandName(1)), GetOperandName(2));
-        break;
-    }
-    case IROpcode::Mov: {
-        ret += fmt::format("{} {} <- {}", GetTypeString(), GetNameString(GetName()), GetNameString(GetOperandName(0)));
-        break;
-    }
-    case IROpcode::Rdtsc: {
-        ret += FOP(rdtsc);
-        break;
-    }
-    case IROpcode::Add: {
-        ret += OP2(+);
-        break;
-    }
-    case IROpcode::Addi: {
-        ret += OP2I(+);
-        break;
-    }
-    case IROpcode::Sub: {
-        ret += OP2(-);
-        break;
-    }
-    case IROpcode::And: {
-        ret += OP2(&);
-        break;
-    }
-    case IROpcode::Or: {
-        ret += OP2(|);
-        break;
-    }
-    case IROpcode::Xor: {
-        ret += OP2(^);
-        break;
-    }
-    case IROpcode::ShiftLeft: {
-        ret += OP2(<<);
-        break;
-    }
-    case IROpcode::ShiftRight: {
-        ret += OP2(>>);
-        break;
-    }
-    case IROpcode::ShiftRightArithmetic: {
-        ret += OP2(>>);
-        break;
-    }
-    case IROpcode::Equal: {
-        ret += OP2(==);
-        break;
-    }
-    case IROpcode::NotEqual: {
-        ret += OP2(!=);
-        break;
-    }
-    case IROpcode::UGreaterThan: {
-        ret += OP2(>);
-        break;
-    }
-    case IROpcode::IGreaterThan: {
-        ret += OP2(>);
-        break;
-    }
-    case IROpcode::ULessThan: {
-        ret += OP2(<);
-        break;
-    }
-    case IROpcode::ILessThan: {
-        ret += OP2(<);
-        break;
-    }
-    case IROpcode::Mul:
-    case IROpcode::Mulh:
-    case IROpcode::Mulhu: {
-        ret += OP2(*);
-        break;
-    }
-    case IROpcode::LeftRotate8: {
-        ret += FOP2(rol8, src, amount);
-        break;
-    }
-    case IROpcode::LeftRotate16: {
-        ret += FOP2(rol16, src, amount);
-        break;
-    }
-    case IROpcode::LeftRotate32: {
-        ret += FOP2(rol32, src, amount);
-        break;
-    }
-    case IROpcode::LeftRotate64: {
-        ret += FOP2(rol64, src, amount);
-        break;
-    }
-    case IROpcode::Cpuid: {
-        ret += FOP(cpuid);
-        break;
-    }
-    case IROpcode::WriteByte: {
-        ret += VOP2(write8, address, src);
-        break;
-    }
-    case IROpcode::WriteWord: {
-        ret += VOP2(write16, address, src);
-        break;
-    }
-    case IROpcode::WriteDWord: {
-        ret += VOP2(write32, address, src);
-        break;
-    }
-    case IROpcode::WriteQWord: {
-        ret += VOP2(write64, address, src);
-        break;
-    }
-    case IROpcode::WriteXmmWord: {
-        ret += VOP2(write128, address, src);
-        break;
-    }
-    case IROpcode::Sext8: {
-        ret += FOP1(sext8, src);
-        break;
-    }
-    case IROpcode::Sext16: {
-        ret += FOP1(sext16, src);
-        break;
-    }
-    case IROpcode::Sext32: {
-        ret += FOP1(sext32, src);
-        break;
-    }
-    case IROpcode::CastIntegerToVector: {
-        ret += FOP1(int_to_vec, integer);
-        break;
-    }
-    case IROpcode::CastVectorToInteger: {
-        ret += FOP1(vec_to_int, vector);
-        break;
-    }
-    case IROpcode::Clz: {
-        ret += FOP1(clz, src);
-        break;
-    }
-    case IROpcode::Ctzh: {
-        ret += FOP1(ctzh, src);
-        break;
-    }
-    case IROpcode::Ctzw: {
-        ret += FOP1(ctzw, src);
-        break;
-    }
-    case IROpcode::Ctz: {
-        ret += FOP1(ctz, src);
-        break;
-    }
-    case IROpcode::Not: {
-        ret += FOP1(not, src);
-        break;
-    }
-    case IROpcode::Parity: {
-        ret += FOP1(parity, src);
-        break;
-    }
-    case IROpcode::ReadByte: {
-        ret += FOP1(read8, address);
-        break;
-    }
-    case IROpcode::ReadWord: {
-        ret += FOP1(read16, address);
-        break;
-    }
-    case IROpcode::ReadDWord: {
-        ret += FOP1(read32, address);
-        break;
-    }
-    case IROpcode::ReadQWord: {
-        ret += FOP1(read64, address);
-        break;
-    }
-    case IROpcode::ReadXmmWord: {
-        ret += FOP1(read128, address);
-        break;
-    }
-    case IROpcode::Div: {
-        ret += FOP2(div, dividend, divisor);
-        break;
-    }
-    case IROpcode::Divu: {
-        ret += FOP2(divu, dividend, divisor);
-        break;
-    }
-    case IROpcode::Divw: {
-        ret += FOP2(divw, dividend, divisor);
-        break;
-    }
-    case IROpcode::Divuw: {
-        ret += FOP2(divuw, dividend, divisor);
-        break;
-    }
-    case IROpcode::Rem: {
-        ret += FOP2(rem, dividend, divisor);
-        break;
-    }
-    case IROpcode::Remu: {
-        ret += FOP2(remu, dividend, divisor);
-        break;
-    }
-    case IROpcode::Remw: {
-        ret += FOP2(remw, dividend, divisor);
-        break;
-    }
-    case IROpcode::Remuw: {
-        ret += FOP2(remuw, dividend, divisor);
-        break;
-    }
-    case IROpcode::Div128: {
-        ret += FOP1(div128, divisor);
-        break;
-    }
-    case IROpcode::Divu128: {
-        ret += FOP1(divu128, divisor);
-        break;
-    }
-    case IROpcode::Syscall: {
-        ret += FOP(syscall);
-        break;
-    }
-    case IROpcode::VAnd: {
-        ret += FOP2(vand, src1, src2);
-        break;
-    }
-    case IROpcode::VOr: {
-        ret += FOP2(vor, src1, src2);
-        break;
-    }
-    case IROpcode::VXor: {
-        ret += FOP2(vxor, src1, src2);
-        break;
-    }
-    case IROpcode::VShiftLeft: {
-        ret += FOP2(vshl, src1, src2);
-        break;
-    }
-    case IROpcode::VShiftRight: {
-        ret += FOP2(vshr, src1, src2);
-        break;
-    }
-    case IROpcode::VZext64: {
-        ret += FOP1(vzext64, src);
-        break;
-    }
-    case IROpcode::VPackedAddQWord: {
-        ret += FOP2(vpaddqword, src1, src2);
-        break;
-    }
-    case IROpcode::VPackedEqualByte: {
-        ret += FOP2(vpeqbyte, src1, src2);
-        break;
-    }
-    case IROpcode::VPackedEqualWord: {
-        ret += FOP2(vpeqword, src1, src2);
-        break;
-    }
-    case IROpcode::VPackedEqualDWord: {
-        ret += FOP2(vpeqdword, src1, src2);
-        break;
-    }
-    case IROpcode::VPackedShuffleDWord: {
-        ret += fmt::format("{} {} <- vpshufdword({}, 0x{:x})", GetTypeString(), GetNameString(GetName()), GetNameString(GetOperandName(0)),
-                           (u8)GetImmediateData());
-        break;
-    }
-    case IROpcode::VPackedMinByte: {
-        ret += FOP2(vpminbyte, src1, src2);
-        break;
-    }
-    case IROpcode::VPackedSubByte: {
-        ret += FOP2(vpsubbyte, src1, src2);
-        break;
-    }
-    case IROpcode::VMoveByteMask: {
-        ret += FOP1(vmovbytemask, src);
-        break;
-    }
-    case IROpcode::VExtractInteger: {
-        ret += FOP1(vextractint, src);
-        break;
-    }
-    case IROpcode::VInsertInteger: {
-        ret += FOP2(vinsertint, vector, integer);
-        break;
-    }
-    case IROpcode::VUnpackByteLow: {
-        ret += FOP2(vunpackbytelow, src1, src2);
-        break;
-    }
-    case IROpcode::VUnpackWordLow: {
-        ret += FOP2(vunpackwordlow, src1, src2);
-        break;
-    }
-    case IROpcode::VUnpackDWordLow: {
-        ret += FOP2(vunpackdwordlow, src1, src2);
-        break;
-    }
-    case IROpcode::VUnpackQWordLow: {
-        ret += FOP2(vunpackqwordlow, src1, src2);
-        break;
-    }
-    default: {
-        ERROR("Unimplemented op: %d", (int)GetOpcode());
-        return "";
-    }
-    }
-
-    if (opcode != IROpcode::Comment) {
-        u64 size = ret.size();
-        while (size < 50) {
-            ret += " ";
-            size++;
-        }
-
-        ret += "(uses: " + std::to_string(GetUseCount());
-        if (IsLocked()) {
-            ret += " *locked*";
-        }
-        ret += ")";
-    }
-
-    if (callback)
-        ret += callback(this);
-
-    return ret;
-}
-
-#undef OP2
-#undef OP2I
-#undef FOP
-#undef FOP1
-#undef FOP2
-#undef VOP2
 
 bool SSAInstruction::IsVoid() const {
     return return_type == IRType::Void;
@@ -912,18 +543,28 @@ void SSAInstruction::PropagateMovs() {
     }
 }
 
-#define OP2(op) fmt::format("{} <- {} {} {}", GetNameString(name), GetNameString(operands[0]), #op, GetNameString(operands[1]))
-#define OP2I(op) fmt::format("{} <- {} {} 0x{:x}", GetNameString(name), GetNameString(operands[0]), #op, (i64)immediate_data);
-#define FOP(func) fmt::format("{} <- {}()", GetNameString(name), #func)
-#define FOP1(func, param) fmt::format("{} <- {}({}: {})", GetNameString(name), #func, #param, GetNameString(operands[0]))
-#define FOP2(func, param1, param2)                                                                                                                   \
-    fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), #func, #param1, GetNameString(operands[0]), #param2, GetNameString(operands[1]))
-#define VOP2(func, param1, param2) fmt::format("{}({}: {}, {}: {})", #func, #param1, GetNameString(operands[0]), #param2, GetNameString(operands[1]))
-
-std::string ReducedInstruction::Print(const std::function<std::string(const ReducedInstruction*)>& callback) const {
+std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands, u64 immediate_data) {
     std::string ret;
 
     switch (opcode) {
+    case IROpcode::Count: {
+        UNREACHABLE();
+    }
+    case IROpcode::Phi:
+    case IROpcode::Comment:
+    case IROpcode::SetGuest:
+    case IROpcode::GetGuest: {
+        return "Bad print type???";
+    }
+    case IROpcode::Null: {
+        return "Null";
+    }
+    case IROpcode::GetThreadStatePointer: {
+        return fmt::format("{} <- ThreadStatePointer", GetNameString(name));
+    }
+    case IROpcode::SetExitReason: {
+        return fmt::format("SetExitReason({})", (u8)immediate_data);
+    }
     case IROpcode::Immediate: {
         ret += fmt::format("{} <- 0x{:x}", GetNameString(name), immediate_data);
         break;
@@ -938,7 +579,7 @@ std::string ReducedInstruction::Print(const std::function<std::string(const Redu
         break;
     }
     case IROpcode::Rdtsc: {
-        ret += FOP(rdtsc);
+        ret += fmt::format("{} <- {}()", GetNameString(name), "rdtsc");
         break;
     }
     case IROpcode::LoadGuestFromMemory: {
@@ -950,257 +591,427 @@ std::string ReducedInstruction::Print(const std::function<std::string(const Redu
         break;
     }
     case IROpcode::Add: {
-        ret += OP2(+);
+        ret += fmt::format("{} <- {} {} {}", GetNameString(name), GetNameString(operands[0]), "+", GetNameString(operands[1]));
         break;
     }
     case IROpcode::Addi: {
-        ret += OP2I(+);
+        ret += fmt::format("{} <- {} {} 0x{:x}", GetNameString(name), GetNameString(operands[0]), "+", (i64)immediate_data);
+        ;
         break;
     }
     case IROpcode::Sub: {
-        ret += OP2(-);
+        ret += fmt::format("{} <- {} {} {}", GetNameString(name), GetNameString(operands[0]), "-", GetNameString(operands[1]));
         break;
     }
     case IROpcode::And: {
-        ret += OP2(&);
+        ret += fmt::format("{} <- {} {} {}", GetNameString(name), GetNameString(operands[0]), "&", GetNameString(operands[1]));
         break;
     }
     case IROpcode::Or: {
-        ret += OP2(|);
+        ret += fmt::format("{} <- {} {} {}", GetNameString(name), GetNameString(operands[0]), "|", GetNameString(operands[1]));
         break;
     }
     case IROpcode::Xor: {
-        ret += OP2(^);
+        ret += fmt::format("{} <- {} {} {}", GetNameString(name), GetNameString(operands[0]), "^", GetNameString(operands[1]));
         break;
     }
     case IROpcode::ShiftLeft: {
-        ret += OP2(<<);
+        ret += fmt::format("{} <- {} {} {}", GetNameString(name), GetNameString(operands[0]), "<<", GetNameString(operands[1]));
         break;
     }
     case IROpcode::ShiftRight: {
-        ret += OP2(>>);
+        ret += fmt::format("{} <- {} {} {}", GetNameString(name), GetNameString(operands[0]), ">>", GetNameString(operands[1]));
         break;
     }
     case IROpcode::ShiftRightArithmetic: {
-        ret += OP2(>>);
+        ret += fmt::format("{} <- {} {} {}", GetNameString(name), GetNameString(operands[0]), ">>", GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoAdd8: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoadd8", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoAdd16: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoadd16", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoAdd32: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoadd32", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoAdd64: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoadd64", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoAnd8: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoand8", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoAnd16: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoand16", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoAnd32: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoand32", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoAnd64: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoand64", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoOr8: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoor8", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoOr16: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoor16", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoOr32: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoor32", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoOr64: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoor64", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoXor8: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoxor8", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoXor16: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoxor16", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoXor32: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoxor32", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoXor64: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoxor64", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoSwap8: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoswap8", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoSwap16: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoswap16", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoSwap32: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoswap32", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoSwap64: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "amoswap64", "address", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::AmoCAS8: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {}, {}: {})", GetNameString(name), "amocas8", "address", GetNameString(operands[0]), "expected",
+                           GetNameString(operands[1]), "src", GetNameString(operands[2]));
+        break;
+    }
+    case IROpcode::AmoCAS16: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {}, {}: {})", GetNameString(name), "amocas16", "address", GetNameString(operands[0]), "expected",
+                           GetNameString(operands[1]), "src", GetNameString(operands[2]));
+        break;
+    }
+    case IROpcode::AmoCAS32: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {}, {}: {})", GetNameString(name), "amocas32", "address", GetNameString(operands[0]), "expected",
+                           GetNameString(operands[1]), "src", GetNameString(operands[2]));
+        break;
+    }
+    case IROpcode::AmoCAS64: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {}, {}: {})", GetNameString(name), "amocas64", "address", GetNameString(operands[0]), "expected",
+                           GetNameString(operands[1]), "src", GetNameString(operands[2]));
+        break;
+    }
+    case IROpcode::AmoCAS128: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {}, {}: {})", GetNameString(name), "amocas128", "address", GetNameString(operands[0]), "expected",
+                           GetNameString(operands[1]), "src", GetNameString(operands[2]));
         break;
     }
     case IROpcode::Equal: {
-        ret += OP2(==);
+        ret += fmt::format("{} <- {} {} {}", GetNameString(name), GetNameString(operands[0]), "==", GetNameString(operands[1]));
         break;
     }
     case IROpcode::NotEqual: {
-        ret += OP2(!=);
+        ret += fmt::format("{} <- {} {} {}", GetNameString(name), GetNameString(operands[0]), "!=", GetNameString(operands[1]));
         break;
     }
-    case IROpcode::UGreaterThan: {
-        ret += OP2(>);
+    case IROpcode::SetLessThanUnsigned: {
+        ret += fmt::format("{} <- {} {} {}", GetNameString(name), GetNameString(operands[0]), "<", GetNameString(operands[1]));
         break;
     }
-    case IROpcode::IGreaterThan: {
-        ret += OP2(>);
+    case IROpcode::SetLessThanSigned: {
+        ret += fmt::format("{} <- {} {} {}", GetNameString(name), GetNameString(operands[0]), "<", GetNameString(operands[1]));
         break;
     }
-    case IROpcode::ULessThan: {
-        ret += OP2(<);
-        break;
-    }
-    case IROpcode::ILessThan: {
-        ret += OP2(<);
+    case IROpcode::Neg: {
+        ret += fmt::format("{} <- {} {}", GetNameString(name), "-", GetNameString(operands[0]));
         break;
     }
     case IROpcode::Mul:
     case IROpcode::Mulh:
     case IROpcode::Mulhu: {
-        ret += OP2(*);
+        ret += fmt::format("{} <- {} {} {}", GetNameString(name), GetNameString(operands[0]), "*", GetNameString(operands[1]));
         break;
     }
     case IROpcode::LeftRotate8: {
-        ret += FOP2(rol8, src, amount);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "rol8", "src", GetNameString(operands[0]), "amount",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::LeftRotate16: {
-        ret += FOP2(rol16, src, amount);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "rol16", "src", GetNameString(operands[0]), "amount",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::LeftRotate32: {
-        ret += FOP2(rol32, src, amount);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "rol32", "src", GetNameString(operands[0]), "amount",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::LeftRotate64: {
-        ret += FOP2(rol64, src, amount);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "rol64", "src", GetNameString(operands[0]), "amount",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::Cpuid: {
-        ret += FOP(cpuid);
+        ret += fmt::format("{} <- {}()", GetNameString(name), "cpuid");
         break;
     }
     case IROpcode::WriteByte: {
-        ret += VOP2(write8, address, src);
+        ret += fmt::format("{}({}: {}, {}: {})", "write8", "address", GetNameString(operands[0]), "src", GetNameString(operands[1]));
         break;
     }
     case IROpcode::WriteWord: {
-        ret += VOP2(write16, address, src);
+        ret += fmt::format("{}({}: {}, {}: {})", "write16", "address", GetNameString(operands[0]), "src", GetNameString(operands[1]));
         break;
     }
     case IROpcode::WriteDWord: {
-        ret += VOP2(write32, address, src);
+        ret += fmt::format("{}({}: {}, {}: {})", "write32", "address", GetNameString(operands[0]), "src", GetNameString(operands[1]));
         break;
     }
     case IROpcode::WriteQWord: {
-        ret += VOP2(write64, address, src);
+        ret += fmt::format("{}({}: {}, {}: {})", "write64", "address", GetNameString(operands[0]), "src", GetNameString(operands[1]));
         break;
     }
     case IROpcode::WriteXmmWord: {
-        ret += VOP2(write128, address, src);
+        ret += fmt::format("{}({}: {}, {}: {})", "write128", "address", GetNameString(operands[0]), "src", GetNameString(operands[1]));
         break;
     }
     case IROpcode::Sext8: {
-        ret += FOP1(sext8, src);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "sext8", "src", GetNameString(operands[0]));
         break;
     }
     case IROpcode::Sext16: {
-        ret += FOP1(sext16, src);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "sext16", "src", GetNameString(operands[0]));
         break;
     }
     case IROpcode::Sext32: {
-        ret += FOP1(sext32, src);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "sext32", "src", GetNameString(operands[0]));
         break;
     }
-    case IROpcode::CastIntegerToVector: {
-        ret += FOP1(int_to_vec, integer);
+    case IROpcode::CastVectorFromInteger: {
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "int_to_vec", "integer", GetNameString(operands[0]));
         break;
     }
-    case IROpcode::CastVectorToInteger: {
-        ret += FOP1(vec_to_int, vector);
+    case IROpcode::CastIntegerFromVector: {
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vec_to_int", "vector", GetNameString(operands[0]));
         break;
     }
     case IROpcode::Clz: {
-        ret += FOP1(clz, src);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "clz", "src", GetNameString(operands[0]));
         break;
     }
     case IROpcode::Ctzh: {
-        ret += FOP1(ctzh, src);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "ctzh", "src", GetNameString(operands[0]));
         break;
     }
     case IROpcode::Ctzw: {
-        ret += FOP1(ctzw, src);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "ctzw", "src", GetNameString(operands[0]));
         break;
     }
     case IROpcode::Ctz: {
-        ret += FOP1(ctz, src);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "ctz", "src", GetNameString(operands[0]));
         break;
     }
     case IROpcode::Not: {
-        ret += FOP1(not, src);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "not", "src", GetNameString(operands[0]));
         break;
     }
     case IROpcode::Parity: {
-        ret += FOP1(parity, src);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "parity", "src", GetNameString(operands[0]));
         break;
     }
     case IROpcode::ReadByte: {
-        ret += FOP1(read8, address);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "read8", "address", GetNameString(operands[0]));
         break;
     }
     case IROpcode::ReadWord: {
-        ret += FOP1(read16, address);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "read16", "address", GetNameString(operands[0]));
         break;
     }
     case IROpcode::ReadDWord: {
-        ret += FOP1(read32, address);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "read32", "address", GetNameString(operands[0]));
         break;
     }
     case IROpcode::ReadQWord: {
-        ret += FOP1(read64, address);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "read64", "address", GetNameString(operands[0]));
         break;
     }
     case IROpcode::ReadXmmWord: {
-        ret += FOP1(read128, address);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "read128", "address", GetNameString(operands[0]));
+        break;
+    }
+    case IROpcode::ReadByteRelative: {
+        ret += fmt::format("{} <- {}({}: {} + 0x{:x})", GetNameString(name), "read8", "address", GetNameString(operands[0]), immediate_data);
+        break;
+    }
+    case IROpcode::ReadQWordRelative: {
+        ret += fmt::format("{} <- {}({}: {} + 0x{:x})", GetNameString(name), "read64", "address", GetNameString(operands[0]), immediate_data);
+        break;
+    }
+    case IROpcode::ReadXmmWordRelative: {
+        ret += fmt::format("{} <- {}({}: {} + 0x{:x})", GetNameString(name), "read128", "address", GetNameString(operands[0]), immediate_data);
+        break;
+    }
+    case IROpcode::WriteByteRelative: {
+        ret += fmt::format("{}({}: {} + 0x{:x}, {}: {})", "write8", "address", GetNameString(operands[0]), immediate_data, "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::WriteQWordRelative: {
+        ret += fmt::format("{}({}: {} + 0x{:x}, {}: {})", "write64", "address", GetNameString(operands[0]), immediate_data, "src",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::WriteXmmWordRelative: {
+        ret += fmt::format("{}({}: {} + 0x{:x}, {}: {})", "write128", "address", GetNameString(operands[0]), immediate_data, "src",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::Div: {
-        ret += FOP2(div, dividend, divisor);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "div", "dividend", GetNameString(operands[0]), "divisor",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::Divu: {
-        ret += FOP2(divu, dividend, divisor);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "divu", "dividend", GetNameString(operands[0]), "divisor",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::Divw: {
-        ret += FOP2(divw, dividend, divisor);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "divw", "dividend", GetNameString(operands[0]), "divisor",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::Divuw: {
-        ret += FOP2(divuw, dividend, divisor);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "divuw", "dividend", GetNameString(operands[0]), "divisor",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::Rem: {
-        ret += FOP2(rem, dividend, divisor);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "rem", "dividend", GetNameString(operands[0]), "divisor",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::Remu: {
-        ret += FOP2(remu, dividend, divisor);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "remu", "dividend", GetNameString(operands[0]), "divisor",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::Remw: {
-        ret += FOP2(remw, dividend, divisor);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "remw", "dividend", GetNameString(operands[0]), "divisor",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::Remuw: {
-        ret += FOP2(remuw, dividend, divisor);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "remuw", "dividend", GetNameString(operands[0]), "divisor",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::Div128: {
-        ret += FOP1(div128, divisor);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "div128", "divisor", GetNameString(operands[0]));
         break;
     }
     case IROpcode::Divu128: {
-        ret += FOP1(divu128, divisor);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "divu128", "divisor", GetNameString(operands[0]));
         break;
     }
     case IROpcode::Syscall: {
-        ret += FOP(syscall);
+        ret += fmt::format("{} <- {}()", GetNameString(name), "syscall");
         break;
     }
     case IROpcode::VAnd: {
-        ret += FOP2(vand, src1, src2);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vand", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::VOr: {
-        ret += FOP2(vor, src1, src2);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vor", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::VXor: {
-        ret += FOP2(vxor, src1, src2);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vxor", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::VShiftLeft: {
-        ret += FOP2(vshl, src1, src2);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vshl", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::VShiftRight: {
-        ret += FOP2(vshr, src1, src2);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vshr", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::VZext64: {
-        ret += FOP1(vzext64, src);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vzext64", "src", GetNameString(operands[0]));
         break;
     }
     case IROpcode::VPackedAddQWord: {
-        ret += FOP2(vpaddqword, src1, src2);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vpaddqword", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::VPackedEqualByte: {
-        ret += FOP2(vpeqbyte, src1, src2);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vpeqbyte", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::VPackedEqualWord: {
-        ret += FOP2(vpeqword, src1, src2);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vpeqword", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::VPackedEqualDWord: {
-        ret += FOP2(vpeqdword, src1, src2);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vpeqdword", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::VPackedShuffleDWord: {
@@ -1208,45 +1019,139 @@ std::string ReducedInstruction::Print(const std::function<std::string(const Redu
         break;
     }
     case IROpcode::VPackedMinByte: {
-        ret += FOP2(vpminbyte, src1, src2);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vpminbyte", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::VPackedSubByte: {
-        ret += FOP2(vpsubbyte, src1, src2);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vpsubbyte", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::VMoveByteMask: {
-        ret += FOP1(vmovbytemask, src);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vmovbytemask", "src", GetNameString(operands[0]));
         break;
     }
     case IROpcode::VExtractInteger: {
-        ret += FOP1(vextractint, src);
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vextractint", "src", GetNameString(operands[0]));
         break;
     }
     case IROpcode::VInsertInteger: {
-        ret += FOP2(vinsertint, vector, integer);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vinsertint", "vector", GetNameString(operands[0]), "integer",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::VUnpackByteLow: {
-        ret += FOP2(vunpackbytelow, src1, src2);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vunpackbytelow", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::VUnpackWordLow: {
-        ret += FOP2(vunpackwordlow, src1, src2);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vunpackwordlow", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::VUnpackDWordLow: {
-        ret += FOP2(vunpackdwordlow, src1, src2);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vunpackdwordlow", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::VUnpackQWordLow: {
-        ret += FOP2(vunpackqwordlow, src1, src2);
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vunpackqwordlow", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
+        break;
+    }
+    }
+
+    return ret;
+}
+
+std::string SSAInstruction::Print(const std::function<std::string(const SSAInstruction*)>& callback) const {
+    IROpcode opcode = GetOpcode();
+    std::string ret;
+
+    x86_ref_e ref = X86_REF_COUNT;
+    if (IsSetGuest()) {
+        ref = AsSetGuest().ref;
+    } else if (IsGetGuest()) {
+        ref = AsGetGuest().ref;
+    }
+
+    std::array<u32, 4> operands;
+    u8 operand_count = 0;
+    u64 immediate_data = 0;
+
+    if (IsOperands()) {
+        operand_count = GetOperandCount();
+        immediate_data = GetImmediateData();
+        for (int i = 0; i < operand_count; i++) {
+            operands[i] = GetOperandName(i);
+        }
+    }
+
+    switch (opcode) {
+    case IROpcode::Phi: {
+        const Phi& phi = AsPhi();
+        ret = fmt::format("{} {} <- φ<{}>(", GetTypeString(), GetNameString(GetName()), print_guest_register(phi.ref));
+        for (size_t i = 0; i < phi.values.size(); i++) {
+            if (!phi.blocks[i]) {
+                ERROR("Block is null");
+            }
+
+            if (!phi.values[i]) {
+                ERROR("Value is null");
+            }
+
+            ret += fmt::format("{} @ Block {}", GetNameString(phi.values[i]->GetName()), phi.blocks[i]->GetName());
+
+            if (i != phi.values.size() - 1) {
+                ret += ", ";
+            }
+        }
+        ret += ")";
+        break;
+    }
+    case IROpcode::Comment: {
+        return AsComment().comment;
+    }
+    case IROpcode::GetGuest: {
+        ret += fmt::format("{} <- get_guest {}", GetNameString(GetName()), print_guest_register(AsGetGuest().ref));
+        break;
+    }
+    case IROpcode::SetGuest: {
+        ret += fmt::format("{} <- set_guest {}, {}", GetNameString(GetName()), print_guest_register(AsSetGuest().ref),
+                           GetNameString(AsSetGuest().source->GetName()));
+        break;
+    }
+    case IROpcode::LoadGuestFromMemory: {
+        ret += fmt::format("{} <- load_from_vm {}", GetNameString(GetName()), print_guest_register(AsGetGuest().ref));
+        break;
+    }
+    case IROpcode::StoreGuestToMemory: {
+        ret += fmt::format("store_to_vm {}, {}", print_guest_register(AsSetGuest().ref), GetNameString(AsSetGuest().source->GetName()));
         break;
     }
     default: {
-        ERROR("Bad opcode: %d", (int)opcode);
+        ret += ::Print(GetOpcode(), ref, GetName(), operands.data(), immediate_data);
     }
     }
+
+    if (opcode != IROpcode::Comment) {
+        u64 size = ret.size();
+        while (size < 50) {
+            ret += " ";
+            size++;
+        }
+
+        ret += "(uses: " + std::to_string(GetUseCount());
+        if (IsLocked()) {
+            ret += " *locked*";
+        }
+        ret += ")";
+    }
+
+    if (callback)
+        ret += callback(this);
 
     return ret;
 }

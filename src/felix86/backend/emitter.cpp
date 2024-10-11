@@ -1,6 +1,7 @@
-#include "felix86/backend/allocated_register.hpp"
 #include "felix86/backend/backend.hpp"
 #include "felix86/backend/emitter.hpp"
+#include "felix86/hle/cpuid.hpp"
+#include "felix86/hle/syscall.hpp"
 
 #define AS (backend.GetAssembler())
 
@@ -14,6 +15,38 @@
     }
 
 namespace {
+
+// Nothing ships these extensions yet and AFAIK there's no way to check for them
+constexpr bool HasZabha() {
+    return false;
+}
+
+constexpr bool HasZacas() {
+    return false;
+}
+
+constexpr bool HasB() {
+    return false;
+}
+
+void EmitCrash(Backend& backend, ExitReason reason) {
+    Emitter::EmitSetExitReason(backend, static_cast<u64>(reason));
+    Emitter::EmitJump(backend, backend.GetCrashTarget());
+}
+
+void EmitZext8(Backend& backend, biscuit::GPR Rd) {
+    AS.C_ANDI(Rd, 0xFF);
+}
+
+void EmitZext16(Backend& backend, biscuit::GPR Rd) {
+    AS.C_SLLI(Rd, 48);
+    AS.C_SRLI(Rd, 48);
+}
+
+void EmitZext32(Backend& backend, biscuit::GPR Rd) {
+    AS.C_SLLI(Rd, 32);
+    AS.C_SRLI(Rd, 32);
+}
 
 void SoftwareCtz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u32 size) {
     WARN("Untested CTZ implementation");
@@ -35,13 +68,146 @@ void SoftwareCtz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u32 size) {
     AS.MV(Rd, counter);
 }
 
+using Operation = void (biscuit::Assembler::*)(biscuit::GPR, biscuit::GPR, biscuit::GPR);
+
+void SoftwareAtomicFetchRMW8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, biscuit::GPR Address, biscuit::Ordering ordering,
+                             Operation operation) {
+    if (ordering != biscuit::Ordering::AQRL) {
+        UNIMPLEMENTED();
+    }
+
+    // Since there's no 8-bit atomics yet, we need to emulate the RMW operations using 32-bit SC/LL.
+    // We need a mask for the byte we want to modify and a mask for the bytes we want to stay the same
+    // Load the word, do the operation, mask the resulting byte and the initial bytes, or them together and SC.
+    // Also save the initial read value in Rd
+
+    biscuit::GPR scratch = backend.AcquireScratchGPR();
+    biscuit::GPR scratch2 = backend.AcquireScratchGPR();
+    biscuit::GPR mask = backend.AcquireScratchGPR();
+    biscuit::GPR mask_not = backend.AcquireScratchGPR();
+    biscuit::GPR Rs_shifted = backend.AcquireScratchGPR();
+    biscuit::GPR address_aligned = backend.AcquireScratchGPR();
+
+    AS.ANDI(mask, Address, 3);
+    AS.SLLIW(mask, mask, 3);
+    AS.SLLW(Rs_shifted, Rs, mask);
+    AS.LI(scratch, 0xFF);
+    AS.SLLW(mask, scratch, mask); // mask now contains a mask for the relevant byte
+    AS.NOT(mask_not, mask);
+    AS.ANDI(address_aligned, Address, -4);
+
+    biscuit::Label loop;
+
+    AS.Bind(&loop);
+    AS.LR_W(biscuit::Ordering::AQRL, Rd, address_aligned);
+    (AS.*operation)(scratch2, Rd, Rs_shifted);
+    AS.AND(scratch2, scratch2, mask);
+    AS.AND(scratch, Rd, mask_not);
+    AS.OR(scratch, scratch, scratch2);
+    AS.SC_W(biscuit::Ordering::RL, scratch2, scratch, address_aligned);
+    AS.BNEZ(scratch2, &loop);
+
+    // Shift the loaded value to the correct place
+    AS.ANDI(scratch, Address, 3);
+    AS.SLLIW(scratch, scratch, 3);
+    AS.SRAW(Rd, Rd, scratch);
+    AS.ANDI(Rd, Rd, 0xFF);
+}
+
+void SoftwareAtomicFetchRMW16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, biscuit::GPR Address, biscuit::Ordering ordering,
+                              Operation operation) {
+    if (ordering != biscuit::Ordering::AQRL) {
+        UNIMPLEMENTED();
+    }
+
+    // See SoftwareAtomicFetchRMW8
+
+    biscuit::GPR scratch = backend.AcquireScratchGPR();
+    biscuit::GPR scratch2 = backend.AcquireScratchGPR();
+    biscuit::GPR mask = backend.AcquireScratchGPR();
+    biscuit::GPR mask_not = backend.AcquireScratchGPR();
+    biscuit::GPR Rs_shifted = backend.AcquireScratchGPR();
+    biscuit::GPR address_aligned = backend.AcquireScratchGPR();
+
+    AS.ANDI(mask, Address, 3);
+    AS.LI(scratch, 0xFFFF);
+    AS.SLLIW(mask, mask, 3);
+    AS.SLLW(Rs_shifted, Rs, mask);
+    AS.SLLW(mask, scratch, mask);
+    AS.ANDI(address_aligned, Address, -4);
+    AS.NOT(mask_not, mask);
+
+    biscuit::Label loop;
+
+    AS.Bind(&loop);
+    AS.LR_W(biscuit::Ordering::AQRL, Rd, address_aligned);
+    (AS.*operation)(scratch2, Rd, Rs_shifted);
+    AS.AND(scratch2, scratch2, mask);
+    AS.AND(scratch, Rd, mask_not);
+    AS.OR(scratch, scratch, scratch2);
+    AS.SC_W(biscuit::Ordering::RL, scratch2, scratch, address_aligned);
+    AS.BNEZ(scratch2, &loop);
+
+    // Shift the nibble accordingly
+    AS.ANDI(scratch, Address, 3);
+    AS.SLLIW(scratch, scratch, 3);
+    AS.SRAW(Rd, Rd, scratch);
+    AS.SLLI(Rd, Rd, 48);
+    AS.SRLI(Rd, Rd, 48);
+}
+
 [[nodiscard]] constexpr bool IsValidSigned12BitImm(ptrdiff_t value) {
     return value >= -2048 && value <= 2047;
 }
 
+// Inefficient but push/pop everything for now around calls
+void PushAllCallerSaved(Backend& backend) {
+    auto& caller_saved_gprs = Registers::GetCallerSavedGPRs();
+    auto& caller_saved_fprs = Registers::GetCallerSavedFPRs();
+
+    constexpr i64 size = 8 * (caller_saved_gprs.size() + caller_saved_fprs.size());
+    constexpr i64 gprs_size = 8 * caller_saved_gprs.size();
+
+    AS.ADDI(Registers::StackPointer(), Registers::StackPointer(), -size);
+
+    for (size_t i = 0; i < caller_saved_gprs.size(); i++) {
+        AS.SD(caller_saved_gprs[i], i * 8, Registers::StackPointer());
+    }
+
+    for (size_t i = 0; i < caller_saved_fprs.size(); i++) {
+        AS.FSD(caller_saved_fprs[i], gprs_size + i * 8, Registers::StackPointer());
+    }
+}
+
+void PopAllCallerSaved(Backend& backend) {
+    auto& caller_saved_gprs = Registers::GetCallerSavedGPRs();
+    auto& caller_saved_fprs = Registers::GetCallerSavedFPRs();
+
+    constexpr i64 size = 8 * (caller_saved_gprs.size() + caller_saved_fprs.size());
+    constexpr i64 gprs_size = 8 * caller_saved_gprs.size();
+
+    for (size_t i = 0; i < caller_saved_gprs.size(); i++) {
+        AS.LD(caller_saved_gprs[i], i * 8, Registers::StackPointer());
+    }
+
+    for (size_t i = 0; i < caller_saved_fprs.size(); i++) {
+        AS.FLD(caller_saved_fprs[i], gprs_size + i * 8, Registers::StackPointer());
+    }
+
+    AS.ADDI(Registers::StackPointer(), Registers::StackPointer(), size);
+}
+
+// Sanity check for alignment until we want to properly implement unaligned atomics
+void EmitAlignmentCheck(Backend& backend, biscuit::GPR address, u8 alignment) {
+    biscuit::Label ok;
+    AS.ANDI(address, address, alignment - 1);
+    AS.BEQZ(address, &ok);
+    EmitCrash(backend, ExitReason::EXIT_REASON_BAD_ALIGNMENT);
+    AS.Bind(&ok);
+}
+
 } // namespace
 
-// Should never be more than 4 instructions
 void Emitter::EmitJump(Backend& backend, void* target) {
     auto my_abs = [](u64 x) -> u64 { return x < 0 ? -x : x; };
 
@@ -57,15 +223,13 @@ void Emitter::EmitJump(Backend& backend, void* target) {
     }
 }
 
-// Should never be more than 6 instructions
-void Emitter::EmitJumpConditional(Backend& backend, Allocation condition, void* target_true, void* target_false) {
+void Emitter::EmitJumpConditional(Backend& backend, biscuit::GPR condition, void* target_true, void* target_false) {
     biscuit::GPR address_true = backend.AcquireScratchGPR();
     biscuit::GPR address_false = backend.AcquireScratchGPR();
-    biscuit::GPR condition_reg = _RegRO_(condition);
     Label false_label;
 
     // TODO: emit relative jumps if possible
-    AS.BEQZ(condition_reg, &false_label);
+    AS.BEQZ(condition, &false_label);
     AS.LI(address_true, (u64)target_true);
     AS.JR(address_true);
     AS.Bind(&false_label);
@@ -73,6 +237,12 @@ void Emitter::EmitJumpConditional(Backend& backend, Allocation condition, void* 
     AS.JR(address_false);
 
     backend.ReleaseScratchRegs();
+}
+
+void Emitter::EmitSetExitReason(Backend& backend, u64 reason) {
+    biscuit::GPR reason_reg = backend.AcquireScratchGPR();
+    AS.LI(reason_reg, (u8)reason);
+    AS.SB(reason_reg, offsetof(ThreadState, exit_dispatcher_flag), Registers::ThreadStatePointer());
 }
 
 void Emitter::EmitMov(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
@@ -108,11 +278,24 @@ void Emitter::EmitRdtsc(Backend& backend) {
 }
 
 void Emitter::EmitSyscall(Backend& backend) {
-    UNREACHABLE();
+    PushAllCallerSaved(backend);
+
+    AS.LI(a0, (u64)&backend.GetEmulator()); // TODO: maybe make Emulator class global...
+    AS.MV(a1, Registers::ThreadStatePointer());
+    AS.LI(a2, (u64)felix86_syscall); // TODO: remove when moving code buffer close to text?
+    AS.JALR(a2);
+
+    PopAllCallerSaved(backend);
 }
 
 void Emitter::EmitCpuid(Backend& backend) {
-    UNREACHABLE();
+    PushAllCallerSaved(backend);
+
+    AS.MV(a0, Registers::ThreadStatePointer());
+    AS.LI(a1, (u64)felix86_cpuid);
+    AS.JALR(a1);
+
+    PopAllCallerSaved(backend);
 }
 
 void Emitter::EmitSext8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
@@ -148,7 +331,7 @@ void Emitter::EmitCtzh(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
 }
 
 void Emitter::EmitCtzw(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    if (backend.HasB()) {
+    if (HasB()) {
         AS.CTZW(Rd, Rs);
     } else {
         SoftwareCtz(backend, Rd, Rs, 32);
@@ -156,7 +339,7 @@ void Emitter::EmitCtzw(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
 }
 
 void Emitter::EmitCtz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    if (backend.HasB()) {
+    if (HasB()) {
         AS.CTZ(Rd, Rs);
     } else {
         SoftwareCtz(backend, Rd, Rs, 64);
@@ -171,8 +354,12 @@ void Emitter::EmitNot(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
     }
 }
 
+void Emitter::EmitNeg(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    AS.NEG(Rd, Rs);
+}
+
 void Emitter::EmitParity(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    if (backend.HasB()) {
+    if (HasB()) {
         AS.ANDI(Rd, Rs, 0xFF);
         AS.CPOPW(Rd, Rd);
     } else {
@@ -229,8 +416,8 @@ void Emitter::EmitReadQWord(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) 
     AS.LD(Rd, 0, Rs);
 }
 
-void Emitter::EmitReadXmmWord(Backend& backend, biscuit::Vec Vd, biscuit::GPR address) {
-    AS.VLM(Vd, address);
+void Emitter::EmitReadXmmWord(Backend& backend, biscuit::Vec Vd, biscuit::GPR Address) {
+    AS.VLM(Vd, Address);
 }
 
 void Emitter::EmitReadByteRelative(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u64 offset) {
@@ -241,32 +428,36 @@ void Emitter::EmitReadQWordRelative(Backend& backend, biscuit::GPR Rd, biscuit::
     AS.LD(Rd, offset, Rs);
 }
 
-void Emitter::EmitWriteByte(Backend& backend, biscuit::GPR address, biscuit::GPR Rs) {
-    AS.SB(Rs, 0, address);
+void Emitter::EmitWriteByte(Backend& backend, biscuit::GPR Address, biscuit::GPR Rs) {
+    AS.SB(Rs, 0, Address);
 }
 
-void Emitter::EmitWriteWord(Backend& backend, biscuit::GPR address, biscuit::GPR Rs) {
-    AS.SH(Rs, 0, address);
+void Emitter::EmitWriteWord(Backend& backend, biscuit::GPR Address, biscuit::GPR Rs) {
+    AS.SH(Rs, 0, Address);
 }
 
-void Emitter::EmitWriteDWord(Backend& backend, biscuit::GPR address, biscuit::GPR Rs) {
-    AS.SW(Rs, 0, address);
+void Emitter::EmitWriteDWord(Backend& backend, biscuit::GPR Address, biscuit::GPR Rs) {
+    AS.SW(Rs, 0, Address);
 }
 
-void Emitter::EmitWriteQWord(Backend& backend, biscuit::GPR address, biscuit::GPR Rs) {
-    AS.SD(Rs, 0, address);
+void Emitter::EmitWriteQWord(Backend& backend, biscuit::GPR Address, biscuit::GPR Rs) {
+    AS.SD(Rs, 0, Address);
 }
 
-void Emitter::EmitWriteXmmWord(Backend& backend, biscuit::GPR address, biscuit::Vec Vs) {
-    AS.VSM(Vs, address);
+void Emitter::EmitWriteXmmWord(Backend& backend, biscuit::GPR Address, biscuit::Vec Vs) {
+    AS.VSM(Vs, Address);
 }
 
-void Emitter::EmitWriteByteRelative(Backend& backend, biscuit::GPR address, biscuit::GPR Rs, u64 offset) {
-    AS.SB(Rs, offset, address);
+void Emitter::EmitWriteByteRelative(Backend& backend, biscuit::GPR Address, biscuit::GPR Rs, u64 offset) {
+    AS.SB(Rs, offset, Address);
 }
 
-void Emitter::EmitWriteQWordRelative(Backend& backend, biscuit::GPR address, biscuit::GPR Rs, u64 offset) {
-    AS.SD(Rs, offset, address);
+void Emitter::EmitWriteQWordRelative(Backend& backend, biscuit::GPR Address, biscuit::GPR Rs, u64 offset) {
+    AS.SD(Rs, offset, Address);
+}
+
+void Emitter::EmitAdd(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    MAYBE_C(ADD);
 }
 
 void Emitter::EmitAddi(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u64 immediate) {
@@ -279,8 +470,199 @@ void Emitter::EmitAddi(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u64 i
     }
 }
 
-void Emitter::EmitAdd(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
-    MAYBE_C(ADD);
+void Emitter::EmitAmoAdd8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    if (HasZabha()) {
+        AS.AMOADD_B(ordering, Rd, Rs, Address);
+        EmitZext8(backend, Rd);
+    } else {
+        SoftwareAtomicFetchRMW8(backend, Rd, Rs, Address, ordering, &biscuit::Assembler::ADD);
+    }
+}
+
+void Emitter::EmitAmoAdd16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    if (HasZabha()) {
+        EmitAlignmentCheck(backend, Address, 2);
+        AS.AMOADD_H(ordering, Rd, Rs, Address);
+        EmitZext16(backend, Rd);
+    } else {
+        SoftwareAtomicFetchRMW16(backend, Rd, Rs, Address, ordering, &biscuit::Assembler::ADD);
+    }
+}
+
+void Emitter::EmitAmoAdd32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    EmitAlignmentCheck(backend, Address, 4);
+    AS.AMOADD_W(ordering, Rd, Rs, Address);
+}
+
+void Emitter::EmitAmoAdd64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    EmitAlignmentCheck(backend, Address, 8);
+    AS.AMOADD_D(ordering, Rd, Rs, Address);
+}
+
+void Emitter::EmitAmoAnd8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    if (HasZabha()) {
+        AS.AMOAND_B(ordering, Rd, Rs, Address);
+        EmitZext8(backend, Rd);
+    } else {
+        SoftwareAtomicFetchRMW8(backend, Rd, Rs, Address, ordering, &biscuit::Assembler::AND);
+    }
+}
+
+void Emitter::EmitAmoAnd16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    if (HasZabha()) {
+        EmitAlignmentCheck(backend, Address, 2);
+        AS.AMOAND_H(ordering, Rd, Rs, Address);
+        EmitZext16(backend, Rd);
+    } else {
+        SoftwareAtomicFetchRMW16(backend, Rd, Rs, Address, ordering, &biscuit::Assembler::AND);
+    }
+}
+
+void Emitter::EmitAmoAnd32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    EmitAlignmentCheck(backend, Address, 4);
+    AS.AMOAND_W(ordering, Rd, Rs, Address);
+    EmitZext32(backend, Rd);
+}
+
+void Emitter::EmitAmoAnd64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    EmitAlignmentCheck(backend, Address, 8);
+    AS.AMOAND_D(ordering, Rd, Rs, Address);
+}
+
+void Emitter::EmitAmoOr8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    if (HasZabha()) {
+        AS.AMOOR_B(ordering, Rd, Rs, Address);
+        EmitZext8(backend, Rd);
+    } else {
+        SoftwareAtomicFetchRMW8(backend, Rd, Rs, Address, ordering, &biscuit::Assembler::OR);
+    }
+}
+
+void Emitter::EmitAmoOr16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    if (HasZabha()) {
+        EmitAlignmentCheck(backend, Address, 2);
+        AS.AMOOR_H(ordering, Rd, Rs, Address);
+        EmitZext16(backend, Rd);
+    } else {
+        SoftwareAtomicFetchRMW16(backend, Rd, Rs, Address, ordering, &biscuit::Assembler::OR);
+    }
+}
+
+void Emitter::EmitAmoOr32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    EmitAlignmentCheck(backend, Address, 4);
+    AS.AMOOR_W(ordering, Rd, Rs, Address);
+    EmitZext32(backend, Rd);
+}
+
+void Emitter::EmitAmoOr64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    EmitAlignmentCheck(backend, Address, 8);
+    AS.AMOOR_D(ordering, Rd, Rs, Address);
+}
+
+void Emitter::EmitAmoXor8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    if (HasZabha()) {
+        AS.AMOXOR_B(ordering, Rd, Rs, Address);
+        EmitZext8(backend, Rd);
+    } else {
+        SoftwareAtomicFetchRMW8(backend, Rd, Rs, Address, ordering, &biscuit::Assembler::XOR);
+    }
+}
+
+void Emitter::EmitAmoXor16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    if (HasZabha()) {
+        EmitAlignmentCheck(backend, Address, 2);
+        AS.AMOXOR_H(ordering, Rd, Rs, Address);
+        EmitZext16(backend, Rd);
+    } else {
+        SoftwareAtomicFetchRMW16(backend, Rd, Rs, Address, ordering, &biscuit::Assembler::XOR);
+    }
+}
+
+void Emitter::EmitAmoXor32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    EmitAlignmentCheck(backend, Address, 4);
+    AS.AMOXOR_W(ordering, Rd, Rs, Address);
+    EmitZext32(backend, Rd);
+}
+
+void Emitter::EmitAmoXor64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    EmitAlignmentCheck(backend, Address, 8);
+    AS.AMOXOR_D(ordering, Rd, Rs, Address);
+}
+
+void Emitter::EmitAmoSwap8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    if (HasZabha()) {
+        AS.AMOSWAP_B(ordering, Rd, Rs, Address);
+        EmitZext8(backend, Rd);
+    } else {
+        UNIMPLEMENTED();
+    }
+}
+
+void Emitter::EmitAmoSwap16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    if (HasZabha()) {
+        EmitAlignmentCheck(backend, Address, 2);
+        AS.AMOSWAP_H(ordering, Rd, Rs, Address);
+        EmitZext16(backend, Rd);
+    } else {
+        UNIMPLEMENTED();
+    }
+}
+
+void Emitter::EmitAmoSwap32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    EmitAlignmentCheck(backend, Address, 4);
+    AS.AMOSWAP_W(ordering, Rd, Rs, Address);
+    EmitZext32(backend, Rd);
+}
+
+void Emitter::EmitAmoSwap64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
+    EmitAlignmentCheck(backend, Address, 8);
+    AS.AMOSWAP_D(ordering, Rd, Rs, Address);
+}
+
+void Emitter::EmitAmoCAS8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Expected, biscuit::GPR Rs,
+                          biscuit::Ordering ordering) {
+    AS.MV(Rd, Expected);
+    if (HasZabha() && HasZacas()) {
+        AS.AMOCAS_B(ordering, Rd, Rs, Address);
+        EmitZext8(backend, Rd);
+    } else {
+        UNIMPLEMENTED();
+    }
+}
+
+void Emitter::EmitAmoCAS16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Expected, biscuit::GPR Rs,
+                           biscuit::Ordering ordering) {
+    AS.MV(Rd, Expected);
+    if (HasZabha() && HasZacas()) {
+        EmitAlignmentCheck(backend, Address, 2);
+        AS.AMOCAS_H(ordering, Rd, Rs, Address);
+        EmitZext16(backend, Rd);
+    } else {
+        UNIMPLEMENTED();
+    }
+}
+
+void Emitter::EmitAmoCAS32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Expected, biscuit::GPR Rs,
+                           biscuit::Ordering ordering) {
+    AS.MV(Rd, Expected);
+    if (HasZacas()) {
+        EmitAlignmentCheck(backend, Address, 4);
+        AS.AMOCAS_W(ordering, Rd, Rs, Address);
+        EmitZext32(backend, Rd);
+    } else {
+        UNIMPLEMENTED();
+    }
+}
+
+void Emitter::EmitAmoCAS64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Expected, biscuit::GPR Rs,
+                           biscuit::Ordering ordering) {
+    AS.MV(Rd, Expected);
+    if (HasZacas()) {
+        EmitAlignmentCheck(backend, Address, 8);
+        AS.AMOCAS_D(ordering, Rd, Rs, Address);
+    } else {
+        UNIMPLEMENTED();
+    }
 }
 
 void Emitter::EmitSub(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
@@ -313,19 +695,11 @@ void Emitter::EmitNotEqual(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, 
     AS.SNEZ(Rd, Rd);
 }
 
-void Emitter::EmitIGreaterThan(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
-    AS.SLT(Rd, Rs2, Rs1);
-}
-
-void Emitter::EmitILessThan(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+void Emitter::EmitSetLessThanSigned(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
     AS.SLT(Rd, Rs1, Rs2);
 }
 
-void Emitter::EmitUGreaterThan(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
-    AS.SLTU(Rd, Rs2, Rs1);
-}
-
-void Emitter::EmitULessThan(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+void Emitter::EmitSetLessThanUnsigned(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
     AS.SLTU(Rd, Rs1, Rs2);
 }
 
@@ -416,20 +790,18 @@ void Emitter::EmitMulhu(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, bis
 }
 
 void Emitter::EmitSelect(Backend& backend, biscuit::GPR Rd, biscuit::GPR Condition, biscuit::GPR RsTrue, biscuit::GPR RsFalse) {
-    Label true_label, end_label;
+    Label true_label;
+    AS.C_MV(Rd, RsTrue);
     AS.C_BNEZ(Condition, &true_label);
     AS.C_MV(Rd, RsFalse);
-    AS.C_J(&end_label);
     AS.Bind(&true_label);
-    AS.C_MV(Rd, RsTrue);
-    AS.Bind(&end_label);
 }
 
-void Emitter::EmitCastIntegerToVector(Backend& backend, biscuit::Vec Vd, biscuit::GPR Rs) {
+void Emitter::EmitCastVectorFromInteger(Backend& backend, biscuit::Vec Vd, biscuit::GPR Rs) {
     AS.VMV_SX(Vd, Rs);
 }
 
-void Emitter::EmitCastVectorToInteger(Backend& backend, biscuit::GPR Rd, biscuit::Vec Vs) {
+void Emitter::EmitCastIntegerFromVector(Backend& backend, biscuit::GPR Rd, biscuit::Vec Vs) {
     AS.VMV_XS(Rd, Vs);
 }
 

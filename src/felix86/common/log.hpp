@@ -38,5 +38,17 @@
 #define UNREACHABLE() ERROR("Unreachable code hit")
 #define UNIMPLEMENTED() ERROR("Unimplemented code hit")
 
+#define ASSERT(condition)                                                                                                                            \
+    do {                                                                                                                                             \
+        if (!(condition))                                                                                                                            \
+            UNREACHABLE();                                                                                                                           \
+    } while (false)
+
+#define ASSERT_MSG(condition, format, ...)                                                                                                           \
+    do {                                                                                                                                             \
+        if (!(condition))                                                                                                                            \
+            ERROR(format, ##__VA_ARGS__);                                                                                                            \
+    } while (false)
+
 void enable_verbose();
 void disable_logging();

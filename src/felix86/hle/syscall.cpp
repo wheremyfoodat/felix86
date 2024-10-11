@@ -14,7 +14,7 @@
 #define felix86_x86_64_ARCH_GET_FS 0x1003
 #define felix86_x86_64_ARCH_GET_GS 0x1004
 
-#define HOST_SYSCALL(name, ...) (syscall(match_host(name), ##__VA_ARGS__))
+#define HOST_SYSCALL(name, ...) (syscall(match_host(felix86_x86_64_##name), ##__VA_ARGS__))
 
 enum {
 
@@ -30,23 +30,30 @@ enum {
 #undef X
 };
 
-int match_host(int syscall) {
-#ifdef __x86_64__
+consteval int match_host(int syscall) {
+#if defined(__x86_64__)
     return syscall;
-#elif defined(__riscv) && __riscv_xlen == 64
-#define X(name, id)                                                                                                                                  \
+#elif defined(__riscv)
+#define X(name)                                                                                                                                      \
     case felix86_x86_64_##name:                                                                                                                      \
         return felix86_riscv64_##name;
     switch (syscall) {
-#include "felix86/hle/syscalls_x86_64.inc"
+#include "felix86/hle/syscalls_common.inc"
+#undef X
     default:
         return -1;
     }
 #undef X
 #else
-#error "Unsupported architecture"
+#error "What are you trying to compile on!?"
 #endif
 }
+
+#ifdef __x86_64__
+static_assert(match_host(felix86_x86_64_setxattr) == felix86_x86_64_setxattr);
+#elif defined(__riscv)
+static_assert(match_host(felix86_x86_64_setxattr) == felix86_riscv64_setxattr);
+#endif
 
 const char* print_syscall_name(u64 syscall_number) {
     switch (syscall_number) {
@@ -60,20 +67,25 @@ const char* print_syscall_name(u64 syscall_number) {
     }
 }
 
-void felix86_syscall(Emulator& emulator, u64* prax, u64 rdi, u64 rsi, u64 rdx, u64 r10, u64 r8, u64 r9) {
-    u64 syscall_number = *prax;
+void felix86_syscall(Emulator* emulator, ThreadState* state) {
+    u64 syscall_number = state->GetGpr(X86_REF_RAX);
+    u64 rdi = state->GetGpr(X86_REF_RDI);
+    u64 rsi = state->GetGpr(X86_REF_RSI);
+    u64 rdx = state->GetGpr(X86_REF_RDX);
+    u64 r10 = state->GetGpr(X86_REF_R10);
+    u64 r8 = state->GetGpr(X86_REF_R8);
+    u64 r9 = state->GetGpr(X86_REF_R9);
     u64 result = 0;
 
-    ThreadState& state = emulator.GetThreadState();
-    Filesystem& fs = emulator.GetFilesystem();
+    Filesystem& fs = emulator->GetFilesystem();
 
     switch (syscall_number) {
     case felix86_x86_64_brk: {
         if (rdi == 0) {
-            result = state.brk_current_address;
+            result = state->brk_current_address;
         } else {
-            state.brk_current_address = rdi;
-            result = state.brk_current_address;
+            state->brk_current_address = rdi;
+            result = state->brk_current_address;
         }
         VERBOSE("brk(%p) = %p", (void*)rdi, (void*)result);
         break;
@@ -81,19 +93,19 @@ void felix86_syscall(Emulator& emulator, u64* prax, u64 rdi, u64 rsi, u64 rdx, u
     case felix86_x86_64_arch_prctl: {
         switch (rdi) {
         case felix86_x86_64_ARCH_SET_GS: {
-            state.gsbase = rsi;
+            state->gsbase = rsi;
             break;
         }
         case felix86_x86_64_ARCH_SET_FS: {
-            state.fsbase = rsi;
+            state->fsbase = rsi;
             break;
         }
         case felix86_x86_64_ARCH_GET_FS: {
-            result = state.fsbase;
+            result = state->fsbase;
             break;
         }
         case felix86_x86_64_ARCH_GET_GS: {
-            result = state.gsbase;
+            result = state->gsbase;
             break;
         }
         default: {
@@ -105,7 +117,7 @@ void felix86_syscall(Emulator& emulator, u64* prax, u64 rdi, u64 rsi, u64 rdx, u
         break;
     }
     case felix86_x86_64_set_tid_address: {
-        state.clear_child_tid = rdi;
+        state->clear_child_tid = rdi;
         result = rdi;
         VERBOSE("set_tid_address(%016lx) = %016lx", rdi, result);
         break;
@@ -118,7 +130,7 @@ void felix86_syscall(Emulator& emulator, u64* prax, u64 rdi, u64 rsi, u64 rdx, u
         break;
     }
     case felix86_x86_64_set_robust_list: {
-        state.robust_futex_list = rdi;
+        state->robust_futex_list = rdi;
 
         if (rsi != sizeof(u64) * 3) {
             WARN("Struct size is wrong during set_robust_list");
@@ -133,7 +145,7 @@ void felix86_syscall(Emulator& emulator, u64* prax, u64 rdi, u64 rsi, u64 rdx, u
         break;
     }
     case felix86_x86_64_prlimit64: {
-        result = HOST_SYSCALL(syscall_number, rdi, rsi, rdx, r10);
+        result = HOST_SYSCALL(prlimit64, rdi, rsi, rdx, r10);
         VERBOSE("prlimit64(%016lx, %016lx, %016lx, %016lx) = %016lx", rdi, rsi, rdx, r10, result);
         break;
     }
@@ -143,12 +155,12 @@ void felix86_syscall(Emulator& emulator, u64* prax, u64 rdi, u64 rsi, u64 rdx, u
         break;
     }
     case felix86_x86_64_getrandom: {
-        result = HOST_SYSCALL(syscall_number, rdi, rsi, rdx);
+        result = HOST_SYSCALL(getrandom, rdi, rsi, rdx);
         VERBOSE("getrandom(%p, %016lx, %d) = %016lx", (void*)rdi, rsi, (int)rdx, result);
         break;
     }
     case felix86_x86_64_mprotect: {
-        result = HOST_SYSCALL(syscall_number, rdi, rsi, rdx);
+        result = HOST_SYSCALL(mprotect, rdi, rsi, rdx);
         VERBOSE("mprotect(%p, %016lx, %d) = %016lx", (void*)rdi, rsi, (int)rdx, result);
         break;
     }
@@ -158,5 +170,5 @@ void felix86_syscall(Emulator& emulator, u64* prax, u64 rdi, u64 rsi, u64 rdx, u
     }
     }
 
-    *prax = result;
+    state->SetGpr(X86_REF_RAX, result);
 }

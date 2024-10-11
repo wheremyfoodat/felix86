@@ -5,6 +5,8 @@
 
 #define IR_OPCODES                                                                                                                                   \
     X(Null)                                                                                                                                          \
+    X(GetThreadStatePointer)                                                                                                                         \
+    X(SetExitReason)                                                                                                                                 \
     X(Phi)                                                                                                                                           \
     X(Comment)                                                                                                                                       \
     X(Mov)                                                                                                                                           \
@@ -52,12 +54,36 @@
     X(Or)                                                                                                                                            \
     X(Xor)                                                                                                                                           \
     X(Not)                                                                                                                                           \
+    X(Neg)                                                                                                                                           \
     X(Equal)                                                                                                                                         \
     X(NotEqual)                                                                                                                                      \
-    X(IGreaterThan)                                                                                                                                  \
-    X(ILessThan)                                                                                                                                     \
-    X(UGreaterThan)                                                                                                                                  \
-    X(ULessThan)                                                                                                                                     \
+    X(AmoAdd8)                                                                                                                                       \
+    X(AmoAdd16)                                                                                                                                      \
+    X(AmoAdd32)                                                                                                                                      \
+    X(AmoAdd64)                                                                                                                                      \
+    X(AmoAnd8)                                                                                                                                       \
+    X(AmoAnd16)                                                                                                                                      \
+    X(AmoAnd32)                                                                                                                                      \
+    X(AmoAnd64)                                                                                                                                      \
+    X(AmoOr8)                                                                                                                                        \
+    X(AmoOr16)                                                                                                                                       \
+    X(AmoOr32)                                                                                                                                       \
+    X(AmoOr64)                                                                                                                                       \
+    X(AmoXor8)                                                                                                                                       \
+    X(AmoXor16)                                                                                                                                      \
+    X(AmoXor32)                                                                                                                                      \
+    X(AmoXor64)                                                                                                                                      \
+    X(AmoSwap8)                                                                                                                                      \
+    X(AmoSwap16)                                                                                                                                     \
+    X(AmoSwap32)                                                                                                                                     \
+    X(AmoSwap64)                                                                                                                                     \
+    X(AmoCAS8)                                                                                                                                       \
+    X(AmoCAS16)                                                                                                                                      \
+    X(AmoCAS32)                                                                                                                                      \
+    X(AmoCAS64)                                                                                                                                      \
+    X(AmoCAS128)                                                                                                                                     \
+    X(SetLessThanSigned)                                                                                                                             \
+    X(SetLessThanUnsigned)                                                                                                                           \
     X(ReadByte)                                                                                                                                      \
     X(ReadWord)                                                                                                                                      \
     X(ReadDWord)                                                                                                                                     \
@@ -69,11 +95,13 @@
     X(WriteQWord)                                                                                                                                    \
     X(ReadByteRelative)                                                                                                                              \
     X(ReadQWordRelative)                                                                                                                             \
+    X(ReadXmmWordRelative)                                                                                                                           \
     X(WriteByteRelative)                                                                                                                             \
     X(WriteQWordRelative)                                                                                                                            \
+    X(WriteXmmWordRelative)                                                                                                                          \
     X(WriteXmmWord)                                                                                                                                  \
-    X(CastIntegerToVector)                                                                                                                           \
-    X(CastVectorToInteger)                                                                                                                           \
+    X(CastVectorFromInteger)                                                                                                                         \
+    X(CastIntegerFromVector)                                                                                                                         \
     X(VInsertInteger)                                                                                                                                \
     X(VExtractInteger)                                                                                                                               \
     X(VUnpackByteLow)                                                                                                                                \
@@ -102,4 +130,7 @@ enum class IROpcode : u8 {
 #undef X
 };
 
+namespace Opcode {
 std::string GetOpcodeString(IROpcode opcode);
+bool IsAuxiliary(IROpcode opcode);
+} // namespace Opcode

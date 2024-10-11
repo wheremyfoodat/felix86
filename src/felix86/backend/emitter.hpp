@@ -1,14 +1,17 @@
 #pragma once
 
+#include "biscuit/isa.hpp"
 #include "biscuit/registers.hpp"
+#include "felix86/backend/allocation_map.hpp"
 #include "felix86/backend/instruction.hpp"
 
 struct Backend;
 
 struct Emitter {
-    static void Emit(Backend& backend, const BackendInstruction& instruction);
+    static void Emit(Backend& backend, const AllocationMap& allocations, const BackendInstruction& instruction);
     static void EmitJump(Backend& backend, void* target);
-    static void EmitJumpConditional(Backend& backend, Allocation condition, void* target_true, void* target_false);
+    static void EmitJumpConditional(Backend& backend, biscuit::GPR condition, void* target_true, void* target_false);
+    static void EmitSetExitReason(Backend&, u64);
 
 private:
     static void EmitMov(Backend&, biscuit::GPR, biscuit::GPR);
@@ -26,6 +29,7 @@ private:
     static void EmitCtzw(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitCtz(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitNot(Backend&, biscuit::GPR, biscuit::GPR);
+    static void EmitNeg(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitParity(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitDiv128(Backend&, biscuit::GPR);
     static void EmitDivu128(Backend&, biscuit::GPR);
@@ -43,18 +47,40 @@ private:
     static void EmitWriteXmmWord(Backend&, biscuit::GPR, biscuit::Vec);
     static void EmitWriteByteRelative(Backend&, biscuit::GPR, biscuit::GPR, u64);
     static void EmitWriteQWordRelative(Backend&, biscuit::GPR, biscuit::GPR, u64);
-    static void EmitAddi(Backend&, biscuit::GPR, biscuit::GPR, u64);
     static void EmitAdd(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
+    static void EmitAddi(Backend&, biscuit::GPR, biscuit::GPR, u64);
+    static void EmitAmoAdd8(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoAdd16(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoAdd32(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoAdd64(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoAnd8(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoAnd16(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoAnd32(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoAnd64(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoOr8(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoOr16(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoOr32(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoOr64(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoXor8(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoXor16(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoXor32(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoXor64(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoSwap8(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoSwap16(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoSwap32(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoSwap64(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoCAS8(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoCAS16(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoCAS32(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitAmoCAS64(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
     static void EmitSub(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitAnd(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitOr(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitXor(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitEqual(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitNotEqual(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
-    static void EmitIGreaterThan(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
-    static void EmitILessThan(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
-    static void EmitUGreaterThan(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
-    static void EmitULessThan(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
+    static void EmitSetLessThanSigned(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
+    static void EmitSetLessThanUnsigned(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitShiftLeft(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitShiftRight(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitShiftRightArithmetic(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
@@ -74,8 +100,8 @@ private:
     static void EmitMulh(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitMulhu(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitSelect(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::GPR);
-    static void EmitCastIntegerToVector(Backend&, biscuit::Vec, biscuit::GPR);
-    static void EmitCastVectorToInteger(Backend&, biscuit::GPR, biscuit::Vec);
+    static void EmitCastVectorFromInteger(Backend&, biscuit::Vec, biscuit::GPR);
+    static void EmitCastIntegerFromVector(Backend&, biscuit::GPR, biscuit::Vec);
     static void EmitVInsertInteger(Backend&, biscuit::Vec, biscuit::GPR, biscuit::Vec, u64);
     static void EmitVExtractInteger(Backend&, biscuit::GPR, biscuit::Vec, u64);
     static void EmitVPackedShuffleDWord(Backend&, biscuit::Vec, biscuit::Vec, u64);

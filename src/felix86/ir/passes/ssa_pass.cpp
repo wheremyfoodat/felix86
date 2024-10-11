@@ -78,23 +78,10 @@
 
     t0-t3 and the rest of the temporaries down the road are in SSA form already,
    it's just the registers that need to be renamed
+
+   SSA form is destroyed during IRFunction -> BackendFunction conversion
+   See BackendFunction::FromIRFunction
 */
-static IRBlock* intersect(IRBlock* a, IRBlock* b, const std::vector<u32>& postorder_index) {
-    IRBlock* finger1 = a;
-    IRBlock* finger2 = b;
-
-    while (postorder_index[finger1->GetIndex()] != postorder_index[finger2->GetIndex()]) {
-        while (postorder_index[finger1->GetIndex()] < postorder_index[finger2->GetIndex()]) {
-            finger1 = finger1->GetImmediateDominator();
-        }
-
-        while (postorder_index[finger2->GetIndex()] < postorder_index[finger1->GetIndex()]) {
-            finger2 = finger2->GetImmediateDominator();
-        }
-    }
-
-    return finger1;
-}
 
 // See Cytron et al. paper figure 11
 static void place_phi_functions(IRFunction* function) {
@@ -232,22 +219,37 @@ static void rename(std::vector<IRDominatorTreeNode>& list) {
     search(&list[0], stacks);
 }
 
-void ir_ssa_pass(IRFunction* function) {
-    size_t count = function->GetBlocks().size();
+static IRBlock* intersect(IRBlock* a, IRBlock* b, const std::vector<u32>& postorder_index, std::vector<IRBlock*>& doms) {
+    IRBlock* finger1 = a;
+    IRBlock* finger2 = b;
 
-    std::vector<IRBlock*> rpo = function->GetBlocksPostorder();
-    std::vector<u32> postorder_index(count);
-    for (size_t i = 0; i < count; i++) {
-        postorder_index[rpo[i]->GetIndex()] = i;
+    while (postorder_index[finger1->GetIndex()] != postorder_index[finger2->GetIndex()]) {
+        while (postorder_index[finger1->GetIndex()] < postorder_index[finger2->GetIndex()]) {
+            if (doms[finger1->GetIndex()] == nullptr) {
+                ERROR("finger1 (%d) has no immediate dominator", finger1->GetIndex());
+            }
+
+            finger1 = doms[finger1->GetIndex()];
+        }
+
+        while (postorder_index[finger2->GetIndex()] < postorder_index[finger1->GetIndex()]) {
+            if (doms[finger2->GetIndex()] == nullptr) {
+                ERROR("finger2 (%d) has no immediate dominator", finger2->GetIndex());
+            }
+
+            finger2 = doms[finger2->GetIndex()];
+        }
     }
 
-    std::reverse(rpo.begin(), rpo.end());
+    return finger1;
+}
 
-    if (rpo[0] != function->GetEntry()) {
-        ERROR("Entry block is not the first block");
-    }
+[[nodiscard]] std::vector<IRBlock*> fast_dominance_algorithm(const std::vector<IRBlock*>& rpo, const std::vector<u32>& postorder_indices) {
+    std::vector<IRBlock*> doms(rpo.size());
+    std::fill(doms.begin(), doms.end(), nullptr);
 
-    rpo[0]->SetImmediateDominator(rpo[0]);
+    doms[0] = rpo[0];
+
     bool changed = true;
 
     // Simple fixpoint algorithm to find immediate dominators by Cooper et al.
@@ -264,19 +266,67 @@ void ir_ssa_pass(IRFunction* function) {
                 ERROR("Block has no predecessors, this should not happen");
             }
 
-            IRBlock* new_idom = predecessors[0];
-            for (size_t j = 1; j < predecessors.size(); j++) {
-                IRBlock* p = predecessors[j];
-                if (p->GetImmediateDominator()) {
-                    new_idom = intersect(p, new_idom, postorder_index);
+            IRBlock* new_idom = nullptr;
+            for (IRBlock* block : predecessors) {
+                if (doms[block->GetIndex()] != nullptr) {
+                    new_idom = block;
+                    break;
                 }
             }
 
-            if (b->GetImmediateDominator() != new_idom) {
-                b->SetImmediateDominator(new_idom);
+            if (!new_idom) {
+                ERROR("Could not find processed predecessor for block %d", b->GetIndex());
+            }
+
+            for (IRBlock* p : predecessors) {
+                if (p == new_idom) {
+                    continue;
+                }
+
+                if (doms[p->GetIndex()] != nullptr) {
+                    new_idom = intersect(p, new_idom, postorder_indices, doms);
+                }
+            }
+
+            if (doms[b->GetIndex()] != new_idom) {
+                doms[b->GetIndex()] = new_idom;
                 changed = true;
             }
         }
+    }
+
+    doms[0] = nullptr;
+
+    return doms;
+}
+
+void ir_ssa_pass(IRFunction* function) {
+    size_t count = function->GetBlocks().size();
+
+    std::vector<IRBlock*> rpo = function->GetBlocksPostorder();
+    std::vector<u32> postorder_index(count);
+    for (size_t i = 0; i < count; i++) {
+        postorder_index[rpo[i]->GetIndex()] = i;
+    }
+
+    std::reverse(rpo.begin(), rpo.end());
+
+    if (rpo[0] != function->GetEntry()) {
+        ERROR("Entry block is not the first block");
+    }
+
+    std::vector<IRBlock*> result_fast = fast_dominance_algorithm(rpo, postorder_index);
+
+    // std::vector<IRBlock*> result_slow = slow_dominance_algorithm(rpo);
+    // for (size_t i = 0; i < count; i++) {
+    //     if (result_fast[i] != result_slow[i]) {
+    //         ERROR("Fast and slow dominance algorithms do not match for block: %d", i);
+    //     }
+    // }
+
+    for (size_t i = 0; i < count; i++) {
+        IRBlock* block = function->GetBlocks()[i];
+        block->SetImmediateDominator(result_fast[i]);
     }
 
     // Now we have immediate dominators, we can find dominance frontiers
@@ -300,9 +350,6 @@ void ir_ssa_pass(IRFunction* function) {
     // Now that we have dominance frontiers, step 1 is complete
     // We can now move on to step 2, which is inserting phi instructions
     place_phi_functions(function);
-
-    // Before we made the entry block have itself as the immediate dominator, we need to undo that
-    rpo[0]->SetImmediateDominator(nullptr);
 
     // Construct a dominator tree
     IRDominatorTree dominator_tree;

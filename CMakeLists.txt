@@ -6,7 +6,7 @@ add_compile_options(-fsanitize=address)
 add_link_options(-fsanitize=address)
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=implicit-fallthrough -Werror=incompatible-pointer-types -Wall")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=implicit-fallthrough -Wall")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=implicit-fallthrough -Wall -Werror=switch")
 
 add_compile_options($<$<COMPILE_LANGUAGE:CPP>:-fno-rtti> $<$<COMPILE_LANGUAGE:CPP>:-fno-exceptions>)
 
@@ -14,6 +14,7 @@ set(CMAKE_BUILD_TYPE Debug)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 20)
 
+set(BISCUIT_CODE_BUFFER_MMAP ON)
 add_subdirectory(external/biscuit)
 # add_subdirectory(external/plog)
 add_subdirectory(external/Catch2)
@@ -35,13 +36,13 @@ set(FELIX86_IR_SOURCES
     src/felix86/ir/instruction.cpp
     src/felix86/ir/opcode.cpp
     src/felix86/ir/passes/copy_propagation_pass.cpp
+    src/felix86/ir/passes/critical_edge_splitting_pass.cpp
     src/felix86/ir/passes/dead_code_elimination_pass.cpp
     src/felix86/ir/passes/extraneous_writeback_pass.cpp
     src/felix86/ir/passes/graph_coloring_pass.cpp
     src/felix86/ir/passes/local_cse_pass.cpp
     src/felix86/ir/passes/replace_setguest_pass.cpp
     src/felix86/ir/passes/spill_everything_pass.cpp
-    src/felix86/ir/passes/ssa_destruction_pass.cpp
     src/felix86/ir/passes/ssa_pass.cpp
 )
 
@@ -51,12 +52,16 @@ set(FELIX86_COMMON_SOURCES
     src/felix86/common/global.cpp
     src/felix86/common/log.cpp
     src/felix86/common/print.cpp
+    src/felix86/common/utility.cpp
 )
 
 set(FELIX86_BACKEND_SOURCES
     src/felix86/backend/backend.cpp
+    src/felix86/backend/block.cpp
     src/felix86/backend/emitter.cpp
     src/felix86/backend/emitter_dispatch.cpp
+    src/felix86/backend/function.cpp
+    src/felix86/backend/instruction.cpp
 )
 
 set(FELIX86_HLE_SOURCES

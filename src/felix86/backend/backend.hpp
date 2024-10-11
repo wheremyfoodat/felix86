@@ -1,16 +1,20 @@
 #pragma once
 
 #include "biscuit/assembler.hpp"
+#include "felix86/backend/allocation_map.hpp"
 #include "felix86/backend/emitter.hpp"
+#include "felix86/backend/function.hpp"
 #include "felix86/backend/registers.hpp"
 #include "felix86/common/utility.hpp"
 #include "felix86/common/x86.hpp"
-#include "felix86/ir/function.hpp"
 
 #include <tsl/robin_map.h>
 
+struct Emulator;
+
+// There is a single backend that services all threads. A mutex is locked to synchronize.
 struct Backend {
-    Backend(ThreadState& thread_state);
+    Backend(Emulator& emulator);
     ~Backend();
 
     void MapCompiledFunction(u64 address, void* function) {
@@ -33,30 +37,28 @@ struct Backend {
         return regs;
     }
 
-    ThreadState& GetThreadState() {
-        return thread_state;
-    }
-
     biscuit::GPR AcquireScratchGPR() {
         return regs.AcquireScratchGPR();
-    }
-
-    biscuit::GPR AcquireScratchGPRFromSpill(u64 spill_location) {
-        return regs.AcquireScratchGPRFromSpill(as, spill_location);
     }
 
     void ReleaseScratchRegs() {
         regs.ReleaseScratchRegs();
     }
 
-    void* EmitFunction(IRFunction* function);
+    void EnterDispatcher(ThreadState* state);
+
+    std::pair<void*, u64> EmitFunction(const BackendFunction& function, const AllocationMap& allocations);
 
     Assembler& GetAssembler() {
         return as;
     }
 
-    bool HasB() const {
-        return true; // TODO: proper way to check for bitmanip extension?
+    Emulator& GetEmulator() {
+        return emulator;
+    }
+
+    void* GetCrashTarget() {
+        return crash_target;
     }
 
 private:
@@ -66,19 +68,16 @@ private:
     void emitNecessaryStuff();
     void resetCodeCache();
 
-    std::array<u64, Registers::GetSavedGPRs().size()> gpr_storage{};
-    std::array<u64, Registers::GetSavedFPRs().size()> fpr_storage{};
+    Emulator& emulator;
 
-    std::vector<u64> spill_storage{};
-
-    ThreadState& thread_state;
     u8* memory = nullptr;
     biscuit::Assembler as{};
     tsl::robin_map<u64, void*> map{}; // map functions to host code
 
-    // Special addresses within the code cache
-    u8* enter_dispatcher = nullptr;
-    u8* exit_dispatcher = nullptr;
+    void (*enter_dispatcher)(ThreadState*) = nullptr;
+    void* exit_dispatcher = nullptr;
+    void* compile_next = nullptr;
+    void* crash_target = nullptr;
 
     Registers regs;
 };

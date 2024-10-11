@@ -1,13 +1,15 @@
 #include <sys/mman.h>
 #include "biscuit/cpuinfo.hpp"
+#include "felix86/backend/allocation_wrapper.hpp"
 #include "felix86/backend/backend.hpp"
 #include "felix86/common/log.hpp"
+#include "felix86/emulator.hpp"
 
 using namespace biscuit;
 
 constexpr static u64 code_cache_size = 32 * 1024 * 1024;
 
-Backend::Backend(ThreadState& thread_state) : thread_state(thread_state), memory(allocateCodeCache()), as(memory, code_cache_size) {
+Backend::Backend(Emulator& emulator) : emulator(emulator), memory(allocateCodeCache()), as(memory, code_cache_size) {
     emitNecessaryStuff();
     CPUInfo cpuinfo;
     bool has_atomic = cpuinfo.Has(RISCVExtension::A);
@@ -21,11 +23,9 @@ Backend::Backend(ThreadState& thread_state) : thread_state(thread_state), memory
 #ifdef __x86_64__
         WARN("Running in x86-64 environment");
 #else
-        ERROR("Backend is missing some extensions or doesn't have VLEN=128");
+        WARN("Backend is missing some extensions or doesn't have VLEN=128");
 #endif
     }
-
-    spill_storage.resize(32768);
 }
 
 Backend::~Backend() {
@@ -33,46 +33,67 @@ Backend::~Backend() {
 }
 
 void Backend::emitNecessaryStuff() {
-    enter_dispatcher = as.GetCursorPointer();
+    // We can use the thread_id to get the thread state at runtime
+    // depending on which thread is running
 
-    biscuit::GPR scratch = regs.AcquireScratchGPR();
+    /* void enter_dispatcher(ThreadState* state) */
+    enter_dispatcher = (decltype(enter_dispatcher))as.GetCursorPointer();
+
+    biscuit::GPR address = regs.AcquireScratchGPR();
 
     // Save the current register state of callee-saved registers and return address
-    u64 gpr_storage_ptr = (u64)gpr_storage.data();
+    as.ADDI(address, a0, offsetof(ThreadState, gpr_storage));
     const auto& saved_gprs = Registers::GetSavedGPRs();
     const auto& saved_fprs = Registers::GetSavedFPRs();
-    as.LI(scratch, gpr_storage_ptr);
     for (size_t i = 0; i < saved_gprs.size(); i++) {
-        as.SD(saved_gprs[i], i * sizeof(u64), scratch);
+        as.SD(saved_gprs[i], i * sizeof(u64), address);
     }
 
-    u64 fpr_storage_ptr = (u64)fpr_storage.data();
-    as.LI(scratch, fpr_storage_ptr);
+    as.ADDI(address, address, saved_gprs.size() * sizeof(u64));
     for (size_t i = 0; i < saved_fprs.size(); i++) {
-        as.FSD(saved_fprs[i], i * sizeof(u64), scratch);
+        as.FSD(saved_fprs[i], i * sizeof(u64), address);
     }
 
-    as.LI(Registers::SpillPointer(), (u64)spill_storage.data());
-
-    as.LI(Registers::ThreadStatePointer(), (u64)&thread_state);
+    // Since we picked callee-saved registers, we don't have to save them when calling stuff,
+    // but they must be set after the save of the old state that happens above this comment
+    as.C_MV(Registers::ThreadStatePointer(), a0);
+    as.C_MV(Registers::SpillPointer(), a0);
+    as.ADDI(Registers::SpillPointer(), Registers::SpillPointer(), offsetof(ThreadState, spill_gpr));
 
     // Jump
-    // ...
+    Label exit_dispatcher_label;
 
-    exit_dispatcher = as.GetCursorPointer();
+    compile_next = (decltype(compile_next))as.GetCursorPointer();
+    // If it's not zero it has some exit reason, exit the dispatcher
+    as.LB(a0, offsetof(ThreadState, exit_dispatcher_flag), Registers::ThreadStatePointer());
+    as.BNEZ(a0, &exit_dispatcher_label);
+    as.LI(a0, (u64)&emulator);
+    as.MV(a1, Registers::ThreadStatePointer());
+    as.LI(a2, (u64)Emulator::CompileNext);
+    as.JALR(a2); // returns the function pointer to the compiled function
+    as.JR(a0);   // jump to the compiled function
+
+    // When it needs to exit the dispatcher for whatever reason (such as hlt hit), jump here
+    exit_dispatcher = (decltype(exit_dispatcher))as.GetCursorPointer();
+
+    as.Bind(&exit_dispatcher_label);
 
     // Load the old state
-    as.LI(scratch, gpr_storage_ptr);
+    as.MV(address, Registers::ThreadStatePointer());
+    as.ADDI(address, address, offsetof(ThreadState, gpr_storage));
     for (size_t i = 0; i < saved_gprs.size(); i++) {
-        as.LD(saved_gprs[i], i * sizeof(u64), scratch);
+        as.LD(saved_gprs[i], i * sizeof(u64), address);
     }
 
-    as.LI(scratch, fpr_storage_ptr);
+    as.ADDI(address, address, saved_gprs.size() * sizeof(u64));
     for (size_t i = 0; i < saved_fprs.size(); i++) {
-        as.FLD(saved_fprs[i], i * sizeof(u64), scratch);
+        as.FLD(saved_fprs[i], i * sizeof(u64), address);
     }
 
     as.RET();
+
+    crash_target = as.GetCursorPointer();
+    as.EBREAK();
 
     regs.ReleaseScratchRegs();
 }
@@ -94,58 +115,70 @@ void Backend::deallocateCodeCache(u8* memory) {
     munmap(memory, code_cache_size);
 }
 
-void* Backend::EmitFunction(IRFunction* function) {
+void Backend::EnterDispatcher(ThreadState* state) {
+    if (!enter_dispatcher) {
+        ERROR("Dispatcher not initialized??");
+    }
+
+    enter_dispatcher(state);
+}
+
+std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, const AllocationMap& allocations) {
     void* start = as.GetCursorPointer();
-    tsl::robin_map<IRBlock*, void*> block_map;
+    tsl::robin_map<const BackendBlock*, void*> block_map;
 
     struct ConditionalJump {
         ptrdiff_t location;
         Allocation allocation;
-        IRBlock* target_true;
-        IRBlock* target_false;
+        const BackendBlock* target_true;
+        const BackendBlock* target_false;
     };
 
     struct DirectJump {
         ptrdiff_t location;
-        IRBlock* target;
+        const BackendBlock* target;
     };
 
     std::vector<ConditionalJump> conditional_jumps;
     std::vector<DirectJump> direct_jumps;
 
-    std::vector<IRBlock*> blocks_postorder = function->GetBlocksPostorder();
+    std::vector<const BackendBlock*> blocks_postorder = function.GetBlocksPostorder();
 
     for (auto it = blocks_postorder.rbegin(); it != blocks_postorder.rend(); it++) {
-        IRBlock* block = *it;
+        const BackendBlock* block = *it;
         block_map[block] = as.GetCursorPointer();
-        for (const BackendInstruction& inst : block->GetBackendInstructions()) {
-            Emitter::Emit(*this, inst);
+
+        for (const BackendInstruction& inst : block->GetInstructions()) {
+            Emitter::Emit(*this, allocations, inst);
         }
 
         switch (block->GetTermination()) {
         case Termination::Jump: {
-            direct_jumps.push_back({as.GetCodeBuffer().GetCursorOffset(), block->GetSuccessor(0)});
+            ptrdiff_t offset = as.GetCodeBuffer().GetCursorOffset();
+            const BackendBlock* target = &function.GetBlock(block->GetSuccessor(0));
+            direct_jumps.push_back({offset, target});
             // Some space for the backpatched jump
-            as.NOP();
-            as.NOP();
-            as.NOP();
+            for (int i = 0; i < 18; i++) {
+                as.NOP();
+            }
             as.EBREAK();
             break;
         }
         case Termination::JumpConditional: {
-            conditional_jumps.push_back(
-                {as.GetCodeBuffer().GetCursorOffset(), block->GetConditionAllocation(), block->GetSuccessor(0), block->GetSuccessor(1)});
+            ptrdiff_t offset = as.GetCodeBuffer().GetCursorOffset();
+            Allocation condition = allocations.GetAllocation(block->GetCondition()->GetName());
+            const BackendBlock* target_true = &function.GetBlock(block->GetSuccessor(0));
+            const BackendBlock* target_false = &function.GetBlock(block->GetSuccessor(1));
+            conditional_jumps.push_back({offset, condition, target_true, target_false});
             // Some space for the backpatched jump
-            as.NOP();
-            as.NOP();
-            as.NOP();
-            as.NOP();
-            as.NOP();
+            for (int i = 0; i < 18; i++) {
+                as.NOP();
+            }
             as.EBREAK();
             break;
         }
-        case Termination::Exit: {
-            Emitter::EmitJump(*this, exit_dispatcher);
+        case Termination::BackToDispatcher: {
+            Emitter::EmitJump(*this, (void*)compile_next);
             break;
         }
         default: {
@@ -166,15 +199,19 @@ void* Backend::EmitFunction(IRFunction* function) {
     }
 
     for (const ConditionalJump& jump : conditional_jumps) {
-        if (block_map.find(jump.target_true) == block_map.end() || block_map.find(jump.target_false) == block_map.end()) {
-            ERROR("Block not found");
-        }
+        ASSERT(block_map.find(jump.target_true) != block_map.end());
+        ASSERT(block_map.find(jump.target_false) != block_map.end());
 
         u8* cursor = as.GetCursorPointer();
         as.RewindBuffer(jump.location);
-        Emitter::EmitJumpConditional(*this, jump.allocation, block_map[jump.target_true], block_map[jump.target_false]);
+
+        AllocationWrapper condition = AllocationWrapper(*this, jump.allocation, true);
+        Emitter::EmitJumpConditional(*this, condition.AsGPR(), block_map[jump.target_true], block_map[jump.target_false]);
         as.GetCodeBuffer().SetCursor(cursor);
     }
 
-    return start;
+    void* end = as.GetCursorPointer();
+    u64 size = (u64)end - (u64)start;
+
+    return {start, size};
 }

@@ -73,31 +73,9 @@ static_assert(std::is_same_v<SetGuest, std::variant_alternative_t<(u8)Expression
 static_assert(std::is_same_v<Phi, std::variant_alternative_t<(u8)ExpressionType::Phi, Expression>>);
 static_assert(std::is_same_v<Comment, std::variant_alternative_t<(u8)ExpressionType::Comment, Expression>>);
 
-std::string GetNameString(u32 name);
-
-// Reduced instruction, after the SSA destruction it gets transformed to this form
-// for easier register allocation and so that instruction operands are names and not
-// pointers since we remove phis
-struct ReducedInstruction {
-    ReducedInstruction() = default;
-    ReducedInstruction(const ReducedInstruction& other) = delete;
-    ReducedInstruction& operator=(const ReducedInstruction& other) = delete;
-    ReducedInstruction(ReducedInstruction&& other) = default;
-    ReducedInstruction& operator=(ReducedInstruction&& other) = default;
-
-    [[nodiscard]] std::string Print(const std::function<std::string(const ReducedInstruction*)>& callback) const;
-
-    std::array<u32, 4> operands;
-    u64 immediate_data;
-    u32 name;
-    IROpcode opcode;
-    x86_ref_e ref; // needed for a couple instructions
-    u8 operand_count;
-};
-
 struct SSAInstruction {
     SSAInstruction(IROpcode opcode, std::initializer_list<SSAInstruction*> operands)
-        : opcode(opcode), return_type{SSAInstruction::getTypeFromOpcode(opcode)} {
+        : opcode(opcode), return_type{SSAInstruction::GetTypeFromOpcode(opcode)} {
         Operands op;
         for (size_t i = 0; i < operands.size(); i++) {
             if (i >= op.operands.size()) {
@@ -127,7 +105,7 @@ struct SSAInstruction {
         expression_type = ExpressionType::Operands;
     }
 
-    SSAInstruction(IROpcode opcode, x86_ref_e ref) : opcode(opcode), return_type{SSAInstruction::getTypeFromOpcode(opcode, ref)} {
+    SSAInstruction(IROpcode opcode, x86_ref_e ref) : opcode(opcode), return_type{SSAInstruction::GetTypeFromOpcode(opcode, ref)} {
         GetGuest get;
         get.ref = ref;
         expression = get;
@@ -136,7 +114,7 @@ struct SSAInstruction {
     }
 
     SSAInstruction(IROpcode opcode, x86_ref_e ref, SSAInstruction* source)
-        : opcode(opcode), return_type{SSAInstruction::getTypeFromOpcode(opcode, ref)} {
+        : opcode(opcode), return_type{SSAInstruction::GetTypeFromOpcode(opcode, ref)} {
         SetGuest set;
         set.ref = ref;
         set.source = source;
@@ -146,7 +124,7 @@ struct SSAInstruction {
         expression_type = ExpressionType::SetGuest;
     }
 
-    SSAInstruction(Phi phi) : opcode(IROpcode::Phi), return_type{SSAInstruction::getTypeFromOpcode(opcode, phi.ref)} {
+    SSAInstruction(Phi phi) : opcode(IROpcode::Phi), return_type{SSAInstruction::GetTypeFromOpcode(opcode, phi.ref)} {
         expression = std::move(phi);
 
         for (auto& value : phi.values) {
@@ -156,7 +134,7 @@ struct SSAInstruction {
         expression_type = ExpressionType::Phi;
     }
 
-    SSAInstruction(const std::string& comment) : opcode(IROpcode::Comment), return_type{SSAInstruction::getTypeFromOpcode(opcode)} {
+    SSAInstruction(const std::string& comment) : opcode(IROpcode::Comment), return_type{SSAInstruction::GetTypeFromOpcode(opcode)} {
         Comment c;
         c.comment = comment;
         expression = c;
@@ -282,7 +260,19 @@ struct SSAInstruction {
     }
 
     u32 GetOperandName(u8 index) const {
+        if (!IsOperands()) {
+            ERROR("Bad variant");
+        }
+
+        if (index > AsOperands().operand_count) {
+            ERROR("Out of bounds access");
+        }
+
         return AsOperands().operands[index]->GetName();
+    }
+
+    u8 GetOperandCount() const {
+        return AsOperands().operand_count;
     }
 
     std::span<SSAInstruction*> GetUsedInstructions();
@@ -300,6 +290,18 @@ struct SSAInstruction {
         return_type = mov->return_type;
 
         mov->AddUse();
+    }
+
+    void Replace(Expression&& expression_other, IROpcode opcode_other) {
+        Invalidate();
+        expression = std::move(expression_other);
+        opcode = opcode_other;
+        return_type = GetTypeFromOpcode(opcode_other);
+        expression_type = ExpressionType::Operands;
+
+        for (auto& operand : GetUsedInstructions()) {
+            operand->AddUse();
+        }
     }
 
     u64 GetImmediateData() const {
@@ -356,39 +358,10 @@ struct SSAInstruction {
 
     void PropagateMovs();
 
-    ReducedInstruction AsReducedInstruction() const {
-        ReducedInstruction rir_inst = {};
-
-        rir_inst.name = GetName();
-        rir_inst.opcode = GetOpcode();
-
-        if (IsOperands()) {
-            rir_inst.operand_count = AsOperands().operand_count;
-            rir_inst.immediate_data = GetImmediateData();
-            for (u8 i = 0; i < rir_inst.operand_count; i++) {
-                rir_inst.operands[i] = GetOperand(i)->GetName();
-            }
-        } else if (IsGetGuest()) {
-            if (GetOpcode() != IROpcode::LoadGuestFromMemory) {
-                UNREACHABLE();
-            }
-
-            rir_inst.ref = AsGetGuest().ref;
-        } else if (IsSetGuest()) {
-            if (GetOpcode() != IROpcode::StoreGuestToMemory) {
-                UNREACHABLE();
-            }
-
-            rir_inst.ref = AsSetGuest().ref;
-            rir_inst.operands[0] = AsSetGuest().source->GetName();
-            rir_inst.operand_count = 1;
-        }
-
-        return rir_inst;
-    }
+    // TODO: move outside this class
+    static IRType GetTypeFromOpcode(IROpcode opcode, x86_ref_e ref = X86_REF_COUNT);
 
 private:
-    static IRType getTypeFromOpcode(IROpcode opcode, x86_ref_e ref = X86_REF_COUNT);
     static void checkValidity(IROpcode opcode, const Operands& operands);
 
     Expression expression;

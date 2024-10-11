@@ -2,7 +2,6 @@
 #include "felix86/common/log.hpp"
 #include "felix86/common/x86.hpp"
 #include "felix86/ir/emitter.hpp"
-#include "felix86/ir/handlers.hpp"
 #include "felix86/ir/instruction.hpp"
 
 #define BLOCK (state->current_block)
@@ -35,6 +34,7 @@ u64 sext(u64 value, x86_size_e size_e) {
     }
 }
 
+#define IS_LOCK (inst->operand_rm.type == X86_OP_TYPE_MEMORY && inst->operand_rm.memory.lock)
 #define IR_HANDLE(name) void ir_handle_##name(FrontendState* state, x86_instruction_t* inst)
 
 IR_HANDLE(error) {
@@ -49,10 +49,18 @@ IR_HANDLE(error) {
 
 IR_HANDLE(add_rm_reg) { // add rm8, r8 - 0x00
     x86_size_e size_e = inst->operand_reg.size;
-    SSAInstruction* rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
+    SSAInstruction *rm, *result;
     SSAInstruction* reg = ir_emit_get_reg(BLOCK, &inst->operand_reg);
-    SSAInstruction* result = ir_emit_add(BLOCK, rm, reg);
-    ir_emit_set_rm(BLOCK, &inst->operand_rm, result);
+
+    if (IS_LOCK) {
+        SSAInstruction* address = ir_emit_lea(BLOCK, &inst->operand_rm);
+        rm = ir_emit_amoadd(BLOCK, address, reg, MemoryOrdering::AqRl, size_e);
+        result = ir_emit_add(BLOCK, rm, reg);
+    } else {
+        rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
+        result = ir_emit_add(BLOCK, rm, reg);
+        ir_emit_set_rm(BLOCK, &inst->operand_rm, result);
+    }
 
     SSAInstruction* c = ir_emit_get_carry_add(BLOCK, rm, reg, result, size_e);
     SSAInstruction* p = ir_emit_get_parity(BLOCK, result);
@@ -115,10 +123,18 @@ IR_HANDLE(or_rm_reg) { // or rm16/32/64, r16/32/64 - 0x09
 
 IR_HANDLE(or_reg_rm) { // or r16/32/64, rm16/32/64 - 0x0B
     x86_size_e size_e = inst->operand_reg.size;
+    SSAInstruction *rm, *result;
     SSAInstruction* reg = ir_emit_get_reg(BLOCK, &inst->operand_reg);
-    SSAInstruction* rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
-    SSAInstruction* result = ir_emit_or(BLOCK, reg, rm);
-    ir_emit_set_reg(BLOCK, &inst->operand_reg, result);
+
+    if (IS_LOCK) {
+        SSAInstruction* address = ir_emit_lea(BLOCK, &inst->operand_rm);
+        rm = ir_emit_amoor(BLOCK, address, reg, MemoryOrdering::AqRl, size_e);
+        result = ir_emit_or(BLOCK, rm, reg);
+    } else {
+        rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
+        result = ir_emit_or(BLOCK, rm, reg);
+        ir_emit_set_rm(BLOCK, &inst->operand_rm, result);
+    }
 
     SSAInstruction* zero = ir_emit_immediate(BLOCK, 0);
     SSAInstruction* p = ir_emit_get_parity(BLOCK, result);
@@ -145,10 +161,18 @@ IR_HANDLE(or_eax_imm) { // add ax/eax/rax, imm16/32/64 - 0x0D
 
 IR_HANDLE(and_rm_reg) { // and rm16/32/64, r16/32/64 - 0x21
     x86_size_e size_e = inst->operand_reg.size;
-    SSAInstruction* rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
+    SSAInstruction *rm, *result;
     SSAInstruction* reg = ir_emit_get_reg(BLOCK, &inst->operand_reg);
-    SSAInstruction* result = ir_emit_and(BLOCK, rm, reg);
-    ir_emit_set_rm(BLOCK, &inst->operand_rm, result);
+
+    if (IS_LOCK) {
+        SSAInstruction* address = ir_emit_lea(BLOCK, &inst->operand_rm);
+        rm = ir_emit_amoand(BLOCK, address, reg, MemoryOrdering::AqRl, size_e);
+        result = ir_emit_and(BLOCK, rm, reg);
+    } else {
+        rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
+        result = ir_emit_and(BLOCK, rm, reg);
+        ir_emit_set_rm(BLOCK, &inst->operand_rm, result);
+    }
 
     SSAInstruction* zero = ir_emit_immediate(BLOCK, 0);
     SSAInstruction* p = ir_emit_get_parity(BLOCK, result);
@@ -175,10 +199,19 @@ IR_HANDLE(and_eax_imm) { // and ax/eax/rax, imm16/32/64 - 0x25
 
 IR_HANDLE(sub_rm_reg) { // sub rm16/32/64, r16/32/64 - 0x29
     x86_size_e size_e = inst->operand_reg.size;
-    SSAInstruction* rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
+    SSAInstruction *rm, *result;
     SSAInstruction* reg = ir_emit_get_reg(BLOCK, &inst->operand_reg);
-    SSAInstruction* result = ir_emit_sub(BLOCK, rm, reg);
-    ir_emit_set_rm(BLOCK, &inst->operand_rm, result);
+
+    if (IS_LOCK) {
+        SSAInstruction* address = ir_emit_lea(BLOCK, &inst->operand_rm);
+        SSAInstruction* neg_reg = ir_emit_neg(BLOCK, reg);
+        rm = ir_emit_amoadd(BLOCK, address, neg_reg, MemoryOrdering::AqRl, size_e);
+        result = ir_emit_sub(BLOCK, rm, reg);
+    } else {
+        rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
+        result = ir_emit_sub(BLOCK, rm, reg);
+        ir_emit_set_rm(BLOCK, &inst->operand_rm, result);
+    }
 
     SSAInstruction* c = ir_emit_get_carry_sub(BLOCK, rm, reg, result, size_e);
     SSAInstruction* p = ir_emit_get_parity(BLOCK, result);
@@ -226,21 +259,18 @@ IR_HANDLE(sub_reg_rm) {
 
 IR_HANDLE(xor_rm_reg) { // xor rm8, r8 - 0x30
     x86_size_e size_e = inst->operand_reg.size;
-    if (size_e == X86_SIZE_DWORD || size_e == X86_SIZE_QWORD) {
-        if (inst->operand_rm.type == X86_OP_TYPE_REGISTER && inst->operand_reg.reg.ref == inst->operand_rm.reg.ref) {
-            // xor reg, reg when the reg is the same for size 32/64 is always 0
-            SSAInstruction* zero = ir_emit_immediate(BLOCK, 0);
-            SSAInstruction* one = ir_emit_immediate(BLOCK, 1);
-            ir_emit_set_gpr64(BLOCK, inst->operand_reg.reg.ref, zero);
-            ir_emit_set_cpazso(BLOCK, zero, one, nullptr, one, zero, zero);
-            return;
-        }
-    }
-
-    SSAInstruction* rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
+    SSAInstruction *rm, *result;
     SSAInstruction* reg = ir_emit_get_reg(BLOCK, &inst->operand_reg);
-    SSAInstruction* result = ir_emit_xor(BLOCK, rm, reg);
-    ir_emit_set_rm(BLOCK, &inst->operand_rm, result);
+
+    if (IS_LOCK) {
+        SSAInstruction* address = ir_emit_lea(BLOCK, &inst->operand_rm);
+        rm = ir_emit_amoxor(BLOCK, address, reg, MemoryOrdering::AqRl, size_e);
+        result = ir_emit_xor(BLOCK, rm, reg);
+    } else {
+        rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
+        result = ir_emit_xor(BLOCK, rm, reg);
+        ir_emit_set_rm(BLOCK, &inst->operand_rm, result);
+    }
 
     SSAInstruction* zero = ir_emit_immediate(BLOCK, 0);
     SSAInstruction* p = ir_emit_get_parity(BLOCK, result);
@@ -252,17 +282,6 @@ IR_HANDLE(xor_rm_reg) { // xor rm8, r8 - 0x30
 
 IR_HANDLE(xor_reg_rm) { // xor r16/32/64, rm16/32/64 - 0x33
     x86_size_e size_e = inst->operand_reg.size;
-    if (size_e == X86_SIZE_DWORD || size_e == X86_SIZE_QWORD) {
-        if (inst->operand_rm.type == X86_OP_TYPE_REGISTER && inst->operand_reg.reg.ref == inst->operand_rm.reg.ref) {
-            // xor reg, reg when the reg is the same for size 32/64 is always 0
-            SSAInstruction* zero = ir_emit_immediate(BLOCK, 0);
-            SSAInstruction* one = ir_emit_immediate(BLOCK, 1);
-            ir_emit_set_gpr64(BLOCK, inst->operand_reg.reg.ref, zero);
-            ir_emit_set_cpazso(BLOCK, zero, one, nullptr, one, zero, zero);
-            return;
-        }
-    }
-
     SSAInstruction* reg = ir_emit_get_reg(BLOCK, &inst->operand_reg);
     SSAInstruction* rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
     SSAInstruction* result = ir_emit_xor(BLOCK, reg, rm);
@@ -292,6 +311,10 @@ IR_HANDLE(xor_eax_imm) { // xor ax/eax/rax, imm16/32/64 - 0x35
 }
 
 IR_HANDLE(cmp_rm_reg) { // cmp rm8, r8 - 0x38
+    if (IS_LOCK) {
+        UNIMPLEMENTED();
+    }
+
     x86_size_e size_e = inst->operand_reg.size;
     SSAInstruction* rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
     SSAInstruction* reg = ir_emit_get_reg(BLOCK, &inst->operand_reg);
@@ -434,10 +457,16 @@ IR_HANDLE(test_rm_reg) { // test rm8, r8 - 0x84
 }
 
 IR_HANDLE(xchg_rm_reg) { // xchg rm8, r8 - 0x86
-    SSAInstruction* rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
     SSAInstruction* reg = ir_emit_get_reg(BLOCK, &inst->operand_reg);
-    ir_emit_set_rm(BLOCK, &inst->operand_rm, reg);
-    ir_emit_set_reg(BLOCK, &inst->operand_reg, rm);
+    if (inst->operand_rm.type == X86_OP_TYPE_MEMORY) {
+        SSAInstruction* address = ir_emit_lea(BLOCK, &inst->operand_rm);
+        SSAInstruction* swapped_reg = ir_emit_amoswap(BLOCK, address, reg, MemoryOrdering::AqRl, inst->operand_reg.size);
+        ir_emit_set_reg(BLOCK, &inst->operand_reg, swapped_reg);
+    } else {
+        SSAInstruction* rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
+        ir_emit_set_rm(BLOCK, &inst->operand_rm, reg);
+        ir_emit_set_reg(BLOCK, &inst->operand_reg, rm);
+    }
 }
 
 IR_HANDLE(mov_rm_reg) { // mov rm8/16/32/64, r8/16/32/64 - 0x88
@@ -637,6 +666,7 @@ IR_HANDLE(jmp_rel8) { // jmp rel8 - 0xeb
 }
 
 IR_HANDLE(hlt) { // hlt - 0xf4
+    ir_emit_set_exit_reason(BLOCK, EXIT_REASON_HLT);
     BLOCK->TerminateJump(state->function->GetExit());
     state->exit = true;
 }
@@ -866,16 +896,25 @@ IR_HANDLE(cmpxchg) { // cmpxchg - 0x0f 0xb0-0xb1
     x86_size_e size_e = inst->operand_reg.size;
     x86_operand_t eax_reg = get_full_reg(X86_REF_RAX);
     eax_reg.size = size_e;
-    SSAInstruction* rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
-    SSAInstruction* reg = ir_emit_get_reg(BLOCK, &inst->operand_reg);
     SSAInstruction* eax = ir_emit_get_reg(BLOCK, &eax_reg);
-    SSAInstruction* equal = ir_emit_equal(BLOCK, eax, rm);
-    SSAInstruction* new_rm = ir_emit_select(BLOCK, equal, reg, rm);
-    SSAInstruction* new_eax = ir_emit_select(BLOCK, equal, rm, eax);
 
-    ir_emit_set_reg(BLOCK, &eax_reg, new_eax);
-    ir_emit_set_rm(BLOCK, &inst->operand_rm, new_rm);
-    ir_emit_set_flag(BLOCK, X86_REF_ZF, equal);
+    if (IS_LOCK) {
+        SSAInstruction* address = ir_emit_lea(BLOCK, &inst->operand_rm);
+        SSAInstruction* reg = ir_emit_get_reg(BLOCK, &inst->operand_reg);
+        SSAInstruction* actual = ir_emit_amocas(BLOCK, address, eax, reg, MemoryOrdering::AqRl, size_e);
+
+        ir_emit_set_reg(BLOCK, &eax_reg, actual);
+        ir_emit_set_flag(BLOCK, X86_REF_ZF, ir_emit_equal(BLOCK, actual, reg));
+    } else {
+        SSAInstruction* rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
+        SSAInstruction* reg = ir_emit_get_reg(BLOCK, &inst->operand_reg);
+        SSAInstruction* equal = ir_emit_equal(BLOCK, eax, rm);
+        SSAInstruction* new_rm = ir_emit_select(BLOCK, equal, reg, rm);
+
+        ir_emit_set_reg(BLOCK, &eax_reg, rm);
+        ir_emit_set_rm(BLOCK, &inst->operand_rm, new_rm);
+        ir_emit_set_flag(BLOCK, X86_REF_ZF, equal);
+    }
 }
 
 IR_HANDLE(movzx_r32_rm8) { // movzx r32/64, rm8 - 0x0f 0xb6
@@ -980,7 +1019,7 @@ IR_HANDLE(punpcklqdq_xmm_xmm128) { // punpcklqdq xmm, xmm/m128 - 0x66 0x0f 0x6c
 
 IR_HANDLE(movq_xmm_rm32) { // movq xmm, rm32 - 0x66 0x0f 0x6e
     SSAInstruction* rm = ir_emit_get_rm(BLOCK, &inst->operand_rm);
-    SSAInstruction* vector = ir_emit_vector_from_integer(BLOCK, rm);
+    SSAInstruction* vector = ir_emit_cast_vector_integer(BLOCK, rm);
     ir_emit_set_reg(BLOCK, &inst->operand_reg, vector);
 }
 
@@ -1018,7 +1057,7 @@ IR_HANDLE(pcmpeqd_xmm_xmm128) { // pcmpeqd xmm, xmm/m128 - 0x66 0x0f 0x76
 
 IR_HANDLE(movq_rm32_xmm) { // movq rm32, xmm - 0x66 0x0f 0x7e
     SSAInstruction* xmm = ir_emit_get_reg(BLOCK, &inst->operand_reg);
-    SSAInstruction* rm = ir_emit_integer_from_vector(BLOCK, xmm);
+    SSAInstruction* rm = ir_emit_cast_integer_vector(BLOCK, xmm);
     ir_emit_set_rm(BLOCK, &inst->operand_rm, rm);
 }
 
@@ -1103,10 +1142,10 @@ IR_HANDLE(movq_xmm_xmm64) { // movq xmm, xmm64 - 0xf3 0x0f 0x7e
         integer = ir_emit_get_rm(BLOCK, &rm_op);
     } else {
         SSAInstruction* reg = ir_emit_get_reg(BLOCK, &rm_op);
-        integer = ir_emit_integer_from_vector(BLOCK, reg);
+        integer = ir_emit_cast_integer_vector(BLOCK, reg);
     }
 
-    ir_emit_vector_from_integer(BLOCK, integer);
+    ir_emit_cast_vector_integer(BLOCK, integer);
     ir_emit_set_reg(BLOCK, &inst->operand_reg, integer);
 }
 

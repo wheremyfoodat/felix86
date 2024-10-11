@@ -1,6 +1,7 @@
 #pragma once
 
 #include "felix86/common/utility.hpp"
+#include "felix86/frontend/frontend.hpp"
 #include "felix86/frontend/instruction.hpp"
 #include "felix86/ir/block.hpp"
 #include "felix86/ir/instruction.hpp"
@@ -10,6 +11,7 @@ x86_operand_t get_full_reg(x86_ref_e ref);
 
 void ir_emit_runtime_comment(IRBlock* block, const std::string& comment);
 
+SSAInstruction* ir_emit_get_thread_state_pointer(IRBlock* block);
 SSAInstruction* ir_emit_add(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2);
 SSAInstruction* ir_emit_addi(IRBlock* block, SSAInstruction* source, i64 imm);
 SSAInstruction* ir_emit_sub(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2);
@@ -26,6 +28,7 @@ SSAInstruction* ir_emit_and(IRBlock* block, SSAInstruction* source1, SSAInstruct
 SSAInstruction* ir_emit_or(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2);
 SSAInstruction* ir_emit_xor(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2);
 SSAInstruction* ir_emit_not(IRBlock* block, SSAInstruction* source);
+SSAInstruction* ir_emit_neg(IRBlock* block, SSAInstruction* source);
 SSAInstruction* ir_emit_get_parity(IRBlock* block, SSAInstruction* source);
 SSAInstruction* ir_emit_equal(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2);
 SSAInstruction* ir_emit_not_equal(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2);
@@ -56,8 +59,8 @@ SSAInstruction* ir_emit_vector_unpack_byte_low(IRBlock* block, SSAInstruction* s
 SSAInstruction* ir_emit_vector_unpack_word_low(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2);
 SSAInstruction* ir_emit_vector_unpack_dword_low(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2);
 SSAInstruction* ir_emit_vector_unpack_qword_low(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2);
-SSAInstruction* ir_emit_vector_from_integer(IRBlock* block, SSAInstruction* source);
-SSAInstruction* ir_emit_integer_from_vector(IRBlock* block, SSAInstruction* source);
+SSAInstruction* ir_emit_cast_vector_integer(IRBlock* block, SSAInstruction* source);
+SSAInstruction* ir_emit_cast_integer_vector(IRBlock* block, SSAInstruction* source);
 SSAInstruction* ir_emit_vector_packed_and(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2);
 SSAInstruction* ir_emit_vector_packed_or(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2);
 SSAInstruction* ir_emit_vector_packed_xor(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2);
@@ -91,6 +94,14 @@ void ir_emit_write_word(IRBlock* block, SSAInstruction* address, SSAInstruction*
 void ir_emit_write_dword(IRBlock* block, SSAInstruction* address, SSAInstruction* source);
 void ir_emit_write_qword(IRBlock* block, SSAInstruction* address, SSAInstruction* source);
 void ir_emit_write_xmmword(IRBlock* block, SSAInstruction* address, SSAInstruction* source);
+
+SSAInstruction* ir_emit_amoadd(IRBlock* block, SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size);
+SSAInstruction* ir_emit_amoxor(IRBlock* block, SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size);
+SSAInstruction* ir_emit_amoor(IRBlock* block, SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size);
+SSAInstruction* ir_emit_amoand(IRBlock* block, SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size);
+SSAInstruction* ir_emit_amoswap(IRBlock* block, SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size);
+SSAInstruction* ir_emit_amocas(IRBlock* block, SSAInstruction* address, SSAInstruction* expected, SSAInstruction* source, MemoryOrdering ordering,
+                               x86_size_e size);
 
 void ir_emit_setcc(IRBlock* block, x86_instruction_t* inst);
 
@@ -143,5 +154,8 @@ void ir_emit_group1_imm(IRBlock* block, x86_instruction_t* inst);
 void ir_emit_group2(IRBlock* block, x86_instruction_t* inst, SSAInstruction* shift_amount);
 void ir_emit_group3(IRBlock* block, x86_instruction_t* inst);
 
-void ir_emit_rep_start(IRBlock* block, x86_size_e size);
-void ir_emit_rep_end(IRBlock* block, bool is_nz, x86_size_e size);
+void ir_emit_rep_start(FrontendState* state, const x86_instruction_t& inst, IRBlock* loop_block, IRBlock* exit_block);
+void ir_emit_rep_end(FrontendState* state, const x86_instruction_t& inst, x86_rep_e rep_type, IRBlock* loop_block, IRBlock* exit_block);
+
+// Exits the dispatcher all together ending the current thread, with a byte to specify the reason
+void ir_emit_set_exit_reason(IRBlock* block, u8 reason);

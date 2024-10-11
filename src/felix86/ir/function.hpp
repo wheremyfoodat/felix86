@@ -49,8 +49,6 @@ struct IRFunction {
 
     [[nodiscard]] std::string Print(const std::function<std::string(const SSAInstruction*)>& callback);
 
-    [[nodiscard]] std::string PrintReduced(const std::function<std::string(const ReducedInstruction*)>& callback);
-
     void UnvisitAll() const;
 
     bool Validate() const;
@@ -69,16 +67,19 @@ struct IRFunction {
         }
     }
 
+    SSAInstruction* ThreadStatePointer() {
+        return thread_state_pointer;
+    }
+
     std::vector<IRBlock*> GetBlocksPostorder();
 
 private:
-    IRBlock* allocateBlock();
-
     void deallocateAll();
 
     IRBlock* entry = nullptr;
     IRBlock* exit = nullptr;
     IRBlock* start_address_block = nullptr;
+    SSAInstruction* thread_state_pointer = nullptr;
     std::vector<IRBlock*> blocks;
     tsl::robin_map<u64, IRBlock*> block_map;
     IRDominatorTree dominator_tree;
