@@ -9,6 +9,10 @@ bool SSAInstruction::IsSameExpression(const SSAInstruction& other) const {
         return false;
     }
 
+    if (opcode != other.opcode) {
+        return false;
+    }
+
     switch (expression_type) {
     case ExpressionType::Operands: {
         const Operands& operands = AsOperands();
@@ -30,46 +34,7 @@ bool SSAInstruction::IsSameExpression(const SSAInstruction& other) const {
 
         return true;
     }
-    case ExpressionType::GetGuest: {
-        const GetGuest& get_guest = AsGetGuest();
-        const GetGuest& other_get_guest = other.AsGetGuest();
-
-        return get_guest.ref == other_get_guest.ref;
-    }
-    case ExpressionType::SetGuest: {
-        const SetGuest& set_guest = AsSetGuest();
-        const SetGuest& other_set_guest = other.AsSetGuest();
-
-        return set_guest.ref == other_set_guest.ref && set_guest.source == other_set_guest.source;
-    }
-    case ExpressionType::Phi: {
-        const Phi& phi = AsPhi();
-        const Phi& other_phi = other.AsPhi();
-
-        if (phi.ref != other_phi.ref) {
-            return false;
-        }
-
-        if (phi.values.size() != other_phi.values.size()) {
-            return false;
-        }
-
-        for (u16 i = 0; i < phi.values.size(); i++) {
-            if (phi.values[i] != other_phi.values[i] || phi.blocks[i] != other_phi.blocks[i]) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-    case ExpressionType::Comment: {
-        const Comment& comment = AsComment();
-        const Comment& other_comment = other.AsComment();
-
-        return comment.comment == other_comment.comment;
-    }
     default:
-        UNREACHABLE();
         return false;
     }
 }
@@ -78,6 +43,11 @@ IRType SSAInstruction::GetTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
     switch (opcode) {
     case IROpcode::Mov: {
         ERROR("Should not be used with Mov");
+        return IRType::Void;
+    }
+    case IROpcode::StoreSpill:
+    case IROpcode::LoadSpill: {
+        ERROR("Should not be used with LoadSpill");
         return IRType::Void;
     }
     case IROpcode::Null:
@@ -126,6 +96,9 @@ IRType SSAInstruction::GetTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
     case IROpcode::Sext8:
     case IROpcode::Sext16:
     case IROpcode::Sext32:
+    case IROpcode::Zext8:
+    case IROpcode::Zext16:
+    case IROpcode::Zext32:
     case IROpcode::Div:
     case IROpcode::Divu:
     case IROpcode::Divw:
@@ -213,7 +186,7 @@ IRType SSAInstruction::GetTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
         case X86_REF_FS:
             return IRType::Integer64;
         case X86_REF_ST0 ... X86_REF_ST7:
-            return IRType::Float80;
+            return IRType::Float64;
         case X86_REF_CF ... X86_REF_OF:
             return IRType::Integer64;
         case X86_REF_XMM0 ... X86_REF_XMM15:
@@ -276,7 +249,9 @@ void SSAInstruction::Invalidate() {
 
 void SSAInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
     switch (opcode) {
-    case IROpcode::Null: {
+    case IROpcode::Null:
+    case IROpcode::LoadSpill:
+    case IROpcode::StoreSpill: {
         ERROR("Null should not be used");
         break;
     }
@@ -303,6 +278,9 @@ void SSAInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         VALIDATE_OPS_INT(Sext8, 1);
         VALIDATE_OPS_INT(Sext16, 1);
         VALIDATE_OPS_INT(Sext32, 1);
+        VALIDATE_OPS_INT(Zext8, 1);
+        VALIDATE_OPS_INT(Zext16, 1);
+        VALIDATE_OPS_INT(Zext32, 1);
         VALIDATE_OPS_INT(CastVectorFromInteger, 1);
         VALIDATE_OPS_INT(Clz, 1);
         VALIDATE_OPS_INT(Ctzh, 1);
@@ -433,9 +411,6 @@ std::string SSAInstruction::GetTypeString() const {
     case IRType::Float64: {
         return "Float64";
     }
-    case IRType::Float80: {
-        return "Float80";
-    }
     case IRType::Void: {
         return "Void";
     }
@@ -485,13 +460,15 @@ bool SSAInstruction::ExitsVM() const {
     }
 }
 
-void SSAInstruction::PropagateMovs() {
-    auto replace_mov = [](SSAInstruction*& operand, int index) {
+bool SSAInstruction::PropagateMovs() {
+    bool replaced_something = false;
+    auto replace_mov = [&replaced_something](SSAInstruction*& operand, int index) {
         if (operand->GetOpcode() != IROpcode::Mov) {
             return;
         }
 
         bool is_mov = true;
+        replaced_something = true;
         SSAInstruction* value_final = operand->GetOperand(0);
         do {
             is_mov = false;
@@ -508,6 +485,10 @@ void SSAInstruction::PropagateMovs() {
     switch (expression_type) {
     case ExpressionType::Operands: {
         Operands& operands = AsOperands();
+        if (opcode == IROpcode::Mov) {
+            break;
+        }
+
         for (u8 i = 0; i < operands.operand_count; i++) {
             replace_mov(operands.operands[i], i);
         }
@@ -541,6 +522,8 @@ void SSAInstruction::PropagateMovs() {
         UNREACHABLE();
     }
     }
+
+    return replaced_something;
 }
 
 std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands, u64 immediate_data) {
@@ -558,6 +541,12 @@ std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands,
     }
     case IROpcode::Null: {
         return "Null";
+    }
+    case IROpcode::LoadSpill: {
+        return fmt::format("{} <- LoadSpill 0x{:x}", GetNameString(name), immediate_data);
+    }
+    case IROpcode::StoreSpill: {
+        return fmt::format("StoreSpill 0x{:x}, {}", immediate_data, GetNameString(operands[0]));
     }
     case IROpcode::GetThreadStatePointer: {
         return fmt::format("{} <- ThreadStatePointer", GetNameString(name));
@@ -832,6 +821,18 @@ std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands,
     }
     case IROpcode::Sext32: {
         ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "sext32", "src", GetNameString(operands[0]));
+        break;
+    }
+    case IROpcode::Zext8: {
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "zext8", "src", GetNameString(operands[0]));
+        break;
+    }
+    case IROpcode::Zext16: {
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "zext16", "src", GetNameString(operands[0]));
+        break;
+    }
+    case IROpcode::Zext32: {
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "zext32", "src", GetNameString(operands[0]));
         break;
     }
     case IROpcode::CastVectorFromInteger: {

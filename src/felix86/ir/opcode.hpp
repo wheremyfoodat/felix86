@@ -15,6 +15,9 @@
     X(Sext8)                                                                                                                                         \
     X(Sext16)                                                                                                                                        \
     X(Sext32)                                                                                                                                        \
+    X(Zext8)                                                                                                                                         \
+    X(Zext16)                                                                                                                                        \
+    X(Zext32)                                                                                                                                        \
     X(Syscall)                                                                                                                                       \
     X(Cpuid)                                                                                                                                         \
     X(Rdtsc)                                                                                                                                         \
@@ -22,6 +25,8 @@
     X(SetGuest)            /* placeholder instruction that indicates a def of a register, replaced by the ssa pass */                                \
     X(LoadGuestFromMemory) /* to load or store to the thread_state struct which contains x86 register info */                                        \
     X(StoreGuestToMemory)                                                                                                                            \
+    X(LoadSpill)                                                                                                                                     \
+    X(StoreSpill)                                                                                                                                    \
     X(Add)                                                                                                                                           \
     X(Sub)                                                                                                                                           \
     X(Divu)                                                                                                                                          \

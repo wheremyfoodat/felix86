@@ -6,7 +6,13 @@ BackendBlock BackendBlock::FromIRBlock(const IRBlock* block, std::vector<NamedPh
     backend_block.list_index = block->GetIndex();
     backend_block.termination = block->GetTermination();
 
+    u32 highest_name = 0;
+
     for (const SSAInstruction& inst : block->GetInstructions()) {
+        if (inst.GetName() > highest_name) {
+            highest_name = inst.GetName();
+        }
+
         if (!Opcode::IsAuxiliary(inst.GetOpcode())) {
             ASSERT(inst.IsOperands());
 
@@ -23,6 +29,8 @@ BackendBlock BackendBlock::FromIRBlock(const IRBlock* block, std::vector<NamedPh
         }
     }
 
+    backend_block.next_name = highest_name + 1;
+
     for (size_t i = 0; i < 2; i++) {
         if (block->GetSuccessor(i)) {
             backend_block.successors[i] = block->GetSuccessor(i)->GetIndex();
@@ -30,4 +38,18 @@ BackendBlock BackendBlock::FromIRBlock(const IRBlock* block, std::vector<NamedPh
     }
 
     return backend_block;
+}
+
+std::string BackendBlock::Print() const {
+    std::string ret;
+
+    ret += "Block " + std::to_string(list_index) + ":\n";
+
+    for (const BackendInstruction& inst : instructions) {
+        ret += inst.Print() + "\n";
+    }
+
+    ret += "\n\n";
+
+    return ret;
 }

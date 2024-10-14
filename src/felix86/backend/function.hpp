@@ -16,6 +16,10 @@ struct BackendFunction {
         return blocks;
     }
 
+    std::vector<BackendBlock>& GetBlocks() {
+        return blocks;
+    }
+
     const BackendBlock& GetBlock(u32 index) const {
         return blocks[index];
     }
@@ -25,6 +29,8 @@ struct BackendFunction {
     }
 
     std::vector<const BackendBlock*> GetBlocksPostorder() const;
+
+    [[nodiscard]] std::string Print() const;
 
 private:
     std::vector<BackendBlock> blocks;

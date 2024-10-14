@@ -21,7 +21,11 @@ void replace_load_guest(SSAInstruction& inst, SSAInstruction* thread_state_point
         break;
     }
     case X86_REF_ST0 ... X86_REF_ST7: {
-        WARN("ST0-ST7 are not supported, ignoring"); // will be removed by dce
+        Operands op;
+        op.operands[0] = thread_state_pointer;
+        op.operand_count = 1;
+        op.immediate_data = offsetof(ThreadState, fp[get_guest.ref - X86_REF_ST0]);
+        inst.Replace(op, IROpcode::ReadQWordRelative);
         break;
     }
     case X86_REF_RIP: {
@@ -126,7 +130,12 @@ void replace_store_guest(SSAInstruction& inst, SSAInstruction* thread_state_poin
         break;
     }
     case X86_REF_ST0 ... X86_REF_ST7: {
-        UNREACHABLE();
+        Operands op;
+        op.operands[0] = thread_state_pointer;
+        op.operands[1] = set_guest.source;
+        op.operand_count = 2;
+        op.immediate_data = offsetof(ThreadState, fp[set_guest.ref - X86_REF_ST0]);
+        inst.Replace(op, IROpcode::WriteQWordRelative);
         break;
     }
     case X86_REF_RIP: {
@@ -222,7 +231,7 @@ void replace_store_guest(SSAInstruction& inst, SSAInstruction* thread_state_poin
 // on exit blocks we store back all state. But if the exit block stores the exact same variable loaded on entry,
 // that can be removed.
 // We can find out only after moving to SSA and copy propagating the IR mov/set_guest instructions.
-void ir_extraneous_writeback_pass(IRFunction* function) {
+void PassManager::extraneousWritebackPass(IRFunction* function) {
     std::array<SSAInstruction*, X86_REF_COUNT> entry_defs{};
 
     IRBlock* entry = function->GetEntry();

@@ -1,23 +1,34 @@
 #include "felix86/ir/passes/passes.hpp"
 
-void ir_local_cse_pass(IRFunction* function) {
-    for (IRBlock* block : function->GetBlocks()) {
-        std::vector<SSAInstruction*> instructions;
-        for (auto& inst : block->GetInstructions()) {
-            if (!inst.IsLocked()) {
-                bool replaced = false;
-                for (auto other : instructions) {
-                    if (inst.IsSameExpression(*other)) {
-                        replaced = true;
-                        inst.ReplaceExpressionWithMov(other);
-                        break;
-                    }
-                }
+bool PassManager::localCSEPassBlock(IRBlock* block) {
+    bool changed = false;
 
-                if (!replaced) {
-                    instructions.push_back(&inst);
+    std::vector<SSAInstruction*> instructions;
+    for (auto& inst : block->GetInstructions()) {
+        if (!inst.IsLocked() && !inst.IsRead()) {
+            bool replaced = false;
+            for (auto other : instructions) {
+                if (inst.IsSameExpression(*other)) {
+                    replaced = true;
+                    changed = true;
+                    inst.ReplaceWithMov(other);
+                    break;
                 }
+            }
+
+            if (!replaced) {
+                instructions.push_back(&inst);
             }
         }
     }
+
+    return changed;
+}
+
+bool PassManager::LocalCSEPass(IRFunction* function) {
+    bool changed = false;
+    for (IRBlock* block : function->GetBlocks()) {
+        changed |= localCSEPassBlock(block);
+    }
+    return changed;
 }

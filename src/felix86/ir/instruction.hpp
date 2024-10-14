@@ -16,7 +16,6 @@ enum class IRType : u8 {
     Integer64,
     Vector128,
     Float64,
-    Float80, // :(
 
     Count,
 };
@@ -277,7 +276,7 @@ struct SSAInstruction {
 
     std::span<SSAInstruction*> GetUsedInstructions();
 
-    void ReplaceExpressionWithMov(SSAInstruction* mov) {
+    void ReplaceWithMov(SSAInstruction* mov) {
         Invalidate();
         Operands op;
         op.operands[0] = mov;
@@ -290,6 +289,19 @@ struct SSAInstruction {
         return_type = mov->return_type;
 
         mov->AddUse();
+    }
+
+    void ReplaceWithImmediate(u64 immediate) {
+        Invalidate();
+        Operands op;
+        op.operand_count = 0;
+        op.immediate_data = immediate;
+
+        Expression swap = {op};
+        expression.swap(swap);
+        expression_type = ExpressionType::Operands;
+        opcode = IROpcode::Immediate;
+        return_type = IRType::Integer64;
     }
 
     void Replace(Expression&& expression_other, IROpcode opcode_other) {
@@ -326,6 +338,25 @@ struct SSAInstruction {
         return locked;
     }
 
+    bool IsRead() const {
+        switch (opcode) {
+        case IROpcode::ReadByte:
+        case IROpcode::ReadWord:
+        case IROpcode::ReadDWord:
+        case IROpcode::ReadQWord:
+        case IROpcode::ReadXmmWord:
+        case IROpcode::ReadByteRelative:
+        case IROpcode::ReadQWordRelative:
+        case IROpcode::ReadXmmWordRelative:
+            return true;
+        default:
+            return false;
+        }
+
+        UNREACHABLE();
+        return false;
+    }
+
     bool IsCallerSaved() const;
 
     bool IsGPR() const {
@@ -356,7 +387,7 @@ struct SSAInstruction {
 
     bool ExitsVM() const;
 
-    void PropagateMovs();
+    bool PropagateMovs();
 
     // TODO: move outside this class
     static IRType GetTypeFromOpcode(IROpcode opcode, x86_ref_e ref = X86_REF_COUNT);

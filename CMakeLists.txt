@@ -5,14 +5,9 @@ project(felix86)
 add_compile_options(-fsanitize=address)
 add_link_options(-fsanitize=address)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=implicit-fallthrough -Werror=incompatible-pointer-types -Wall")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=implicit-fallthrough -Wall -Werror=switch")
-
-add_compile_options($<$<COMPILE_LANGUAGE:CPP>:-fno-rtti> $<$<COMPILE_LANGUAGE:CPP>:-fno-exceptions>)
-
-set(CMAKE_BUILD_TYPE Debug)
-set(CMAKE_C_STANDARD 11)
-set(CMAKE_CXX_STANDARD 20)
+if (NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Debug)
+endif()
 
 set(BISCUIT_CODE_BUFFER_MMAP ON)
 add_subdirectory(external/biscuit)
@@ -22,6 +17,14 @@ add_subdirectory(external/xbyak)
 add_subdirectory(external/riscv-disassembler)
 add_subdirectory(external/zydis)
 add_subdirectory(external/fmt)
+
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=implicit-fallthrough -Werror=incompatible-pointer-types -Wall")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=implicit-fallthrough -Wall -Werror=switch")
+
+add_compile_options($<$<COMPILE_LANGUAGE:CPP>:-fno-rtti> $<$<COMPILE_LANGUAGE:CPP>:-fno-exceptions>)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 20)
 
 set(FELIX86_FRONTEND_SOURCES
     src/felix86/frontend/frontend.cpp
@@ -41,8 +44,7 @@ set(FELIX86_IR_SOURCES
     src/felix86/ir/passes/extraneous_writeback_pass.cpp
     src/felix86/ir/passes/graph_coloring_pass.cpp
     src/felix86/ir/passes/local_cse_pass.cpp
-    src/felix86/ir/passes/replace_setguest_pass.cpp
-    src/felix86/ir/passes/spill_everything_pass.cpp
+    src/felix86/ir/passes/peephole_pass.cpp
     src/felix86/ir/passes/ssa_pass.cpp
 )
 
@@ -99,6 +101,8 @@ target_link_libraries(felix86 PRIVATE felix86_core)
 
 if (BUILD_TESTS)
     set(FELIX86_TEST_SOURCES
+        tests/FEX/fex_test_loader.cpp
+        tests/FEX/primary.cpp
     )
 
     add_executable(felix86_test)
@@ -106,4 +110,5 @@ if (BUILD_TESTS)
     target_include_directories(felix86_test PRIVATE tests)
     target_link_libraries(felix86_test PRIVATE felix86_core Catch2::Catch2WithMain xbyak)
     target_compile_options(felix86_test PRIVATE $<$<COMPILE_LANGUAGE:CPP>:-fno-operator-names>)
+    file(COPY external/FEX/ASM DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 endif()

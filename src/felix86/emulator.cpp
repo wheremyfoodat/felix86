@@ -174,19 +174,20 @@ void* Emulator::compileFunction(u64 rip) {
     IRFunction function{rip};
     frontend_compile_function(&function);
 
-    ir_ssa_pass(&function);
+    PassManager::SSAPass(&function);
+    PassManager::DeadCodeEliminationPass(&function);
 
-    // These three need to happen to bring the IR to a normal state,
-    // they remove the auxiliary instructions other than phis
-    ir_replace_setguest_pass(&function);
-    ir_copy_propagation_pass(&function);
-    ir_extraneous_writeback_pass(&function);
+    bool changed = false;
 
-    ir_dead_code_elimination_pass(&function);
-    ir_local_cse_pass(&function);
-    ir_copy_propagation_pass(&function);
-    ir_dead_code_elimination_pass(&function);
-    ir_critical_edge_splitting_pass(&function);
+    do {
+        changed = false;
+        changed |= PassManager::PeepholePass(&function);
+        changed |= PassManager::LocalCSEPass(&function);
+        changed |= PassManager::CopyPropagationPass(&function);
+        changed |= PassManager::DeadCodeEliminationPass(&function);
+    } while (changed);
+
+    PassManager::CriticalEdgeSplittingPass(&function);
 
     if (config.print_blocks) {
         fmt::print("{}", function.Print({}));
@@ -198,7 +199,7 @@ void* Emulator::compileFunction(u64 rip) {
 
     BackendFunction backend_function = BackendFunction::FromIRFunction(&function);
 
-    AllocationMap allocations = ir_spill_everything_pass(backend_function);
+    AllocationMap allocations = ir_graph_coloring_pass(backend_function);
 
     auto [func, size] = backend.EmitFunction(backend_function, allocations);
     std::string disassembly = Disassembler::Disassemble(func, size);
