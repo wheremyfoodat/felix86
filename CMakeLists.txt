@@ -30,6 +30,11 @@ set(FELIX86_FRONTEND_SOURCES
     src/felix86/frontend/frontend.cpp
 )
 
+set(FELIX86_AOT_SOURCES
+    # src/felix86/aot/control_flow_analysis.cpp
+    # src/felix86/aot/function_start_finder.cpp
+)
+
 set(FELIX86_IR_SOURCES
     src/felix86/ir/block.cpp
     src/felix86/ir/emitter.cpp
@@ -75,6 +80,7 @@ set(FELIX86_HLE_SOURCES
 
 set(FELIX86_CORE_SOURCES
     ${FELIX86_COMMON_SOURCES}
+    ${FELIX86_AOT_SOURCES}
     ${FELIX86_FRONTEND_SOURCES}
     ${FELIX86_IR_SOURCES}
     ${FELIX86_BACKEND_SOURCES}
@@ -91,7 +97,7 @@ set(FELIX86_INCLUDES
 )
 
 add_library(felix86_core STATIC)
-target_sources(felix86_core PUBLIC ${FELIX86_CORE_SOURCES})
+target_sources(felix86_core PRIVATE ${FELIX86_CORE_SOURCES})
 target_include_directories(felix86_core PUBLIC ${FELIX86_INCLUDES})
 target_link_libraries(felix86_core PUBLIC Zydis fmt biscuit rvasm)
 
@@ -110,5 +116,6 @@ if (BUILD_TESTS)
     target_include_directories(felix86_test PRIVATE tests)
     target_link_libraries(felix86_test PRIVATE felix86_core Catch2::Catch2WithMain xbyak)
     target_compile_options(felix86_test PRIVATE $<$<COMPILE_LANGUAGE:CPP>:-fno-operator-names>)
+    target_compile_definitions(felix86_test PRIVATE CATCH_CONFIG_PREFIX_ALL)
     file(COPY external/FEX/ASM DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 endif()

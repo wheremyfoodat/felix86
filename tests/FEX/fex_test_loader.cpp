@@ -1,6 +1,10 @@
 #include <fstream>
+#include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include "catch2/catch_message.hpp"
+#include "catch2/catch_test_macros.hpp"
+#include "felix86/backend/disassembler.hpp"
 #include "felix86/common/print.hpp"
 #include "fex_test_loader.hpp"
 #include "nlohmann/json.hpp"
@@ -141,6 +145,10 @@ FEXTestLoader::FEXTestLoader(const std::filesystem::path& path) {
     // 2 pages at 0xe800'f000
     memory_mappings.push_back({0xE800'F000, 2 * 4096});
 
+    // 1 page at 0xC000'0000 for stack
+    // According to the example assembly this is configurable but haven't found a test that configures it
+    memory_mappings.push_back({0xC000'0000, 4096});
+
     if (j.find("MemoryRegions") != j.end()) {
         std::unordered_map<std::string, std::string> memory_regions;
         memory_regions = j["MemoryRegions"].get<std::unordered_map<std::string, std::string>>();
@@ -152,42 +160,61 @@ FEXTestLoader::FEXTestLoader(const std::filesystem::path& path) {
         }
     }
 
+    void* address = mmap((void*)0x10'0000, 0x10'0000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+    if (address != (void*)0x10'0000) {
+        perror("mmap");
+        exit(1);
+    }
+
+    memcpy((void*)0x10'0000, buffer.data(), bytes_read);
+
     TestConfig config = {};
-    config.entrypoint = buffer.data();
+    config.entrypoint = (void*)0x10'0000;
 
     emulator = std::make_unique<Emulator>(config);
     state = emulator->GetTestState();
 }
 
+FEXTestLoader::~FEXTestLoader() {
+    for (auto& ptr : munmap_me) {
+        munmap(ptr.first, ptr.second);
+    }
+}
+
 void FEXTestLoader::Run() {
+    for (auto& [address, size] : memory_mappings) {
+        auto stuff = mmap((void*)address, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+        munmap_me.push_back({stuff, size});
+    }
+    emulator->GetTestState()->SetGpr(X86_REF_RSP, 0xC000'0000 + 4096);
     emulator->Run();
     Validate();
 }
 
 void FEXTestLoader::Validate() {
+    auto [address, size] = emulator->GetCodeAt(0x10'0000);
+    CATCH_INFO(fmt::format("Disassembly:\n{}", Disassembler::Disassemble(address, size)));
+
     for (size_t i = 0; i < expected_gpr.size(); i++) {
-        auto& expected = expected_gpr[i];
-        if (expected.has_value()) {
-            u64 value = *expected;
+        auto& pexpected = expected_gpr[i];
+        if (pexpected.has_value()) {
+            u64 expected = *pexpected;
             x86_ref_e ref = (x86_ref_e)(X86_REF_RAX + i);
             u64 actual = state->GetGpr(ref);
-            if (actual != value) {
-                ERROR("%s mismatch: Expected: 0x%016lx, got: 0x%016lx", print_guest_register(ref).c_str(), value, actual);
-            }
+            CATCH_INFO(fmt::format("Checking {}", print_guest_register(ref)));
+            CATCH_REQUIRE(expected == actual);
         }
     }
 
     for (size_t i = 0; i < expected_xmm.size(); i++) {
-        auto& expected = expected_xmm[i];
-        if (expected.has_value()) {
-            XmmReg value = *expected;
+        auto& pexpected = expected_xmm[i];
+        if (pexpected.has_value()) {
+            XmmReg expected = *pexpected;
             x86_ref_e ref = (x86_ref_e)(X86_REF_XMM0 + i);
             XmmReg actual = state->GetXmmReg(ref);
             for (int j = 0; j < 2; j++) {
-                if (actual.data[j] != value.data[j]) {
-                    ERROR("%s mismatch for qword %d: Expected: 0x%016lx, got: 0x%016lx", print_guest_register(ref).c_str(), j, value.data[j],
-                          actual.data[j]);
-                }
+                CATCH_INFO(fmt::format("Checking XMM{}[{}]", i, j));
+                CATCH_REQUIRE(expected.data[j] == actual.data[j]);
             }
         }
     }
