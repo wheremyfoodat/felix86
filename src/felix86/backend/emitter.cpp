@@ -51,8 +51,8 @@ void SoftwareCtz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u32 size) {
     AS.Bind(&loop);
     AS.AND(Rd, Rs, mask);
     AS.BNEZ(Rd, &end);
-    AS.C_ADDI(counter, 1);
-    AS.C_SLLI(mask, 1);
+    AS.ADDI(counter, counter, 1);
+    AS.SLLI(mask, mask, 1);
     AS.LI(Rd, size);
     AS.SLTU(Rd, counter, Rd);
     AS.BNEZ(Rd, &loop);
@@ -171,8 +171,20 @@ void SoftwareAtomicFetchRMW16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs
     Pop(backend, scratch);
 }
 
-// Inefficient but push/pop everything for now around calls
-void PushAllCallerSaved(Backend& backend) {
+// Sanity check for alignment until we have unaligned atomic extensions
+void EmitAlignmentCheck(Backend& backend, biscuit::GPR address, u8 alignment) {
+    if (!HasZam()) {
+        biscuit::Label ok;
+        AS.ANDI(address, address, alignment - 1);
+        AS.BEQZ(address, &ok);
+        EmitCrash(backend, ExitReason::EXIT_REASON_BAD_ALIGNMENT);
+        AS.Bind(&ok);
+    }
+}
+
+} // namespace
+
+void Emitter::EmitPushAllCallerSaved(Backend& backend) {
     auto& caller_saved_gprs = Registers::GetCallerSavedGPRs();
     auto& caller_saved_fprs = Registers::GetCallerSavedFPRs();
 
@@ -190,7 +202,7 @@ void PushAllCallerSaved(Backend& backend) {
     }
 }
 
-void PopAllCallerSaved(Backend& backend) {
+void Emitter::EmitPopAllCallerSaved(Backend& backend) {
     auto& caller_saved_gprs = Registers::GetCallerSavedGPRs();
     auto& caller_saved_fprs = Registers::GetCallerSavedFPRs();
 
@@ -207,19 +219,6 @@ void PopAllCallerSaved(Backend& backend) {
 
     AS.ADDI(Registers::StackPointer(), Registers::StackPointer(), size);
 }
-
-// Sanity check for alignment until we have unaligned atomic extensions
-void EmitAlignmentCheck(Backend& backend, biscuit::GPR address, u8 alignment) {
-    if (!HasZam()) {
-        biscuit::Label ok;
-        AS.ANDI(address, address, alignment - 1);
-        AS.BEQZ(address, &ok);
-        EmitCrash(backend, ExitReason::EXIT_REASON_BAD_ALIGNMENT);
-        AS.Bind(&ok);
-    }
-}
-
-} // namespace
 
 void Emitter::EmitJump(Backend& backend, void* target) {
     auto my_abs = [](u64 x) -> u64 { return x < 0 ? -x : x; };
@@ -244,6 +243,16 @@ void Emitter::EmitJumpConditional(Backend& backend, biscuit::GPR condition, void
     AS.Bind(&false_label);
     AS.LI(t0, (u64)target_false);
     AS.JR(t0);
+}
+
+void Emitter::EmitCallHostFunction(Backend& backend, u64 function) {
+    EmitPushAllCallerSaved(backend);
+
+    AS.LI(t0, (u64)function);
+    AS.MV(a0, Registers::ThreadStatePointer());
+    AS.JALR(t0);
+
+    EmitPopAllCallerSaved(backend);
 }
 
 void Emitter::EmitSetExitReason(Backend& backend, u64 reason) {
@@ -334,24 +343,24 @@ void Emitter::EmitRdtsc(Backend& backend) {
 }
 
 void Emitter::EmitSyscall(Backend& backend) {
-    PushAllCallerSaved(backend);
+    EmitPushAllCallerSaved(backend);
 
     AS.LI(a0, (u64)&backend.GetEmulator()); // TODO: maybe make Emulator class global...
     AS.MV(a1, Registers::ThreadStatePointer());
     AS.LI(a2, (u64)felix86_syscall); // TODO: remove when moving code buffer close to text?
     AS.JALR(a2);
 
-    PopAllCallerSaved(backend);
+    EmitPopAllCallerSaved(backend);
 }
 
 void Emitter::EmitCpuid(Backend& backend) {
-    PushAllCallerSaved(backend);
+    EmitPushAllCallerSaved(backend);
 
     AS.MV(a0, Registers::ThreadStatePointer());
     AS.LI(a1, (u64)felix86_cpuid);
     AS.JALR(a1);
 
-    PopAllCallerSaved(backend);
+    EmitPopAllCallerSaved(backend);
 }
 
 void Emitter::EmitSext8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
@@ -863,11 +872,22 @@ void Emitter::EmitMulhu(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, bis
 }
 
 void Emitter::EmitSelect(Backend& backend, biscuit::GPR Rd, biscuit::GPR Condition, biscuit::GPR RsTrue, biscuit::GPR RsFalse) {
-    Label true_label;
-    AS.MV(Rd, RsTrue);
-    AS.C_BNEZ(Condition, &true_label);
-    AS.MV(Rd, RsFalse);
-    AS.Bind(&true_label);
+    if (Rd != RsFalse) {
+        Label true_label;
+        AS.MV(Rd, RsTrue);
+        AS.BNEZ(Condition, &true_label);
+        AS.MV(Rd, RsFalse);
+        AS.Bind(&true_label);
+    } else {
+        // If Rd == RsFalse we can't do this shorthand mode above.
+        Label true_label, end_label;
+        AS.BNEZ(Condition, &true_label);
+        AS.MV(Rd, RsFalse);
+        AS.J(&end_label);
+        AS.Bind(&true_label);
+        AS.MV(Rd, RsTrue);
+        AS.Bind(&end_label);
+    }
 }
 
 void Emitter::EmitCastVectorFromInteger(Backend& backend, biscuit::Vec Vd, biscuit::GPR Rs) {

@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <sys/random.h>
 #include "felix86/backend/disassembler.hpp"
+#include "felix86/common/print.hpp"
 #include "felix86/emulator.hpp"
 #include "felix86/frontend/frontend.hpp"
 #include "felix86/ir/passes/passes.hpp"
@@ -70,12 +71,15 @@ void Emulator::setupMainStack(ThreadState* state) {
 
     rsp = stack_push_string(rsp, path);
     const char* program_name = (const char*)rsp;
+    VERBOSE("Pushing: %s -> %s", path, program_name);
 
     rsp = stack_push_string(rsp, x86_64_string);
     const char* platform_name = (const char*)rsp;
+    VERBOSE("Pushing: %s -> %s", x86_64_string, platform_name);
 
     for (ssize_t i = 0; i < argc; i++) {
         rsp = stack_push_string(rsp, config.argv[i].c_str());
+        VERBOSE("Pushing: %s -> %p", config.argv[i].c_str(), (void*)rsp);
         argv_addresses[i] = rsp;
     }
 
@@ -88,17 +92,21 @@ void Emulator::setupMainStack(ThreadState* state) {
         envp_addresses[i] = rsp;
     }
 
+    // Align up, to 16 bytes
+    if (rsp & 0xF) {
+        rsp -= rsp & 0xF;
+    }
+
     // Push 128-bits to stack that are gonna be used as random data
-    u64 rand_address = stack_push(rsp, 0);
-    stack_push(rsp, 0);
+    rsp = stack_push(rsp, 0);
+    rsp = stack_push(rsp, 0);
+    u64 rand_address = rsp;
 
     int result = getrandom((void*)rand_address, 16, 0);
     if (result == -1 || result != 16) {
         ERROR("Failed to get random data");
         return;
     }
-
-    rsp &= ~0xF; // Align to 16 bytes
 
     auxv_t auxv_entries[17] = {
         {AT_PAGESZ, {4096}},
@@ -136,9 +144,7 @@ void Emulator::setupMainStack(ThreadState* state) {
 
     u64 final_rsp = rsp - size_needed;
     if (final_rsp & 0xF) {
-        // The final rsp wouldn't be aligned to 16 bytes
-        // so we need to add padding
-        rsp = stack_push(rsp, 0);
+        rsp -= 8;
     }
 
     for (int i = auxv_count - 1; i >= 0; i--) {
@@ -177,20 +183,21 @@ void* Emulator::compileFunction(u64 rip) {
     }
 
     IRFunction function{rip};
-    frontend_compile_function(&function);
+    frontend_compile_function(*this, &function);
 
     PassManager::SSAPass(&function);
     PassManager::DeadCodeEliminationPass(&function);
 
-    bool changed = false;
-
-    do {
-        changed = false;
-        changed |= PassManager::PeepholePass(&function);
-        changed |= PassManager::LocalCSEPass(&function);
-        changed |= PassManager::CopyPropagationPass(&function);
-        changed |= PassManager::DeadCodeEliminationPass(&function);
-    } while (changed);
+    if (config.optimize) {
+        bool changed = false;
+        do {
+            changed = false;
+            changed |= PassManager::PeepholePass(&function);
+            changed |= PassManager::LocalCSEPass(&function);
+            changed |= PassManager::CopyPropagationPass(&function);
+            changed |= PassManager::DeadCodeEliminationPass(&function);
+        } while (changed);
+    }
 
     PassManager::CriticalEdgeSplittingPass(&function);
 
@@ -208,6 +215,12 @@ void* Emulator::compileFunction(u64 rip) {
 
     auto [func, size] = backend.EmitFunction(backend_function, allocations);
 
+    if (config.print_disassembly) {
+        fmt::print("Disassembly of function at 0x{:X}:\n", rip);
+        fmt::print("{}\n", Disassembler::Disassemble(func, size));
+        fflush(stdout);
+    }
+
     return func;
 }
 
@@ -217,8 +230,11 @@ void* Emulator::CompileNext(Emulator* emulator, ThreadState* thread_state) {
     // Mutex needs to be unlocked before the thread is dispatched
     {
         std::lock_guard<std::mutex> lock(emulator->compilation_mutex);
+        VERBOSE("Now compiling: %016lx", thread_state->rip);
         function = emulator->compileFunction(thread_state->rip);
     }
+
+    VERBOSE("Jumping to function %p", function);
 
     return function;
 }

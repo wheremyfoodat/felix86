@@ -16,6 +16,7 @@ u64 sext_if_64(u64 value, x86_size_e size_e) {
         return (i64)(i32)value;
     default:
         ERROR("Invalid immediate size");
+        return 0;
     }
 }
 
@@ -31,6 +32,7 @@ u64 sext(u64 value, x86_size_e size_e) {
         return value;
     default:
         ERROR("Invalid immediate size");
+        return 0;
     }
 }
 
@@ -416,6 +418,22 @@ IR_HANDLE(movsxd) { // movsxd r32/64, rm32/64 - 0x63
     ir_emit_set_reg(BLOCK, &inst->operand_reg, serm);
 }
 
+IR_HANDLE(push_imm32) { // push imm32 - 0x68
+    bool is_word = inst->operand_reg.size == X86_SIZE_WORD;
+    SSAInstruction* imm = ir_emit_immediate_sext(BLOCK, &inst->operand_imm);
+    x86_operand_t rsp_reg = get_full_reg(X86_REF_RSP);
+    SSAInstruction* rsp = ir_emit_get_reg(BLOCK, &rsp_reg);
+    SSAInstruction* rsp_sub = ir_emit_addi(BLOCK, rsp, is_word ? -2 : -8);
+
+    if (is_word) {
+        ir_emit_write_word(BLOCK, rsp_sub, imm);
+    } else {
+        ir_emit_write_qword(BLOCK, rsp_sub, imm);
+    }
+
+    ir_emit_set_reg(BLOCK, &rsp_reg, rsp_sub);
+}
+
 IR_HANDLE(push_imm8) { // push imm8 - 0x6a
     bool is_word = inst->operand_reg.size == X86_SIZE_WORD;
     SSAInstruction* imm = ir_emit_immediate_sext(BLOCK, &inst->operand_imm);
@@ -446,8 +464,8 @@ IR_HANDLE(jcc_rel) { // jcc rel8 - 0x70-0x7f
     BLOCK->TerminateJumpConditional(condition_mov, block_true, block_false);
     state->exit = true;
 
-    frontend_compile_block(state->function, block_false);
-    frontend_compile_block(state->function, block_true);
+    frontend_compile_block(*state->emulator, state->function, block_false);
+    frontend_compile_block(*state->emulator, state->function, block_true);
 }
 
 IR_HANDLE(group1_rm8_imm8) { // add/or/adc/sbb/and/sub/xor/cmp rm8, imm8 - 0x80
@@ -587,6 +605,16 @@ IR_HANDLE(lahf) { // lahf - 0x9f
     ir_emit_set_reg(BLOCK, &ah_reg, result);
 }
 
+IR_HANDLE(mov_eax_moffs) { // mov eax, moffs32 - 0xa1
+    SSAInstruction* moffs = ir_emit_read_memory(BLOCK, ir_emit_immediate(BLOCK, inst->operand_imm.immediate.data), inst->operand_reg.size);
+    ir_emit_set_reg(BLOCK, &inst->operand_reg, moffs);
+}
+
+IR_HANDLE(mov_moffs_eax) { // mov moffs32, eax - 0xa3
+    SSAInstruction* eax = ir_emit_get_reg(BLOCK, &inst->operand_reg);
+    ir_emit_write_memory(BLOCK, ir_emit_immediate(BLOCK, inst->operand_imm.immediate.data), eax, inst->operand_reg.size);
+}
+
 IR_HANDLE(test_eax_imm) { // test eax, imm32 - 0xa9
     x86_size_e size_e = inst->operand_reg.size;
     SSAInstruction* reg = ir_emit_get_reg(BLOCK, &inst->operand_reg);
@@ -715,7 +743,7 @@ IR_HANDLE(jmp_rel32) { // jmp rel32 - 0xe9
     BLOCK->TerminateJump(target);
     state->exit = true;
 
-    frontend_compile_block(state->function, target);
+    frontend_compile_block(*state->emulator, state->function, target);
 }
 
 IR_HANDLE(jmp_rel8) { // jmp rel8 - 0xeb
@@ -726,7 +754,7 @@ IR_HANDLE(jmp_rel8) { // jmp rel8 - 0xeb
     BLOCK->TerminateJump(target);
     state->exit = true;
 
-    frontend_compile_block(state->function, target);
+    frontend_compile_block(*state->emulator, state->function, target);
 }
 
 IR_HANDLE(hlt) { // hlt - 0xf4
@@ -1038,7 +1066,7 @@ IR_HANDLE(bsf) { // bsf - 0x0f 0xbc
     }
     default: {
         ERROR("Unknown size for bsf: %d", size_e);
-        break;
+        return;
     }
     }
     ir_emit_set_reg(BLOCK, &inst->operand_reg, ctz);

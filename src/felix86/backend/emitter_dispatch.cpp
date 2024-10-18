@@ -9,27 +9,40 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
     // Should not exist in the backend IR representation, replaced by simpler stuff
     case IROpcode::Null: {
         UNREACHABLE();
+        break;
     }
     case IROpcode::Phi: {
         UNREACHABLE();
+        break;
     }
     case IROpcode::SetGuest: {
         UNREACHABLE();
+        break;
     }
     case IROpcode::GetGuest: {
         UNREACHABLE();
+        break;
     }
     case IROpcode::Count: {
         UNREACHABLE();
+        break;
     }
     case IROpcode::LoadGuestFromMemory: {
         UNREACHABLE();
+        break;
     }
     case IROpcode::StoreGuestToMemory: {
         UNREACHABLE();
+        break;
     }
     case IROpcode::Comment: {
         UNREACHABLE();
+        break;
+    }
+
+    case IROpcode::CallHostFunction: {
+        EmitCallHostFunction(backend, inst.GetImmediateData());
+        break;
     }
 
     case IROpcode::GetThreadStatePointer: {
@@ -84,7 +97,7 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         } else if (Rd.IsVec() && Rs.IsVec()) {
             EmitMov(backend, Rd.AsVec(), Rs.AsVec());
         } else {
-            UNREACHABLE();
+            ERROR("Rd type: %d, Rs type: %d", (int)Rd.GetAllocationType(), (int)Rs.GetAllocationType());
         }
         break;
     }

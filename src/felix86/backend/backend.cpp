@@ -2,6 +2,7 @@
 #include "biscuit/cpuinfo.hpp"
 #include "felix86/backend/backend.hpp"
 #include "felix86/common/log.hpp"
+#include "felix86/common/print.hpp"
 #include "felix86/emulator.hpp"
 
 using namespace biscuit;
@@ -40,7 +41,8 @@ Backend::Backend(Emulator& emulator) : emulator(emulator), memory(allocateCodeCa
 #ifdef __x86_64__
         WARN("Running in x86-64 environment");
 #else
-        WARN("Backend is missing some extensions or doesn't have VLEN=128");
+        if (!g_testing) // too much spam if testing
+            WARN("Backend is missing some extensions or doesn't have VLEN=128");
 #endif
     }
 }
@@ -79,6 +81,7 @@ void Backend::emitNecessaryStuff() {
     Label exit_dispatcher_label;
 
     compile_next = (decltype(compile_next))as.GetCursorPointer();
+
     // If it's not zero it has some exit reason, exit the dispatcher
     as.LB(a0, offsetof(ThreadState, exit_reason), Registers::ThreadStatePointer());
     as.BNEZ(a0, &exit_dispatcher_label);
@@ -126,6 +129,11 @@ void Backend::emitNecessaryStuff() {
     as.JALR(a1);
 
     as.EBREAK();
+
+    VERBOSE("Enter dispatcher at: %p", enter_dispatcher);
+    VERBOSE("Exit dispatcher at: %p", exit_dispatcher);
+    VERBOSE("Crash target at: %p", crash_target);
+    VERBOSE("Compile next at: %p", compile_next);
 }
 
 void Backend::resetCodeCache() {
@@ -177,11 +185,11 @@ std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, con
     for (auto it = blocks_postorder.rbegin(); it != blocks_postorder.rend(); it++) {
         const BackendBlock* block = *it;
 
+        VERBOSE("Block %d (0x%016lx) corresponds to %p", block->GetIndex(), block->GetStartAddress(), as.GetCursorPointer());
         if (block->GetIndex() == 0 && allocations.GetSpillSize() > 0) {
             // Entry block, setup the stack pointer
             as.LI(t0, allocations.GetSpillSize());
-            as.NEG(t0, t0);
-            as.ADD(Registers::StackPointer(), Registers::StackPointer(), t0);
+            as.SUB(Registers::StackPointer(), Registers::StackPointer(), t0);
         }
 
         block_map[block] = as.GetCursorPointer();

@@ -1,9 +1,13 @@
-#include <catch2/catch_test_macros.hpp>
 #include "FEX/fex_test_loader.hpp"
 
 #define PRIMARY_TEST(opcode)                                                                                                                         \
     CATCH_TEST_CASE("Primary_" #opcode, "[FEX][Primary]") {                                                                                          \
         FEXTestLoader::RunTest("ASM/Primary/Primary_" #opcode ".asm");                                                                               \
+    }
+
+#define PRIMARY_TEST_NO_PREFIX(opcode)                                                                                                               \
+    CATCH_TEST_CASE("Primary_" #opcode, "[FEX][Primary]") {                                                                                          \
+        FEXTestLoader::RunTest("ASM/Primary/" #opcode ".asm");                                                                                       \
     }
 
 #define PRIMARY_TEST_KNOWN_FAILURE(opcode)
@@ -34,7 +38,6 @@ PRIMARY_TEST(98)
 PRIMARY_TEST(98_2)
 PRIMARY_TEST(99)
 PRIMARY_TEST(99_2)
-PRIMARY_TEST(9B)
 PRIMARY_TEST(A0)
 PRIMARY_TEST(A9)
 PRIMARY_TEST(AB_word)
@@ -50,17 +53,13 @@ PRIMARY_TEST(B0)
 PRIMARY_TEST(B8)
 PRIMARY_TEST(B8_2)
 PRIMARY_TEST(B8_3)
-PRIMARY_TEST(C8)
-PRIMARY_TEST(C8_2)
 PRIMARY_TEST(C9)
-PRIMARY_TEST(D7)
-PRIMARY_TEST(E0)
-PRIMARY_TEST(E1)
-PRIMARY_TEST(E2)
-PRIMARY_TEST(E3)
 PRIMARY_TEST(E8)
 PRIMARY_TEST(E9)
 PRIMARY_TEST(EB)
+
+PRIMARY_TEST_NO_PREFIX(SHL)
+PRIMARY_TEST_NO_PREFIX(SHR)
 
 // Need unaligned atomics
 PRIMARY_TEST_KNOWN_FAILURE(01_Atomic16)
@@ -91,3 +90,7 @@ PRIMARY_TEST_KNOWN_FAILURE(A5_dword_REP_Down)
 PRIMARY_TEST_KNOWN_FAILURE(A5_dword_REPNE_Down)
 PRIMARY_TEST_KNOWN_FAILURE(A5_qword_REP_Down)
 PRIMARY_TEST_KNOWN_FAILURE(A5_qword_REPNE_Down)
+
+// Needs me to care enough to implement ENTER
+PRIMARY_TEST_KNOWN_FAILURE(C8)
+PRIMARY_TEST_KNOWN_FAILURE(C8_2)

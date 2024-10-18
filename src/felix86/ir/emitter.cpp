@@ -42,6 +42,7 @@ u16 get_bit_size(x86_size_e size) {
     }
 
     ERROR("Invalid register size");
+    return 0;
 }
 
 x86_operand_t get_full_reg(x86_ref_e ref) {
@@ -335,6 +336,7 @@ SSAInstruction* ir_emit_zext(IRBlock* block, SSAInstruction* source, x86_size_e 
         return source;
     default:
         ERROR("Invalid size");
+        return source;
     }
 }
 
@@ -370,6 +372,7 @@ SSAInstruction* ir_emit_sext(IRBlock* block, SSAInstruction* source, x86_size_e 
         return source;
     default:
         ERROR("Invalid size");
+        return source;
     }
 }
 
@@ -530,8 +533,7 @@ SSAInstruction* ir_emit_get_flag(IRBlock* block, x86_ref_e flag) {
 
 SSAInstruction* ir_emit_get_flag_not(IRBlock* block, x86_ref_e flag) {
     SSAInstruction* instruction = ir_emit_get_flag(block, flag);
-    SSAInstruction* one = ir_emit_immediate(block, 1);
-    return ir_emit_xor(block, instruction, one);
+    return ir_emit_xor(block, instruction, ir_emit_immediate(block, 1));
 }
 
 void ir_emit_set_flag(IRBlock* block, x86_ref_e flag, SSAInstruction* source) {
@@ -588,7 +590,7 @@ void ir_emit_write_xmmword(IRBlock* block, SSAInstruction* address, SSAInstructi
 }
 
 SSAInstruction* ir_emit_amoadd(IRBlock* block, SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size) {
-    IROpcode opcode;
+    IROpcode opcode = IROpcode::Null;
     switch (size) {
     case X86_SIZE_BYTE:
         opcode = IROpcode::AmoAdd8;
@@ -613,7 +615,7 @@ SSAInstruction* ir_emit_amoadd(IRBlock* block, SSAInstruction* address, SSAInstr
 }
 
 SSAInstruction* ir_emit_amoxor(IRBlock* block, SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size) {
-    IROpcode opcode;
+    IROpcode opcode = IROpcode::Null;
     switch (size) {
     case X86_SIZE_BYTE:
         opcode = IROpcode::AmoXor8;
@@ -638,7 +640,7 @@ SSAInstruction* ir_emit_amoxor(IRBlock* block, SSAInstruction* address, SSAInstr
 }
 
 SSAInstruction* ir_emit_amoor(IRBlock* block, SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size) {
-    IROpcode opcode;
+    IROpcode opcode = IROpcode::Null;
     switch (size) {
     case X86_SIZE_BYTE:
         opcode = IROpcode::AmoOr8;
@@ -663,7 +665,7 @@ SSAInstruction* ir_emit_amoor(IRBlock* block, SSAInstruction* address, SSAInstru
 }
 
 SSAInstruction* ir_emit_amoand(IRBlock* block, SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size) {
-    IROpcode opcode;
+    IROpcode opcode = IROpcode::Null;
     switch (size) {
     case X86_SIZE_BYTE:
         opcode = IROpcode::AmoAnd8;
@@ -688,7 +690,7 @@ SSAInstruction* ir_emit_amoand(IRBlock* block, SSAInstruction* address, SSAInstr
 }
 
 SSAInstruction* ir_emit_amoswap(IRBlock* block, SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size) {
-    IROpcode opcode;
+    IROpcode opcode = IROpcode::Null;
     switch (size) {
     case X86_SIZE_BYTE:
         opcode = IROpcode::AmoSwap8;
@@ -714,7 +716,7 @@ SSAInstruction* ir_emit_amoswap(IRBlock* block, SSAInstruction* address, SSAInst
 
 SSAInstruction* ir_emit_amocas(IRBlock* block, SSAInstruction* address, SSAInstruction* expected, SSAInstruction* source, MemoryOrdering ordering,
                                x86_size_e size) {
-    IROpcode opcode;
+    IROpcode opcode = IROpcode::Null;
     switch (size) {
     case X86_SIZE_BYTE:
         opcode = IROpcode::AmoCAS8;
@@ -821,7 +823,7 @@ SSAInstruction* ir_emit_get_reg(IRBlock* block, x86_operand_t* operand_reg) {
         return ir_emit_get_vector(block, operand_reg->reg.ref);
     default:
         ERROR("Invalid register size");
-        return NULL;
+        return nullptr;
     }
 }
 
@@ -909,7 +911,7 @@ SSAInstruction* ir_emit_read_memory(IRBlock* block, SSAInstruction* address, x86
         return ir_emit_read_xmmword(block, address);
     default:
         ERROR("Invalid memory size");
-        return NULL;
+        return nullptr;
     }
 }
 
@@ -1158,20 +1160,20 @@ SSAInstruction* ir_emit_set_cpazso(IRBlock* block, SSAInstruction* c, SSAInstruc
     if (o)
         ir_emit_set_flag(block, X86_REF_OF, o);
 
-    return NULL;
+    return nullptr;
 }
 
 void ir_emit_group1_imm(IRBlock* block, x86_instruction_t* inst) {
-    x86_group1_e opcode = (x86_group1_e)(inst->operand_reg.reg.ref - X86_REF_RAX);
+    x86_group1_e opcode = (x86_group1_e)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
 
     x86_size_e size_e = inst->operand_rm.size;
     SSAInstruction* rm = ir_emit_get_rm(block, &inst->operand_rm);
     SSAInstruction* imm = ir_emit_immediate_sext(block, &inst->operand_imm);
-    SSAInstruction* result = NULL;
+    SSAInstruction* result = nullptr;
     SSAInstruction* zero = ir_emit_immediate(block, 0);
     SSAInstruction* c = zero;
     SSAInstruction* o = zero;
-    SSAInstruction* a = NULL;
+    SSAInstruction* a = nullptr;
 
     switch (opcode) {
     case X86_GROUP1_ADD: {
@@ -1239,19 +1241,19 @@ void ir_emit_group1_imm(IRBlock* block, x86_instruction_t* inst) {
 }
 
 void ir_emit_group2(IRBlock* block, x86_instruction_t* inst, SSAInstruction* shift_amount) {
-    x86_group2_e opcode = (x86_group2_e)(inst->operand_reg.reg.ref - X86_REF_RAX);
+    x86_group2_e opcode = (x86_group2_e)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
 
     x86_size_e size_e = inst->operand_rm.size;
-    u8 shift_mask = get_bit_size(size_e) - 1;
+    u8 shift_mask = size_e == X86_SIZE_QWORD ? 0x3F : 0x1F;
     SSAInstruction* rm = ir_emit_get_rm(block, &inst->operand_rm);
     SSAInstruction* shift_value = ir_emit_and(block, shift_amount, ir_emit_immediate(block, shift_mask));
-    SSAInstruction* result = NULL;
-    SSAInstruction* c = NULL;
-    SSAInstruction* p = NULL;
-    SSAInstruction* a = NULL;
-    SSAInstruction* z = NULL;
-    SSAInstruction* s = NULL;
-    SSAInstruction* o = NULL;
+    SSAInstruction* result = nullptr;
+    SSAInstruction* c = nullptr;
+    SSAInstruction* p = nullptr;
+    SSAInstruction* a = nullptr;
+    SSAInstruction* z = nullptr;
+    SSAInstruction* s = nullptr;
+    SSAInstruction* o = nullptr;
 
     switch (opcode) {
     case X86_GROUP2_ROL: {
@@ -1320,17 +1322,17 @@ void ir_emit_group2(IRBlock* block, x86_instruction_t* inst, SSAInstruction* shi
 }
 
 void ir_emit_group3(IRBlock* block, x86_instruction_t* inst) {
-    x86_group3_e opcode = (x86_group3_e)(inst->operand_reg.reg.ref - X86_REF_RAX);
+    x86_group3_e opcode = (x86_group3_e)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
 
     x86_size_e size_e = inst->operand_rm.size;
     SSAInstruction* rm = ir_emit_get_rm(block, &inst->operand_rm);
-    SSAInstruction* result = NULL;
-    SSAInstruction* c = NULL;
-    SSAInstruction* p = NULL;
-    SSAInstruction* a = NULL;
-    SSAInstruction* z = NULL;
-    SSAInstruction* s = NULL;
-    SSAInstruction* o = NULL;
+    SSAInstruction* result = nullptr;
+    SSAInstruction* c = nullptr;
+    SSAInstruction* p = nullptr;
+    SSAInstruction* a = nullptr;
+    SSAInstruction* z = nullptr;
+    SSAInstruction* s = nullptr;
+    SSAInstruction* o = nullptr;
 
     switch (opcode) {
     case X86_GROUP3_TEST:
@@ -1517,6 +1519,7 @@ SSAInstruction* ir_emit_get_cc(IRBlock* block, u8 opcode) {
     }
 
     ERROR("Invalid condition code");
+    return nullptr;
 }
 
 void ir_emit_setcc(IRBlock* block, x86_instruction_t* inst) {
@@ -1560,11 +1563,18 @@ void ir_emit_rep_end(FrontendState* state, const x86_instruction_t& inst, x86_re
         condition = ir_emit_equal(state->current_block, zf, zero);
     } else {
         UNREACHABLE();
+        return;
     }
 
     SSAInstruction* final_condition = ir_emit_or(state->current_block, rcx_zero, condition);
     state->current_block->TerminateJumpConditional(final_condition, exit_block, loop_block);
 
-    frontend_compile_block(state->function, exit_block);
+    frontend_compile_block(*state->emulator, state->function, exit_block);
     state->exit = true;
+}
+
+void ir_emit_call_host_function(IRBlock* block, u64 function) {
+    SSAInstruction* call = ir_emit_no_operands(block, IROpcode::CallHostFunction);
+    call->SetImmediateData(function);
+    call->Lock();
 }

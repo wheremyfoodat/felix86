@@ -83,7 +83,14 @@ private:
 
 using LivenessSet = std::unordered_set<u32>;
 
-using InstructionMap = tsl::robin_map<u32, BackendInstruction*>;
+struct InstructionMetadata {
+    BackendInstruction* inst = nullptr;
+    u32 spill_cost = 0; // sum of uses + defs (loads and stores that would have to be inserted)
+    u32 interferences = 0;
+    bool infinite_cost = false;
+};
+
+using InstructionMap = tsl::robin_map<u32, InstructionMetadata>;
 
 static bool reserved_gpr(const BackendInstruction& inst) {
     switch (inst.GetOpcode()) {
@@ -101,29 +108,41 @@ static InstructionMap create_instruction_map(BackendFunction& function) {
     InstructionMap instructions;
     for (BackendBlock& block : function.GetBlocks()) {
         for (BackendInstruction& inst : block.GetInstructions()) {
-            instructions[inst.GetName()] = &inst;
+            instructions[inst.GetName()].inst = &inst;
+            instructions[inst.GetName()].spill_cost += 1;
+
+            if (inst.GetOpcode() == IROpcode::LoadSpill) {
+                // Don't pick them again
+                instructions[inst.GetName()].infinite_cost = true;
+            } else if (inst.GetOpcode() == IROpcode::StoreSpill) {
+                instructions[inst.GetOperand(0)].infinite_cost = true;
+            }
+
+            for (u8 i = 0; i < inst.GetOperandCount(); i++) {
+                instructions[inst.GetOperand(i)].spill_cost += 1;
+            }
         }
     }
     return instructions;
 }
 
 static bool should_consider_gpr(const InstructionMap& map, u32 inst) {
-    const BackendInstruction& instruction = *map.at(inst);
-    return instruction.GetDesiredType() == AllocationType::GPR && !reserved_gpr(instruction);
+    const BackendInstruction* instruction = map.at(inst).inst;
+    return instruction->GetDesiredType() == AllocationType::GPR && !reserved_gpr(*instruction);
 }
 
 static bool should_consider_fpr(const InstructionMap& map, u32 inst) {
-    const BackendInstruction& instruction = *map.at(inst);
-    return instruction.GetDesiredType() == AllocationType::FPR;
+    const BackendInstruction* instruction = map.at(inst).inst;
+    return instruction->GetDesiredType() == AllocationType::FPR;
 }
 
 static bool should_consider_vec(const InstructionMap& map, u32 inst) {
-    const BackendInstruction& instruction = *map.at(inst);
-    return instruction.GetDesiredType() == AllocationType::Vec;
+    const BackendInstruction* instruction = map.at(inst).inst;
+    return instruction->GetDesiredType() == AllocationType::Vec;
 }
 
 static void spill(BackendFunction& function, u32 node, u32 location, AllocationType spill_type) {
-    printf("Spilling %s\n", GetNameString(node).c_str());
+    VERBOSE("Spilling %s", GetNameString(node).c_str());
     for (BackendBlock& block : function.GetBlocks()) {
         auto it = block.GetInstructions().begin();
         while (it != block.GetInstructions().end()) {
@@ -159,8 +178,8 @@ static void spill(BackendFunction& function, u32 node, u32 location, AllocationT
     }
 }
 
-static void build(const BackendFunction& function, InterferenceGraph& graph, bool (*should_consider)(const InstructionMap&, u32),
-                  const InstructionMap& instructions) {
+static void build(BackendFunction& function, const InstructionMap& instructions, InterferenceGraph& graph,
+                  bool (*should_consider)(const InstructionMap&, u32)) {
     std::vector<const BackendBlock*> blocks = function.GetBlocksPostorder();
 
     std::vector<LivenessSet> in(blocks.size());
@@ -256,15 +275,42 @@ static void build(const BackendFunction& function, InterferenceGraph& graph, boo
     }
 }
 
-static AllocationMap run(BackendFunction& function, const InstructionMap& instructions, AllocationType type,
-                         bool (*should_consider)(const InstructionMap&, u32), const std::vector<u32>& available_colors, u32& spill_location) {
+static u32 choose(const InstructionMap& instructions, const std::deque<Node>& nodes) {
+    float min = std::numeric_limits<float>::max();
+    u32 chosen = 0;
+
+    for (auto& [node, edges] : nodes) {
+        float spill_cost = instructions.at(node).spill_cost;
+        float degree = instructions.at(node).interferences;
+        if (degree == 0)
+            continue;
+        if (instructions.at(node).infinite_cost)
+            continue;
+        float cost = spill_cost / degree;
+        if (cost < min) {
+            min = cost;
+            chosen = node;
+        }
+    }
+
+    ASSERT(chosen != 0); // all nodes have infinite cost???
+    return chosen;
+}
+
+static AllocationMap run(BackendFunction& function, AllocationType type, bool (*should_consider)(const InstructionMap&, u32),
+                         const std::vector<u32>& available_colors, u32& spill_location) {
     const u32 k = available_colors.size();
     while (true) {
         // Chaitin-Briggs algorithm
         std::deque<Node> nodes;
         InterferenceGraph graph;
         AllocationMap allocations;
-        build(function, graph, should_consider, instructions);
+        InstructionMap instructions = create_instruction_map(function);
+        build(function, instructions, graph, should_consider);
+
+        for (auto& [name, edges] : graph) {
+            instructions.at(name).interferences = edges.size();
+        }
 
         while (true) {
             // While there's vertices with degree less than k
@@ -332,16 +378,17 @@ static AllocationMap run(BackendFunction& function, const InstructionMap& instru
             return allocations;
         } else {
             // Must spill one of the nodes
-            spill(function, nodes.back().id, spill_location, type);
-            spill_location += 8;
+            u32 chosen_node = choose(instructions, nodes);
+            spill(function, chosen_node, spill_location, type);
+            spill_location += type == AllocationType::Vec ? 16 : 8;
         }
     }
 }
 
 AllocationMap ir_graph_coloring_pass(BackendFunction& function) {
+    VERBOSE("Register allocation starting");
     AllocationMap allocations;
     u32 spill_location = 0;
-    InstructionMap instructions = create_instruction_map(function);
 
     std::vector<u32> available_gprs, available_fprs, available_vecs;
     for (auto& gpr : Registers::GetAllocatableGPRs()) {
@@ -356,9 +403,9 @@ AllocationMap ir_graph_coloring_pass(BackendFunction& function) {
         available_vecs.push_back(vec.Index());
     }
 
-    AllocationMap gpr_map = run(function, instructions, AllocationType::GPR, should_consider_gpr, available_gprs, spill_location);
-    AllocationMap fpr_map = run(function, instructions, AllocationType::FPR, should_consider_fpr, available_fprs, spill_location);
-    AllocationMap vec_map = run(function, instructions, AllocationType::Vec, should_consider_vec, available_vecs, spill_location);
+    AllocationMap gpr_map = run(function, AllocationType::GPR, should_consider_gpr, available_gprs, spill_location);
+    AllocationMap fpr_map = run(function, AllocationType::FPR, should_consider_fpr, available_fprs, spill_location);
+    AllocationMap vec_map = run(function, AllocationType::Vec, should_consider_vec, available_vecs, spill_location);
 
     // Merge the maps
     for (auto& [name, allocation] : gpr_map) {
@@ -384,6 +431,8 @@ AllocationMap ir_graph_coloring_pass(BackendFunction& function) {
     }
 
     allocations.SetSpillSize(spill_location);
+
+    VERBOSE("Register allocation done");
 
     return allocations;
 }

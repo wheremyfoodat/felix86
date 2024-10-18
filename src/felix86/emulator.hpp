@@ -9,7 +9,9 @@ struct Config {
     std::filesystem::path rootfs_path;
     std::filesystem::path executable_path;
     bool print_blocks = false;
-    bool use_interpreter = false;
+    bool print_state = false;
+    bool print_disassembly = false;
+    bool optimize = true;
     std::vector<std::string> argv;
     std::vector<std::string> envp;
 };
@@ -19,7 +21,7 @@ struct TestConfig {
 };
 
 struct Emulator {
-    Emulator(const Config& config) : backend(*this), config(config) {
+    Emulator(const Config& config) : config(config), backend(*this) {
         fs.LoadRootFS(config.rootfs_path);
         fs.LoadExecutable(config.executable_path);
         ThreadState* main_state = createThreadState();
@@ -70,8 +72,8 @@ private:
 
     std::mutex compilation_mutex; // to synchronize compilation and function lookup
     std::list<ThreadState> thread_states;
+    Config config;
     Backend backend;
     Filesystem fs;
-    Config config;
     bool testing = false;
 };
