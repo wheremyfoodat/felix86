@@ -445,8 +445,18 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         break;
     }
 
+    case IROpcode::Andi: {
+        EmitAndi(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData());
+        break;
+    }
+
     case IROpcode::Or: {
         EmitOr(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::Ori: {
+        EmitOri(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData());
         break;
     }
 
@@ -455,18 +465,38 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         break;
     }
 
-    case IROpcode::ShiftLeft: {
-        EmitShiftLeft(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+    case IROpcode::Xori: {
+        EmitXori(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData());
         break;
     }
 
-    case IROpcode::ShiftRight: {
-        EmitShiftRight(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+    case IROpcode::Shl: {
+        EmitShl(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
         break;
     }
 
-    case IROpcode::ShiftRightArithmetic: {
-        EmitShiftRightArithmetic(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+    case IROpcode::Shli: {
+        EmitShli(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData());
+        break;
+    }
+
+    case IROpcode::Shr: {
+        EmitShr(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::Shri: {
+        EmitShri(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData());
+        break;
+    }
+
+    case IROpcode::Sar: {
+        EmitSar(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::Sari: {
+        EmitSari(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData());
         break;
     }
 
@@ -525,6 +555,16 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         break;
     }
 
+    case IROpcode::Seqz: {
+        EmitSeqz(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)));
+        break;
+    }
+
+    case IROpcode::Snez: {
+        EmitSnez(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)));
+        break;
+    }
+
     case IROpcode::Equal: {
         EmitEqual(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
         break;
@@ -545,23 +585,43 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         break;
     }
 
-    case IROpcode::LeftRotate8: {
-        EmitLeftRotate8(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+    case IROpcode::Rol8: {
+        EmitRol8(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
         break;
     }
 
-    case IROpcode::LeftRotate16: {
-        EmitLeftRotate16(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+    case IROpcode::Rol16: {
+        EmitRol16(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
         break;
     }
 
-    case IROpcode::LeftRotate32: {
-        EmitLeftRotate32(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+    case IROpcode::Rol32: {
+        EmitRol32(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
         break;
     }
 
-    case IROpcode::LeftRotate64: {
-        EmitLeftRotate64(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+    case IROpcode::Rol64: {
+        EmitRol64(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::Ror8: {
+        EmitRor8(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::Ror16: {
+        EmitRor16(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::Ror32: {
+        EmitRor32(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::Ror64: {
+        EmitRor64(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
         break;
     }
 
@@ -570,13 +630,13 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         break;
     }
 
-    case IROpcode::CastVectorFromInteger: {
-        EmitCastVectorFromInteger(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)));
+    case IROpcode::IToV: {
+        EmitIToV(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)));
         break;
     }
 
-    case IROpcode::CastIntegerFromVector: {
-        EmitCastIntegerFromVector(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)));
+    case IROpcode::VToI: {
+        EmitVToI(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)));
         break;
     }
 
@@ -635,13 +695,13 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         break;
     }
 
-    case IROpcode::VShiftRight: {
-        EmitVShiftRight(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+    case IROpcode::VPackedShr: {
+        EmitVPackedShr(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
         break;
     }
 
-    case IROpcode::VShiftLeft: {
-        EmitVShiftLeft(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+    case IROpcode::VShl: {
+        EmitVShl(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
         break;
     }
 
@@ -670,6 +730,21 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         break;
     }
 
+    case IROpcode::VPackedAddByte: {
+        EmitVPackedAddByte(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::VPackedAddWord: {
+        EmitVPackedAddWord(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::VPackedAddDWord: {
+        EmitVPackedAddDWord(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
     case IROpcode::VPackedAddQWord: {
         EmitVPackedAddQWord(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
         break;
@@ -687,6 +762,11 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
 
     case IROpcode::VPackedEqualDWord: {
         EmitVPackedEqualDWord(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::VPackedEqualQWord: {
+        EmitVPackedEqualQWord(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
         break;
     }
 

@@ -1,823 +1,9 @@
-#include <stdarg.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <string.h>
-#include "felix86/common/log.hpp"
-#include "felix86/frontend/instruction.hpp"
 #include "felix86/ir/emitter.hpp"
-#include "felix86/ir/instruction.hpp"
 
-void ir_store_partial_state(IRBlock* block, std::span<const x86_ref_e> refs) {
-    for (x86_ref_e reg : refs) {
-        SSAInstruction* guest = ir_emit_get_guest(block, reg);
-        ir_emit_store_guest_to_memory(block, reg, guest);
-    }
-}
-
-void ir_load_partial_state(IRBlock* block, std::span<const x86_ref_e> refs) {
-    for (x86_ref_e reg : refs) {
-        SSAInstruction* guest = ir_emit_load_guest_from_memory(block, reg);
-        ir_emit_set_guest(block, reg, guest);
-    }
-}
-
-u16 get_bit_size(x86_size_e size) {
+namespace {
+u64 ImmSext(u64 imm, x86_size_e size) {
+    i64 value = imm;
     switch (size) {
-    case X86_SIZE_BYTE:
-        return 8;
-    case X86_SIZE_WORD:
-        return 16;
-    case X86_SIZE_DWORD:
-        return 32;
-    case X86_SIZE_QWORD:
-        return 64;
-    case X86_SIZE_MM:
-        return 64;
-    case X86_SIZE_XMM:
-        return 128;
-    case X86_SIZE_YMM:
-        return 256;
-    case X86_SIZE_ZMM:
-        return 512;
-    }
-
-    ERROR("Invalid register size");
-    return 0;
-}
-
-x86_operand_t get_full_reg(x86_ref_e ref) {
-    x86_operand_t operand;
-    operand.type = X86_OP_TYPE_REGISTER;
-    operand.reg.ref = ref;
-    operand.size = X86_SIZE_QWORD;
-    return operand;
-}
-
-SSAInstruction* get_reg(IRBlock* block, x86_ref_e ref, x86_size_e size_e) {
-    x86_operand_t operand = get_full_reg(ref);
-    operand.size = size_e;
-    return ir_emit_get_reg(block, &operand);
-}
-
-SSAInstruction* ir_emit_no_operands(IRBlock* block, IROpcode opcode) {
-    SSAInstruction instruction(opcode, {});
-    return block->InsertAtEnd(std::move(instruction));
-}
-
-SSAInstruction* ir_emit_one_operand(IRBlock* block, IROpcode opcode, SSAInstruction* source) {
-    SSAInstruction instruction(opcode, {source});
-    return block->InsertAtEnd(std::move(instruction));
-}
-
-SSAInstruction* ir_emit_two_operands(IRBlock* block, IROpcode opcode, SSAInstruction* source1, SSAInstruction* source2) {
-    SSAInstruction instruction(opcode, {source1, source2});
-    return block->InsertAtEnd(std::move(instruction));
-}
-
-SSAInstruction* ir_emit_three_operands(IRBlock* block, IROpcode opcode, SSAInstruction* source1, SSAInstruction* source2, SSAInstruction* source3) {
-    SSAInstruction instruction(opcode, {source1, source2, source3});
-    return block->InsertAtEnd(std::move(instruction));
-}
-
-SSAInstruction* ir_emit_four_operands(IRBlock* block, IROpcode opcode, SSAInstruction* source1, SSAInstruction* source2, SSAInstruction* source3,
-                                      SSAInstruction* source4) {
-    SSAInstruction instruction(opcode, {source1, source2, source3, source4});
-    return block->InsertAtEnd(std::move(instruction));
-}
-
-void ir_emit_runtime_comment(IRBlock* block, const std::string& comment) {
-    SSAInstruction instruction(comment);
-    block->InsertAtEnd(std::move(instruction));
-}
-
-SSAInstruction* ir_emit_add(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::Add, source1, source2);
-}
-
-SSAInstruction* ir_emit_sub(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::Sub, source1, source2);
-}
-
-SSAInstruction* ir_emit_shift_left(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::ShiftLeft, source1, source2);
-}
-
-SSAInstruction* ir_emit_shift_right(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::ShiftRight, source1, source2);
-}
-
-SSAInstruction* ir_emit_shift_right_arithmetic(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::ShiftRightArithmetic, source1, source2);
-}
-
-SSAInstruction* ir_emit_rotate(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2, x86_size_e size_e, bool right) {
-    u8 size = get_bit_size(size_e);
-    IROpcode type;
-    SSAInstruction* count = source2;
-    switch (size) {
-    case 8:
-        type = IROpcode::LeftRotate8;
-        if (right) {
-            count = ir_emit_sub(block, ir_emit_immediate(block, 8), count);
-        }
-        break;
-    case 16:
-        type = IROpcode::LeftRotate16;
-        if (right) {
-            count = ir_emit_sub(block, ir_emit_immediate(block, 16), count);
-        }
-        break;
-    case 32:
-        type = IROpcode::LeftRotate32;
-        if (right) {
-            count = ir_emit_sub(block, ir_emit_immediate(block, 32), count);
-        }
-        break;
-    case 64:
-        type = IROpcode::LeftRotate64;
-        if (right) {
-            count = ir_emit_sub(block, ir_emit_immediate(block, 64), count);
-        }
-        break;
-    }
-    return ir_emit_two_operands(block, type, source1, count);
-}
-
-SSAInstruction* ir_emit_select(IRBlock* block, SSAInstruction* condition, SSAInstruction* true_value, SSAInstruction* false_value) {
-    return ir_emit_three_operands(block, IROpcode::Select, condition, true_value, false_value);
-}
-
-SSAInstruction* ir_emit_clz(IRBlock* block, SSAInstruction* source) {
-    return ir_emit_one_operand(block, IROpcode::Clz, source);
-}
-
-SSAInstruction* ir_emit_ctzh(IRBlock* block, SSAInstruction* source) {
-    return ir_emit_one_operand(block, IROpcode::Ctzh, source);
-}
-
-SSAInstruction* ir_emit_ctzw(IRBlock* block, SSAInstruction* source) {
-    return ir_emit_one_operand(block, IROpcode::Ctzw, source);
-}
-
-SSAInstruction* ir_emit_ctz(IRBlock* block, SSAInstruction* source) {
-    return ir_emit_one_operand(block, IROpcode::Ctz, source);
-}
-
-SSAInstruction* ir_emit_addi(IRBlock* block, SSAInstruction* source, i64 imm) {
-    SSAInstruction* instruction = ir_emit_one_operand(block, IROpcode::Addi, source);
-    instruction->SetImmediateData(imm);
-    return instruction;
-}
-
-SSAInstruction* ir_emit_and(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::And, source1, source2);
-}
-
-SSAInstruction* ir_emit_or(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::Or, source1, source2);
-}
-
-SSAInstruction* ir_emit_xor(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::Xor, source1, source2);
-}
-
-SSAInstruction* ir_emit_not(IRBlock* block, SSAInstruction* source) {
-    return ir_emit_one_operand(block, IROpcode::Not, source);
-}
-
-SSAInstruction* ir_emit_neg(IRBlock* block, SSAInstruction* source) {
-    return ir_emit_one_operand(block, IROpcode::Neg, source);
-}
-
-SSAInstruction* ir_emit_equal(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::Equal, source1, source2);
-}
-
-SSAInstruction* ir_emit_not_equal(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::NotEqual, source1, source2);
-}
-
-SSAInstruction* ir_emit_greater_than_signed(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::SetLessThanSigned, source2, source1);
-}
-
-SSAInstruction* ir_emit_less_than_signed(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::SetLessThanSigned, source1, source2);
-}
-
-SSAInstruction* ir_emit_greater_than_unsigned(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::SetLessThanUnsigned, source2, source1);
-}
-
-SSAInstruction* ir_emit_less_than_unsigned(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::SetLessThanUnsigned, source1, source2);
-}
-
-SSAInstruction* ir_emit_div(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::Div, source1, source2);
-}
-
-SSAInstruction* ir_emit_divu(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::Divu, source1, source2);
-}
-
-SSAInstruction* ir_emit_rem(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::Rem, source1, source2);
-}
-
-SSAInstruction* ir_emit_remu(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::Remu, source1, source2);
-}
-
-SSAInstruction* ir_emit_divw(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::Divw, source1, source2);
-}
-
-SSAInstruction* ir_emit_divuw(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::Divuw, source1, source2);
-}
-
-SSAInstruction* ir_emit_remw(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::Remw, source1, source2);
-}
-
-SSAInstruction* ir_emit_remuw(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::Remuw, source1, source2);
-}
-
-SSAInstruction* ir_emit_mul(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::Mul, source1, source2);
-}
-
-SSAInstruction* ir_emit_mulh(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::Mulh, source1, source2);
-}
-
-SSAInstruction* ir_emit_mulhu(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::Mulhu, source1, source2);
-}
-
-SSAInstruction* ir_emit_get_flags(IRBlock* block) {
-    SSAInstruction* c = ir_emit_get_flag(block, X86_REF_CF);
-    SSAInstruction* p = ir_emit_get_flag(block, X86_REF_PF);
-    SSAInstruction* a = ir_emit_get_flag(block, X86_REF_AF);
-    SSAInstruction* z = ir_emit_get_flag(block, X86_REF_ZF);
-    SSAInstruction* s = ir_emit_get_flag(block, X86_REF_SF);
-    SSAInstruction* o = ir_emit_get_flag(block, X86_REF_OF);
-    SSAInstruction* d = ir_emit_get_flag(block, X86_REF_DF);
-
-    SSAInstruction* p_shifted = ir_emit_shift_left(block, p, ir_emit_immediate(block, 2));
-    SSAInstruction* a_shifted = ir_emit_shift_left(block, a, ir_emit_immediate(block, 4));
-    SSAInstruction* z_shifted = ir_emit_shift_left(block, z, ir_emit_immediate(block, 6));
-    SSAInstruction* s_shifted = ir_emit_shift_left(block, s, ir_emit_immediate(block, 7));
-    SSAInstruction* d_shifted = ir_emit_shift_left(block, d, ir_emit_immediate(block, 10));
-    SSAInstruction* o_shifted = ir_emit_shift_left(block, o, ir_emit_immediate(block, 11));
-
-    SSAInstruction* c_p = ir_emit_or(block, c, p_shifted);
-    SSAInstruction* a_z = ir_emit_or(block, a_shifted, z_shifted);
-    SSAInstruction* a_z_o = ir_emit_or(block, a_z, o_shifted);
-    SSAInstruction* c_p_s = ir_emit_or(block, c_p, s_shifted);
-    SSAInstruction* c_p_s_d = ir_emit_or(block, c_p_s, d_shifted);
-    SSAInstruction* result_almost = ir_emit_or(block, c_p_s_d, a_z_o);
-    SSAInstruction* result = ir_emit_or(block, result_almost, ir_emit_immediate(block, 0b10)); // always set bit 1
-
-    return result;
-}
-
-void ir_emit_set_flags(IRBlock* block, SSAInstruction* flags) {
-    SSAInstruction* c = ir_emit_and(block, flags, ir_emit_immediate(block, 1));
-    SSAInstruction* p = ir_emit_and(block, ir_emit_shift_right(block, flags, ir_emit_immediate(block, 2)), ir_emit_immediate(block, 1));
-    SSAInstruction* a = ir_emit_and(block, ir_emit_shift_right(block, flags, ir_emit_immediate(block, 4)), ir_emit_immediate(block, 1));
-    SSAInstruction* z = ir_emit_and(block, ir_emit_shift_right(block, flags, ir_emit_immediate(block, 6)), ir_emit_immediate(block, 1));
-    SSAInstruction* s = ir_emit_and(block, ir_emit_shift_right(block, flags, ir_emit_immediate(block, 7)), ir_emit_immediate(block, 1));
-    SSAInstruction* o = ir_emit_and(block, ir_emit_shift_right(block, flags, ir_emit_immediate(block, 11)), ir_emit_immediate(block, 1));
-    SSAInstruction* d = ir_emit_and(block, ir_emit_shift_right(block, flags, ir_emit_immediate(block, 10)), ir_emit_immediate(block, 1));
-
-    ir_emit_set_flag(block, X86_REF_CF, c);
-    ir_emit_set_flag(block, X86_REF_PF, p);
-    ir_emit_set_flag(block, X86_REF_AF, a);
-    ir_emit_set_flag(block, X86_REF_ZF, z);
-    ir_emit_set_flag(block, X86_REF_SF, s);
-    ir_emit_set_flag(block, X86_REF_OF, o);
-    ir_emit_set_flag(block, X86_REF_DF, d);
-}
-
-void ir_emit_div128(IRBlock* block, SSAInstruction* divisor) {
-    SSAInstruction* instruction = ir_emit_one_operand(block, IROpcode::Div128, divisor);
-    instruction->Lock();
-}
-
-SSAInstruction* ir_emit_divu128(IRBlock* block, SSAInstruction* divisor) {
-    SSAInstruction* instruction = ir_emit_one_operand(block, IROpcode::Divu128, divisor);
-    instruction->Lock();
-    return instruction;
-}
-
-SSAInstruction* ir_emit_lea(IRBlock* block, x86_operand_t* operand_rm) {
-    SSAInstruction* (*get_guest)(IRBlock* block, x86_ref_e reg) = operand_rm->memory.address_override ? ir_emit_get_gpr32 : ir_emit_get_gpr64;
-
-    SSAInstruction* base = operand_rm->memory.base != X86_REF_COUNT ? get_guest(block, operand_rm->memory.base) : ir_emit_immediate(block, 0);
-
-    SSAInstruction* base_final = base;
-    if (operand_rm->memory.fs_override) {
-        SSAInstruction* fs = ir_emit_get_guest(block, X86_REF_FS);
-        base_final = ir_emit_add(block, base, fs);
-    } else if (operand_rm->memory.gs_override) {
-        SSAInstruction* gs = ir_emit_get_guest(block, X86_REF_GS);
-        base_final = ir_emit_add(block, base, gs);
-    }
-
-    SSAInstruction* index = operand_rm->memory.index != X86_REF_COUNT ? get_guest(block, operand_rm->memory.index) : nullptr;
-
-    SSAInstruction* address = base_final;
-    if (index) {
-        SSAInstruction* scale = ir_emit_immediate(block, operand_rm->memory.scale);
-        SSAInstruction* scaled_index = ir_emit_shift_left(block, index, scale);
-        address = ir_emit_add(block, base_final, scaled_index);
-    }
-
-    SSAInstruction* displaced_address = address;
-    if (operand_rm->memory.displacement) {
-        if (IsValidSigned12BitImm(operand_rm->memory.displacement)) {
-            displaced_address = ir_emit_addi(block, address, operand_rm->memory.displacement);
-        } else {
-            // Might benefit more since loading large immediates takes many instructions and
-            // this can be reused after optimization passes
-            SSAInstruction* displacement = ir_emit_immediate(block, operand_rm->memory.displacement);
-            displaced_address = ir_emit_add(block, address, displacement);
-        }
-    }
-
-    SSAInstruction* final_address = displaced_address;
-    if (operand_rm->memory.address_override) {
-        final_address = ir_emit_zext32(block, displaced_address);
-    }
-
-    return final_address;
-}
-
-SSAInstruction* ir_emit_zext8(IRBlock* block, SSAInstruction* source) {
-    return ir_emit_one_operand(block, IROpcode::Zext8, source);
-}
-
-SSAInstruction* ir_emit_zext16(IRBlock* block, SSAInstruction* source) {
-    return ir_emit_one_operand(block, IROpcode::Zext16, source);
-}
-
-SSAInstruction* ir_emit_zext32(IRBlock* block, SSAInstruction* source) {
-    return ir_emit_one_operand(block, IROpcode::Zext32, source);
-}
-
-SSAInstruction* ir_emit_zext(IRBlock* block, SSAInstruction* source, x86_size_e size) {
-    switch (size) {
-    case X86_SIZE_BYTE:
-        return ir_emit_zext8(block, source);
-    case X86_SIZE_WORD:
-        return ir_emit_zext16(block, source);
-    case X86_SIZE_DWORD:
-        return ir_emit_zext32(block, source);
-    case X86_SIZE_QWORD:
-        return source;
-    default:
-        ERROR("Invalid size");
-        return source;
-    }
-}
-
-SSAInstruction* ir_emit_get_thread_state_pointer(IRBlock* block) {
-    return ir_emit_no_operands(block, IROpcode::GetThreadStatePointer);
-}
-
-SSAInstruction* ir_emit_get_parity(IRBlock* block, SSAInstruction* source) {
-    return ir_emit_one_operand(block, IROpcode::Parity, source);
-}
-
-SSAInstruction* ir_emit_sext8(IRBlock* block, SSAInstruction* source) {
-    return ir_emit_one_operand(block, IROpcode::Sext8, source);
-}
-
-SSAInstruction* ir_emit_sext16(IRBlock* block, SSAInstruction* source) {
-    return ir_emit_one_operand(block, IROpcode::Sext16, source);
-}
-
-SSAInstruction* ir_emit_sext32(IRBlock* block, SSAInstruction* source) {
-    return ir_emit_one_operand(block, IROpcode::Sext32, source);
-}
-
-SSAInstruction* ir_emit_sext(IRBlock* block, SSAInstruction* source, x86_size_e size) {
-    switch (size) {
-    case X86_SIZE_BYTE:
-        return ir_emit_sext8(block, source);
-    case X86_SIZE_WORD:
-        return ir_emit_sext16(block, source);
-    case X86_SIZE_DWORD:
-        return ir_emit_sext32(block, source);
-    case X86_SIZE_QWORD:
-        return source;
-    default:
-        ERROR("Invalid size");
-        return source;
-    }
-}
-
-void ir_emit_syscall(IRBlock* block) {
-    // The kernel clobbers registers rcx and r11 but preserves all other registers except rax which is the result.
-    // We don't have to clobber rcx and r11 as we are not a kernel.
-    // First, get_guest and writeback rax, rdi, rsi, rdx, r10, r8, r9 because they may be used by the syscall.
-    // Then emit the syscall instruction.
-    // Finally, load rax so it's not propagated from before the syscall.
-    constexpr static std::array in_regs = {X86_REF_RAX, X86_REF_RDI, X86_REF_RSI, X86_REF_RDX, X86_REF_R10, X86_REF_R8, X86_REF_R9};
-    constexpr static std::array out_regs = {X86_REF_RAX};
-
-    ir_store_partial_state(block, in_regs);
-
-    SSAInstruction instruction(IROpcode::Syscall, {});
-    instruction.Lock();
-    block->InsertAtEnd(std::move(instruction));
-
-    ir_load_partial_state(block, out_regs);
-}
-
-SSAInstruction* ir_emit_insert_integer_to_vector(IRBlock* block, SSAInstruction* source, SSAInstruction* dest, u8 idx, x86_size_e sz) {
-    u64 immediate_data = (u64)sz << 8 | idx;
-    SSAInstruction* instruction = ir_emit_two_operands(block, IROpcode::VInsertInteger, source, dest);
-    instruction->SetImmediateData(immediate_data);
-    return instruction;
-}
-
-SSAInstruction* ir_emit_extract_integer_from_vector(IRBlock* block, SSAInstruction* src, u8 idx, x86_size_e sz) {
-    u64 immediate_data = (u64)sz << 8 | idx;
-    SSAInstruction* instruction = ir_emit_one_operand(block, IROpcode::VExtractInteger, src);
-    instruction->SetImmediateData(immediate_data);
-    return instruction;
-}
-
-SSAInstruction* ir_emit_vector_unpack_byte_low(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::VUnpackByteLow, source1, source2);
-}
-
-SSAInstruction* ir_emit_vector_unpack_word_low(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::VUnpackWordLow, source1, source2);
-}
-
-SSAInstruction* ir_emit_vector_unpack_dword_low(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::VUnpackDWordLow, source1, source2);
-}
-
-SSAInstruction* ir_emit_vector_unpack_qword_low(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::VUnpackQWordLow, source1, source2);
-}
-
-SSAInstruction* ir_emit_cast_vector_integer(IRBlock* block, SSAInstruction* source) {
-    return ir_emit_one_operand(block, IROpcode::CastVectorFromInteger, source);
-}
-
-SSAInstruction* ir_emit_cast_integer_vector(IRBlock* block, SSAInstruction* source) {
-    return ir_emit_one_operand(block, IROpcode::CastIntegerFromVector, source);
-}
-
-SSAInstruction* ir_emit_vector_packed_and(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::VAnd, source1, source2);
-}
-
-SSAInstruction* ir_emit_vector_packed_or(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::VOr, source1, source2);
-}
-
-SSAInstruction* ir_emit_vector_packed_xor(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::VXor, source1, source2);
-}
-
-SSAInstruction* ir_emit_vector_packed_shift_right(IRBlock* block, SSAInstruction* source, SSAInstruction* imm) {
-    return ir_emit_two_operands(block, IROpcode::VShiftRight, source, imm);
-}
-
-SSAInstruction* ir_emit_vector_packed_shift_left(IRBlock* block, SSAInstruction* source, SSAInstruction* imm) {
-    return ir_emit_two_operands(block, IROpcode::VShiftLeft, source, imm);
-}
-
-SSAInstruction* ir_emit_vector_packed_sub_byte(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::VPackedSubByte, source1, source2);
-}
-
-SSAInstruction* ir_emit_vector_packed_add_qword(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::VPackedAddQWord, source1, source2);
-}
-
-SSAInstruction* ir_emit_vector_packed_compare_eq_byte(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::VPackedEqualByte, source1, source2);
-}
-
-SSAInstruction* ir_emit_vector_packed_compare_eq_word(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::VPackedEqualWord, source1, source2);
-}
-
-SSAInstruction* ir_emit_vector_packed_compare_eq_dword(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::VPackedEqualDWord, source1, source2);
-}
-
-SSAInstruction* ir_emit_vector_packed_shuffle_dword(IRBlock* block, SSAInstruction* source, u8 control_byte) {
-    SSAInstruction instruction(IROpcode::VPackedShuffleDWord, {source});
-    instruction.SetImmediateData(control_byte);
-    return block->InsertAtEnd(std::move(instruction));
-}
-
-SSAInstruction* ir_emit_vector_packed_move_byte_mask(IRBlock* block, SSAInstruction* source) {
-    return ir_emit_one_operand(block, IROpcode::VMoveByteMask, source);
-}
-
-SSAInstruction* ir_emit_vector_packed_min_byte(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    return ir_emit_two_operands(block, IROpcode::VPackedMinByte, source1, source2);
-}
-
-SSAInstruction* ir_emit_load_guest_from_memory(IRBlock* block, x86_ref_e ref) {
-    if (ref == X86_REF_COUNT) {
-        ERROR("Invalid register reference");
-    }
-
-    SSAInstruction instruction(IROpcode::LoadGuestFromMemory, ref);
-    return block->InsertAtEnd(std::move(instruction));
-}
-
-void ir_emit_store_guest_to_memory(IRBlock* block, x86_ref_e ref, SSAInstruction* source) {
-    if (ref == X86_REF_COUNT) {
-        ERROR("Invalid register reference");
-    }
-
-    SSAInstruction instruction(IROpcode::StoreGuestToMemory, ref, source);
-    instruction.Lock();
-    block->InsertAtEnd(std::move(instruction));
-}
-
-SSAInstruction* ir_emit_get_guest(IRBlock* block, x86_ref_e ref) {
-    if (ref == X86_REF_COUNT) {
-        ERROR("Invalid register reference");
-    }
-
-    SSAInstruction instruction(IROpcode::GetGuest, ref);
-    return block->InsertAtEnd(std::move(instruction));
-}
-
-void ir_emit_set_guest(IRBlock* block, x86_ref_e ref, SSAInstruction* source) {
-    if (ref == X86_REF_COUNT) {
-        ERROR("Invalid register reference");
-    }
-
-    SSAInstruction instruction(IROpcode::SetGuest, ref, source);
-    block->InsertAtEnd(std::move(instruction));
-}
-
-SSAInstruction* ir_emit_get_flag(IRBlock* block, x86_ref_e flag) {
-    if (flag < X86_REF_CF || flag > X86_REF_OF) {
-        ERROR("Invalid flag reference");
-    }
-
-    return ir_emit_get_guest(block, flag);
-}
-
-SSAInstruction* ir_emit_get_flag_not(IRBlock* block, x86_ref_e flag) {
-    SSAInstruction* instruction = ir_emit_get_flag(block, flag);
-    return ir_emit_xor(block, instruction, ir_emit_immediate(block, 1));
-}
-
-void ir_emit_set_flag(IRBlock* block, x86_ref_e flag, SSAInstruction* source) {
-    if (flag < X86_REF_CF || flag > X86_REF_OF) {
-        ERROR("Invalid flag reference");
-    }
-
-    ir_emit_set_guest(block, flag, source);
-}
-
-SSAInstruction* ir_emit_read_byte(IRBlock* block, SSAInstruction* address) {
-    return ir_emit_one_operand(block, IROpcode::ReadByte, address);
-}
-
-SSAInstruction* ir_emit_read_word(IRBlock* block, SSAInstruction* address) {
-    return ir_emit_one_operand(block, IROpcode::ReadWord, address);
-}
-
-SSAInstruction* ir_emit_read_dword(IRBlock* block, SSAInstruction* address) {
-    return ir_emit_one_operand(block, IROpcode::ReadDWord, address);
-}
-
-SSAInstruction* ir_emit_read_qword(IRBlock* block, SSAInstruction* address) {
-    return ir_emit_one_operand(block, IROpcode::ReadQWord, address);
-}
-
-SSAInstruction* ir_emit_read_xmmword(IRBlock* block, SSAInstruction* address) {
-    return ir_emit_one_operand(block, IROpcode::ReadXmmWord, address);
-}
-
-void ir_emit_write_byte(IRBlock* block, SSAInstruction* address, SSAInstruction* source) {
-    SSAInstruction* instruction = ir_emit_two_operands(block, IROpcode::WriteByte, address, source);
-    instruction->Lock();
-}
-
-void ir_emit_write_word(IRBlock* block, SSAInstruction* address, SSAInstruction* source) {
-    SSAInstruction* instruction = ir_emit_two_operands(block, IROpcode::WriteWord, address, source);
-    instruction->Lock();
-}
-
-void ir_emit_write_dword(IRBlock* block, SSAInstruction* address, SSAInstruction* source) {
-    SSAInstruction* instruction = ir_emit_two_operands(block, IROpcode::WriteDWord, address, source);
-    instruction->Lock();
-}
-
-void ir_emit_write_qword(IRBlock* block, SSAInstruction* address, SSAInstruction* source) {
-    SSAInstruction* instruction = ir_emit_two_operands(block, IROpcode::WriteQWord, address, source);
-    instruction->Lock();
-}
-
-void ir_emit_write_xmmword(IRBlock* block, SSAInstruction* address, SSAInstruction* source) {
-    SSAInstruction* instruction = ir_emit_two_operands(block, IROpcode::WriteXmmWord, address, source);
-    instruction->Lock();
-}
-
-SSAInstruction* ir_emit_amoadd(IRBlock* block, SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size) {
-    IROpcode opcode = IROpcode::Null;
-    switch (size) {
-    case X86_SIZE_BYTE:
-        opcode = IROpcode::AmoAdd8;
-        break;
-    case X86_SIZE_WORD:
-        opcode = IROpcode::AmoAdd16;
-        break;
-    case X86_SIZE_DWORD:
-        opcode = IROpcode::AmoAdd32;
-        break;
-    case X86_SIZE_QWORD:
-        opcode = IROpcode::AmoAdd64;
-        break;
-    default:
-        ERROR("Invalid size");
-    }
-
-    SSAInstruction* instruction = ir_emit_two_operands(block, opcode, address, source);
-    instruction->SetImmediateData((u8)ordering);
-    instruction->Lock();
-    return instruction;
-}
-
-SSAInstruction* ir_emit_amoxor(IRBlock* block, SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size) {
-    IROpcode opcode = IROpcode::Null;
-    switch (size) {
-    case X86_SIZE_BYTE:
-        opcode = IROpcode::AmoXor8;
-        break;
-    case X86_SIZE_WORD:
-        opcode = IROpcode::AmoXor16;
-        break;
-    case X86_SIZE_DWORD:
-        opcode = IROpcode::AmoXor32;
-        break;
-    case X86_SIZE_QWORD:
-        opcode = IROpcode::AmoXor64;
-        break;
-    default:
-        ERROR("Invalid size");
-    }
-
-    SSAInstruction* instruction = ir_emit_two_operands(block, opcode, address, source);
-    instruction->SetImmediateData((u8)ordering);
-    instruction->Lock();
-    return instruction;
-}
-
-SSAInstruction* ir_emit_amoor(IRBlock* block, SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size) {
-    IROpcode opcode = IROpcode::Null;
-    switch (size) {
-    case X86_SIZE_BYTE:
-        opcode = IROpcode::AmoOr8;
-        break;
-    case X86_SIZE_WORD:
-        opcode = IROpcode::AmoOr16;
-        break;
-    case X86_SIZE_DWORD:
-        opcode = IROpcode::AmoOr32;
-        break;
-    case X86_SIZE_QWORD:
-        opcode = IROpcode::AmoOr64;
-        break;
-    default:
-        ERROR("Invalid size");
-    }
-
-    SSAInstruction* instruction = ir_emit_two_operands(block, opcode, address, source);
-    instruction->SetImmediateData((u8)ordering);
-    instruction->Lock();
-    return instruction;
-}
-
-SSAInstruction* ir_emit_amoand(IRBlock* block, SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size) {
-    IROpcode opcode = IROpcode::Null;
-    switch (size) {
-    case X86_SIZE_BYTE:
-        opcode = IROpcode::AmoAnd8;
-        break;
-    case X86_SIZE_WORD:
-        opcode = IROpcode::AmoAnd16;
-        break;
-    case X86_SIZE_DWORD:
-        opcode = IROpcode::AmoAnd32;
-        break;
-    case X86_SIZE_QWORD:
-        opcode = IROpcode::AmoAnd64;
-        break;
-    default:
-        ERROR("Invalid size");
-    }
-
-    SSAInstruction* instruction = ir_emit_two_operands(block, opcode, address, source);
-    instruction->SetImmediateData((u8)ordering);
-    instruction->Lock();
-    return instruction;
-}
-
-SSAInstruction* ir_emit_amoswap(IRBlock* block, SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size) {
-    IROpcode opcode = IROpcode::Null;
-    switch (size) {
-    case X86_SIZE_BYTE:
-        opcode = IROpcode::AmoSwap8;
-        break;
-    case X86_SIZE_WORD:
-        opcode = IROpcode::AmoSwap16;
-        break;
-    case X86_SIZE_DWORD:
-        opcode = IROpcode::AmoSwap32;
-        break;
-    case X86_SIZE_QWORD:
-        opcode = IROpcode::AmoSwap64;
-        break;
-    default:
-        ERROR("Invalid size");
-    }
-
-    SSAInstruction* instruction = ir_emit_two_operands(block, opcode, address, source);
-    instruction->SetImmediateData((u8)ordering);
-    instruction->Lock();
-    return instruction;
-}
-
-SSAInstruction* ir_emit_amocas(IRBlock* block, SSAInstruction* address, SSAInstruction* expected, SSAInstruction* source, MemoryOrdering ordering,
-                               x86_size_e size) {
-    IROpcode opcode = IROpcode::Null;
-    switch (size) {
-    case X86_SIZE_BYTE:
-        opcode = IROpcode::AmoCAS8;
-        break;
-    case X86_SIZE_WORD:
-        opcode = IROpcode::AmoCAS16;
-        break;
-    case X86_SIZE_DWORD:
-        opcode = IROpcode::AmoCAS32;
-        break;
-    case X86_SIZE_QWORD:
-        opcode = IROpcode::AmoCAS64;
-        break;
-    default:
-        ERROR("Invalid size");
-    }
-
-    SSAInstruction* instruction = ir_emit_three_operands(block, opcode, address, expected, source);
-    instruction->SetImmediateData((u8)ordering);
-    instruction->Lock();
-    return instruction;
-}
-
-void ir_emit_cpuid(IRBlock* block) {
-    // Similar to syscall, cpuid clobbers registers rax, rcx, rdx, rbx but preserves all other registers.
-    // It uses rax and rcx as input.
-    constexpr static std::array in_regs = {X86_REF_RAX, X86_REF_RCX};
-    constexpr static std::array out_regs = {X86_REF_RAX, X86_REF_RBX, X86_REF_RCX, X86_REF_RDX};
-
-    ir_store_partial_state(block, in_regs);
-
-    SSAInstruction instruction(IROpcode::Cpuid, {});
-    instruction.Lock();
-    block->InsertAtEnd(std::move(instruction));
-
-    ir_load_partial_state(block, out_regs);
-}
-
-void ir_emit_rdtsc(IRBlock* block) {
-    // Has no inputs but writes to EDX:EAX
-    constexpr static std::array out_regs = {X86_REF_RAX, X86_REF_RDX};
-
-    SSAInstruction instruction(IROpcode::Rdtsc, {});
-    instruction.Lock();
-    block->InsertAtEnd(std::move(instruction));
-
-    ir_load_partial_state(block, out_regs);
-}
-
-SSAInstruction* ir_emit_immediate(IRBlock* block, u64 value) {
-    SSAInstruction instruction(value);
-    return block->InsertAtEnd(std::move(instruction));
-}
-
-SSAInstruction* ir_emit_immediate_sext(IRBlock* block, x86_operand_t* operand) {
-    i64 value = operand->immediate.data;
-    switch (operand->size) {
     case X86_SIZE_BYTE:
         value = (i8)value;
         break;
@@ -832,465 +18,1195 @@ SSAInstruction* ir_emit_immediate_sext(IRBlock* block, x86_operand_t* operand) {
     default:
         ERROR("Invalid immediate size");
     }
-
-    return ir_emit_immediate(block, value);
+    return value;
 }
+} // namespace
 
-// ██   ██ ███████ ██      ██████  ███████ ██████  ███████
-// ██   ██ ██      ██      ██   ██ ██      ██   ██ ██
-// ███████ █████   ██      ██████  █████   ██████  ███████
-// ██   ██ ██      ██      ██      ██      ██   ██      ██
-// ██   ██ ███████ ███████ ██      ███████ ██   ██ ███████
-
-SSAInstruction* ir_emit_get_reg(IRBlock* block, x86_operand_t* operand_reg) {
-    if (operand_reg->type != X86_OP_TYPE_REGISTER) {
-        ERROR("Invalid operand type");
-    }
-
-    switch (operand_reg->size) {
+SSAInstruction* IREmitter::GetReg(x86_ref_e reg, x86_size_e size, bool high) {
+    ASSERT(!high || size == X86_SIZE_BYTE);
+    switch (size) {
     case X86_SIZE_BYTE: {
-        if (operand_reg->reg.high8) {
-            return ir_emit_get_gpr8_high(block, operand_reg->reg.ref);
+        if (high) {
+            return getGpr8High(reg);
         } else {
-            return ir_emit_get_gpr8_low(block, operand_reg->reg.ref);
+            return getGpr8Low(reg);
         }
     }
     case X86_SIZE_WORD:
-        return ir_emit_get_gpr16(block, operand_reg->reg.ref);
+        return getGpr16(reg);
     case X86_SIZE_DWORD:
-        return ir_emit_get_gpr32(block, operand_reg->reg.ref);
+        return getGpr32(reg);
     case X86_SIZE_QWORD:
-        return ir_emit_get_gpr64(block, operand_reg->reg.ref);
+        return getGpr64(reg);
     case X86_SIZE_XMM:
-    case X86_SIZE_YMM:
-    case X86_SIZE_ZMM:
-        return ir_emit_get_vector(block, operand_reg->reg.ref);
+        return getVector(reg);
     default:
         ERROR("Invalid register size");
         return nullptr;
     }
 }
 
-SSAInstruction* ir_emit_get_rm(IRBlock* block, x86_operand_t* operand_rm) {
-    if (operand_rm->type == X86_OP_TYPE_REGISTER) {
-        return ir_emit_get_reg(block, operand_rm);
-    } else {
-        SSAInstruction* address = ir_emit_lea(block, operand_rm);
-        return ir_emit_read_memory(block, address, operand_rm->size);
-    }
-}
-
-void ir_emit_set_reg(IRBlock* block, x86_operand_t* operand_reg, SSAInstruction* source) {
-    switch (operand_reg->size) {
+void IREmitter::SetReg(SSAInstruction* value, x86_ref_e reg, x86_size_e size, bool high) {
+    ASSERT(!high || size == X86_SIZE_BYTE);
+    switch (size) {
     case X86_SIZE_BYTE: {
-        if (operand_reg->reg.high8) {
-            return ir_emit_set_gpr8_high(block, operand_reg->reg.ref, source);
+        if (high) {
+            setGpr8High(reg, value);
         } else {
-            return ir_emit_set_gpr8_low(block, operand_reg->reg.ref, source);
+            setGpr8Low(reg, value);
         }
+        break;
     }
     case X86_SIZE_WORD:
-        return ir_emit_set_gpr16(block, operand_reg->reg.ref, source);
+        setGpr16(reg, value);
+        break;
     case X86_SIZE_DWORD:
-        return ir_emit_set_gpr32(block, operand_reg->reg.ref, source);
+        setGpr32(reg, value);
+        break;
     case X86_SIZE_QWORD:
-        return ir_emit_set_gpr64(block, operand_reg->reg.ref, source);
+        setGpr64(reg, value);
+        break;
     case X86_SIZE_XMM:
-    case X86_SIZE_YMM:
-    case X86_SIZE_ZMM:
-        return ir_emit_set_vector(block, operand_reg->reg.ref, source);
+        setVector(reg, value);
+        break;
     default:
         ERROR("Invalid register size");
-        return;
+        break;
     }
 }
 
-void ir_emit_set_reg(IRBlock* block, x86_ref_e ref, x86_size_e size, SSAInstruction* source, bool high = false) {
-    x86_operand_t operand;
-    operand.type = X86_OP_TYPE_REGISTER;
-    operand.reg.ref = ref;
-    operand.reg.high8 = high;
-    operand.size = size;
-    ir_emit_set_reg(block, &operand, source);
+SSAInstruction* IREmitter::GetFlag(x86_ref_e ref) {
+    if (ref < X86_REF_CF || ref > X86_REF_OF) {
+        ERROR("Invalid flag reference");
+    }
+
+    return getGuest(ref);
 }
 
-void ir_emit_set_rm(IRBlock* block, x86_operand_t* operand_rm, SSAInstruction* source) {
-    if (operand_rm->type == X86_OP_TYPE_REGISTER) {
-        return ir_emit_set_reg(block, operand_rm, source);
+SSAInstruction* IREmitter::GetFlagNot(x86_ref_e ref) {
+    if (ref < X86_REF_CF || ref > X86_REF_OF) {
+        ERROR("Invalid flag reference");
+    }
+
+    return Xori(getGuest(ref), 1);
+}
+
+void IREmitter::SetFlag(SSAInstruction* value, x86_ref_e ref) {
+    if (ref < X86_REF_CF || ref > X86_REF_OF) {
+        ERROR("Invalid flag reference");
+    }
+
+    setGuest(ref, value);
+}
+
+SSAInstruction* IREmitter::GetRm(const x86_operand_t& operand) {
+    if (operand.type == X86_OP_TYPE_REGISTER) {
+        return GetReg(operand.reg.ref, operand.size);
     } else {
-        SSAInstruction* address = ir_emit_lea(block, operand_rm);
-        return ir_emit_write_memory(block, address, source, operand_rm->size);
+        SSAInstruction* address = Lea(operand);
+        return ReadMemory(address, operand.size);
     }
 }
 
-void ir_emit_write_memory(IRBlock* block, SSAInstruction* address, SSAInstruction* value, x86_size_e size) {
+void IREmitter::SetRm(const x86_operand_t& operand, SSAInstruction* value) {
+    if (operand.type == X86_OP_TYPE_REGISTER) {
+        SetReg(value, operand.reg.ref, operand.size);
+    } else {
+        SSAInstruction* address = Lea(operand);
+        WriteMemory(address, value, operand.size);
+    }
+}
+
+void IREmitter::Comment(const std::string& comment) {
+    block->InsertAtEnd(SSAInstruction(comment));
+}
+
+SSAInstruction* IREmitter::Imm(u64 value) {
+    SSAInstruction instruction(value);
+    return block->InsertAtEnd(std::move(instruction));
+}
+
+SSAInstruction* IREmitter::Add(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Add, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Addi(SSAInstruction* lhs, i64 rhs) {
+    ASSERT(IsValidSigned12BitImm(rhs));
+    return insertInstruction(IROpcode::Addi, {lhs}, rhs);
+}
+
+SSAInstruction* IREmitter::Sub(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Sub, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Shl(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Shl, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Shli(SSAInstruction* lhs, i64 rhs) {
+    return insertInstruction(IROpcode::Shli, {lhs}, rhs);
+}
+
+SSAInstruction* IREmitter::Shr(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Shr, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Shri(SSAInstruction* lhs, i64 rhs) {
+    return insertInstruction(IROpcode::Shri, {lhs}, rhs);
+}
+
+SSAInstruction* IREmitter::Sar(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Sar, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Sari(SSAInstruction* lhs, i64 rhs) {
+    return insertInstruction(IROpcode::Sari, {lhs}, rhs);
+}
+
+SSAInstruction* IREmitter::Rol(SSAInstruction* lhs, SSAInstruction* rhs, x86_size_e size) {
     switch (size) {
-    case X86_SIZE_BYTE:
-        return ir_emit_write_byte(block, address, value);
-    case X86_SIZE_WORD:
-        return ir_emit_write_word(block, address, value);
-    case X86_SIZE_DWORD:
-        return ir_emit_write_dword(block, address, value);
-    case X86_SIZE_QWORD:
-        return ir_emit_write_qword(block, address, value);
-    case X86_SIZE_XMM:
-        return ir_emit_write_xmmword(block, address, value);
+    case x86_size_e::X86_SIZE_BYTE:
+        return insertInstruction(IROpcode::Rol8, {lhs, rhs});
+    case x86_size_e::X86_SIZE_WORD:
+        return insertInstruction(IROpcode::Rol16, {lhs, rhs});
+    case x86_size_e::X86_SIZE_DWORD:
+        return insertInstruction(IROpcode::Rol32, {lhs, rhs});
+    case x86_size_e::X86_SIZE_QWORD:
+        return insertInstruction(IROpcode::Rol64, {lhs, rhs});
     default:
-        ERROR("Invalid memory size");
-        return;
+        UNREACHABLE();
+        return nullptr;
     }
 }
 
-SSAInstruction* ir_emit_read_memory(IRBlock* block, SSAInstruction* address, x86_size_e size) {
+SSAInstruction* IREmitter::Ror(SSAInstruction* lhs, SSAInstruction* rhs, x86_size_e size) {
+    switch (size) {
+    case x86_size_e::X86_SIZE_BYTE:
+        return insertInstruction(IROpcode::Ror8, {lhs, rhs});
+    case x86_size_e::X86_SIZE_WORD:
+        return insertInstruction(IROpcode::Ror16, {lhs, rhs});
+    case x86_size_e::X86_SIZE_DWORD:
+        return insertInstruction(IROpcode::Ror32, {lhs, rhs});
+    case x86_size_e::X86_SIZE_QWORD:
+        return insertInstruction(IROpcode::Ror64, {lhs, rhs});
+    default:
+        UNREACHABLE();
+        return nullptr;
+    }
+}
+
+SSAInstruction* IREmitter::Select(SSAInstruction* cond, SSAInstruction* true_value, SSAInstruction* false_value) {
+    return insertInstruction(IROpcode::Select, {cond, true_value, false_value});
+}
+
+SSAInstruction* IREmitter::Clz(SSAInstruction* value) {
+    return insertInstruction(IROpcode::Clz, {value});
+}
+
+SSAInstruction* IREmitter::Ctz(SSAInstruction* value) {
+    return insertInstruction(IROpcode::Ctz, {value});
+}
+
+SSAInstruction* IREmitter::Ctzh(SSAInstruction* value) {
+    return insertInstruction(IROpcode::Ctzh, {value});
+}
+
+SSAInstruction* IREmitter::Ctzw(SSAInstruction* value) {
+    return insertInstruction(IROpcode::Ctzw, {value});
+}
+
+SSAInstruction* IREmitter::Parity(SSAInstruction* value) {
+    return insertInstruction(IROpcode::Parity, {value});
+}
+
+SSAInstruction* IREmitter::And(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::And, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Andi(SSAInstruction* lhs, u64 rhs) {
+    if (IsValidSigned12BitImm(rhs)) {
+        return insertInstruction(IROpcode::Andi, {lhs}, rhs);
+    } else {
+        WARN("Andi reduced to And with immediate: 0x%lx", rhs);
+        SSAInstruction* imm = Imm(rhs);
+        return insertInstruction(IROpcode::And, {lhs, imm});
+    }
+}
+
+SSAInstruction* IREmitter::Or(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Or, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Ori(SSAInstruction* lhs, u64 rhs) {
+    if (IsValidSigned12BitImm(rhs)) {
+        return insertInstruction(IROpcode::Ori, {lhs}, rhs);
+    } else {
+        WARN("Ori reduced to Or with immediate: 0x%lx", rhs);
+        SSAInstruction* imm = Imm(rhs);
+        return insertInstruction(IROpcode::Or, {lhs, imm});
+    }
+}
+
+SSAInstruction* IREmitter::Xor(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Xor, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Xori(SSAInstruction* lhs, u64 rhs) {
+    if (IsValidSigned12BitImm(rhs)) {
+        return insertInstruction(IROpcode::Xori, {lhs}, rhs);
+    } else {
+        WARN("Xori reduced to Xor with immediate: 0x%lx", rhs);
+        SSAInstruction* imm = Imm(rhs);
+        return insertInstruction(IROpcode::Xor, {lhs, imm});
+    }
+}
+
+SSAInstruction* IREmitter::Not(SSAInstruction* value) {
+    return insertInstruction(IROpcode::Not, {value});
+}
+
+SSAInstruction* IREmitter::Neg(SSAInstruction* value) {
+    return insertInstruction(IROpcode::Neg, {value});
+}
+
+SSAInstruction* IREmitter::Mul(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Mul, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Mulh(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Mulh, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Mulhu(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Mulhu, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Div(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Div, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Divu(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Divu, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Rem(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Rem, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Remu(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Remu, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Divw(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Divw, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Divuw(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Divuw, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Remw(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Remw, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Remuw(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Remuw, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::Seqz(SSAInstruction* value) {
+    return insertInstruction(IROpcode::Seqz, {value});
+}
+
+SSAInstruction* IREmitter::Snez(SSAInstruction* value) {
+    return insertInstruction(IROpcode::Snez, {value});
+}
+
+SSAInstruction* IREmitter::Equal(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::Equal, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::NotEqual(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::NotEqual, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::LessThanSigned(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::SetLessThanSigned, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::LessThanUnsigned(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::SetLessThanUnsigned, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::GreaterThanSigned(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::SetLessThanSigned, {rhs, lhs});
+}
+
+SSAInstruction* IREmitter::GreaterThanUnsigned(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::SetLessThanUnsigned, {rhs, lhs});
+}
+
+SSAInstruction* IREmitter::Sext(SSAInstruction* value, x86_size_e size) {
+    switch (size) {
+    case x86_size_e::X86_SIZE_BYTE:
+        return insertInstruction(IROpcode::Sext8, {value});
+    case x86_size_e::X86_SIZE_WORD:
+        return insertInstruction(IROpcode::Sext16, {value});
+    case x86_size_e::X86_SIZE_DWORD:
+        return insertInstruction(IROpcode::Sext32, {value});
+    case x86_size_e::X86_SIZE_QWORD:
+        return value;
+    default:
+        UNREACHABLE();
+        return nullptr;
+    }
+}
+SSAInstruction* IREmitter::Zext(SSAInstruction* value, x86_size_e size) {
+    switch (size) {
+    case x86_size_e::X86_SIZE_BYTE:
+        return insertInstruction(IROpcode::Zext8, {value});
+    case x86_size_e::X86_SIZE_WORD:
+        return insertInstruction(IROpcode::Zext16, {value});
+    case x86_size_e::X86_SIZE_DWORD:
+        return insertInstruction(IROpcode::Zext32, {value});
+    case x86_size_e::X86_SIZE_QWORD:
+        return value;
+    default:
+        UNREACHABLE();
+        return nullptr;
+    }
+}
+
+SSAInstruction* IREmitter::AmoAdd(SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size) {
+    switch (size) {
+    case x86_size_e::X86_SIZE_BYTE:
+        return insertInstruction(IROpcode::AmoAdd8, {address, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_WORD:
+        return insertInstruction(IROpcode::AmoAdd16, {address, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_DWORD:
+        return insertInstruction(IROpcode::AmoAdd32, {address, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_QWORD:
+        return insertInstruction(IROpcode::AmoAdd64, {address, source}, (u8)ordering);
+    default:
+        UNREACHABLE();
+        return nullptr;
+    }
+}
+
+SSAInstruction* IREmitter::AmoAnd(SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size) {
+    switch (size) {
+    case x86_size_e::X86_SIZE_BYTE:
+        return insertInstruction(IROpcode::AmoAnd8, {address, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_WORD:
+        return insertInstruction(IROpcode::AmoAnd16, {address, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_DWORD:
+        return insertInstruction(IROpcode::AmoAnd32, {address, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_QWORD:
+        return insertInstruction(IROpcode::AmoAnd64, {address, source}, (u8)ordering);
+    default:
+        UNREACHABLE();
+        return nullptr;
+    }
+}
+
+SSAInstruction* IREmitter::AmoOr(SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size) {
+    switch (size) {
+    case x86_size_e::X86_SIZE_BYTE:
+        return insertInstruction(IROpcode::AmoOr8, {address, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_WORD:
+        return insertInstruction(IROpcode::AmoOr16, {address, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_DWORD:
+        return insertInstruction(IROpcode::AmoOr32, {address, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_QWORD:
+        return insertInstruction(IROpcode::AmoOr64, {address, source}, (u8)ordering);
+    default:
+        UNREACHABLE();
+        return nullptr;
+    }
+}
+
+SSAInstruction* IREmitter::AmoXor(SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size) {
+    switch (size) {
+    case x86_size_e::X86_SIZE_BYTE:
+        return insertInstruction(IROpcode::AmoXor8, {address, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_WORD:
+        return insertInstruction(IROpcode::AmoXor16, {address, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_DWORD:
+        return insertInstruction(IROpcode::AmoXor32, {address, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_QWORD:
+        return insertInstruction(IROpcode::AmoXor64, {address, source}, (u8)ordering);
+    default:
+        UNREACHABLE();
+        return nullptr;
+    }
+}
+
+SSAInstruction* IREmitter::AmoSwap(SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size) {
+    switch (size) {
+    case x86_size_e::X86_SIZE_BYTE:
+        return insertInstruction(IROpcode::AmoSwap8, {address, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_WORD:
+        return insertInstruction(IROpcode::AmoSwap16, {address, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_DWORD:
+        return insertInstruction(IROpcode::AmoSwap32, {address, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_QWORD:
+        return insertInstruction(IROpcode::AmoSwap64, {address, source}, (u8)ordering);
+    default:
+        UNREACHABLE();
+        return nullptr;
+    }
+}
+
+SSAInstruction* IREmitter::AmoCAS(SSAInstruction* address, SSAInstruction* expected, SSAInstruction* source, MemoryOrdering ordering,
+                                  x86_size_e size) {
+    switch (size) {
+    case x86_size_e::X86_SIZE_BYTE:
+        return insertInstruction(IROpcode::AmoSwap8, {address, expected, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_WORD:
+        return insertInstruction(IROpcode::AmoSwap16, {address, expected, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_DWORD:
+        return insertInstruction(IROpcode::AmoSwap32, {address, expected, source}, (u8)ordering);
+    case x86_size_e::X86_SIZE_QWORD:
+        return insertInstruction(IROpcode::AmoSwap64, {address, expected, source}, (u8)ordering);
+    default:
+        UNREACHABLE();
+        return nullptr;
+    }
+}
+
+SSAInstruction* IREmitter::VUnpackByteLow(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VUnpackByteLow, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VUnpackWordLow(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VUnpackWordLow, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VUnpackDWordLow(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VUnpackDWordLow, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VUnpackQWordLow(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VUnpackQWordLow, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VPackedEqualByte(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VPackedEqualByte, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VPackedEqualWord(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VPackedEqualWord, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VPackedEqualDWord(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VPackedEqualDWord, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VPackedEqualQWord(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VPackedEqualQWord, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VPackedAddByte(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VPackedAddByte, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VPackedAddWord(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VPackedAddWord, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VPackedAddDWord(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VPackedAddDWord, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VPackedAddQWord(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VPackedAddQWord, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VPackedShuffleDWord(SSAInstruction* value, u8 shuffle) {
+    return insertInstruction(IROpcode::VPackedShuffleDWord, {value}, shuffle);
+}
+
+SSAInstruction* IREmitter::VPackedShr(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VPackedShr, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VPackedMinByte(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VPackedMinByte, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VPackedSubByte(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VPackedSubByte, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VMoveByteMask(SSAInstruction* value) {
+    return insertInstruction(IROpcode::VMoveByteMask, {value});
+}
+
+SSAInstruction* IREmitter::VAnd(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VAnd, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VOr(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VOr, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VXor(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return insertInstruction(IROpcode::VXor, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::IToV(SSAInstruction* value) {
+    return insertInstruction(IROpcode::IToV, {value});
+}
+
+SSAInstruction* IREmitter::VToI(SSAInstruction* value) {
+    return insertInstruction(IROpcode::VToI, {value});
+}
+
+SSAInstruction* IREmitter::Lea(const x86_operand_t& operand) {
+    x86_size_e address_size = operand.memory.address_override ? X86_SIZE_DWORD : X86_SIZE_QWORD;
+    SSAInstruction *base, *index;
+    if (operand.memory.base != X86_REF_COUNT) {
+        base = GetReg(operand.memory.base, address_size);
+    } else {
+        base = Imm(0);
+    }
+
+    if (operand.memory.index != X86_REF_COUNT) {
+        index = GetReg(operand.memory.index, address_size);
+    } else {
+        index = nullptr;
+    }
+
+    SSAInstruction* base_final = base;
+    if (operand.memory.fs_override) {
+        SSAInstruction* fs = getGuest(X86_REF_FS);
+        base_final = Add(base, fs);
+    } else if (operand.memory.gs_override) {
+        SSAInstruction* gs = getGuest(X86_REF_GS);
+        base_final = Add(base, gs);
+    }
+
+    SSAInstruction* address = base_final;
+    if (index) {
+        ASSERT(operand.memory.scale >= 0 && operand.memory.scale <= 3);
+        SSAInstruction* scaled_index = Shli(index, operand.memory.scale);
+        address = Add(base_final, scaled_index);
+    }
+
+    SSAInstruction* displaced_address = address;
+    if (operand.memory.displacement) {
+        if (IsValidSigned12BitImm(operand.memory.displacement)) {
+            displaced_address = Addi(address, operand.memory.displacement);
+        } else {
+            displaced_address = Add(address, Imm(operand.memory.displacement));
+        }
+    }
+
+    SSAInstruction* final_address = displaced_address;
+    if (operand.memory.address_override) {
+        final_address = Zext(displaced_address, X86_SIZE_DWORD);
+    }
+
+    return final_address;
+}
+
+SSAInstruction* IREmitter::GetFlags() {
+    SSAInstruction* c = GetFlag(X86_REF_CF);
+    SSAInstruction* p = GetFlag(X86_REF_PF);
+    SSAInstruction* a = GetFlag(X86_REF_AF);
+    SSAInstruction* z = GetFlag(X86_REF_ZF);
+    SSAInstruction* s = GetFlag(X86_REF_SF);
+    SSAInstruction* o = GetFlag(X86_REF_OF);
+    SSAInstruction* d = GetFlag(X86_REF_DF);
+
+    SSAInstruction* p_shifted = Shli(p, 2);
+    SSAInstruction* a_shifted = Shli(a, 4);
+    SSAInstruction* z_shifted = Shli(z, 6);
+    SSAInstruction* s_shifted = Shli(s, 7);
+    SSAInstruction* d_shifted = Shli(d, 10);
+    SSAInstruction* o_shifted = Shli(o, 11);
+
+    SSAInstruction* c_p = Or(c, p_shifted);
+    SSAInstruction* a_z = Or(a_shifted, z_shifted);
+    SSAInstruction* a_z_o = Or(a_z, o_shifted);
+    SSAInstruction* c_p_s = Or(c_p, s_shifted);
+    SSAInstruction* c_p_s_d = Or(c_p_s, d_shifted);
+    SSAInstruction* result_almost = Or(c_p_s_d, a_z_o);
+    SSAInstruction* result = Ori(result_almost, 0b10); // always set bit 1
+
+    return result;
+}
+
+SSAInstruction* IREmitter::IsZero(SSAInstruction* value, x86_size_e size) {
+    return Seqz(Zext(value, size));
+}
+
+SSAInstruction* IREmitter::IsNegative(SSAInstruction* value, x86_size_e size) {
     switch (size) {
     case X86_SIZE_BYTE:
-        return ir_emit_read_byte(block, address);
+        return Andi(Shri(value, 7), 1);
     case X86_SIZE_WORD:
-        return ir_emit_read_word(block, address);
+        return Andi(Shri(value, 15), 1);
     case X86_SIZE_DWORD:
-        return ir_emit_read_dword(block, address);
+        return Andi(Shri(value, 31), 1);
     case X86_SIZE_QWORD:
-        return ir_emit_read_qword(block, address);
+        return Andi(Shri(value, 63), 1);
+    default:
+        UNREACHABLE();
+        return nullptr;
+    }
+}
+
+void IREmitter::Syscall() {
+    // The kernel clobbers registers rcx and r11 but preserves all other registers except rax which is the result.
+    // We don't have to clobber rcx and r11 as we are not a kernel.
+    // First, get_guest and writeback rax, rdi, rsi, rdx, r10, r8, r9 because they may be used by the syscall.
+    // Then emit the syscall instruction.
+    // Finally, load rax so it's not propagated from before the syscall.
+    constexpr static std::array in_regs = {X86_REF_RAX, X86_REF_RDI, X86_REF_RSI, X86_REF_RDX, X86_REF_R10, X86_REF_R8, X86_REF_R9};
+    constexpr static std::array out_regs = {X86_REF_RAX};
+
+    storePartialState(in_regs);
+
+    SSAInstruction* syscall = insertInstruction(IROpcode::Syscall, {});
+    syscall->Lock();
+
+    loadPartialState(out_regs);
+}
+
+void IREmitter::Cpuid() {
+    constexpr static std::array in_regs = {X86_REF_RAX, X86_REF_RCX};
+    constexpr static std::array out_regs = {X86_REF_RAX, X86_REF_RBX, X86_REF_RCX, X86_REF_RDX};
+
+    storePartialState(in_regs);
+
+    SSAInstruction* cpuid = insertInstruction(IROpcode::Cpuid, {});
+    cpuid->Lock();
+
+    loadPartialState(out_regs);
+}
+
+void IREmitter::Rdtsc() {
+    // Has no inputs but writes to EDX:EAX
+    constexpr static std::array out_regs = {X86_REF_RAX, X86_REF_RDX};
+
+    SSAInstruction* instruction = insertInstruction(IROpcode::Rdtsc, {});
+    instruction->Lock();
+
+    loadPartialState(out_regs);
+}
+
+void IREmitter::SetCC(x86_instruction_t* inst) {
+    SetRm(inst->operand_rm, GetCC(inst->opcode));
+}
+
+SSAInstruction* IREmitter::GetCC(u8 opcode) {
+    switch (opcode & 0xF) {
+    case 0:
+        return GetFlag(X86_REF_OF);
+    case 1:
+        return GetFlagNot(X86_REF_OF);
+    case 2:
+        return GetFlag(X86_REF_CF);
+    case 3:
+        return GetFlagNot(X86_REF_CF);
+    case 4:
+        return GetFlag(X86_REF_ZF);
+    case 5:
+        return GetFlagNot(X86_REF_ZF);
+    case 6:
+        return Or(GetFlag(X86_REF_CF), GetFlag(X86_REF_ZF));
+    case 7:
+        return And(GetFlagNot(X86_REF_CF), GetFlagNot(X86_REF_ZF));
+    case 8:
+        return GetFlag(X86_REF_SF);
+    case 9:
+        return GetFlagNot(X86_REF_SF);
+    case 10:
+        return GetFlag(X86_REF_PF);
+    case 11:
+        return GetFlagNot(X86_REF_PF);
+    case 12:
+        return NotEqual(GetFlag(X86_REF_SF), GetFlag(X86_REF_OF));
+    case 13:
+        return Equal(GetFlag(X86_REF_SF), GetFlag(X86_REF_OF));
+    case 14:
+        return Or(Equal(GetFlag(X86_REF_ZF), Imm(1)), NotEqual(GetFlag(X86_REF_SF), GetFlag(X86_REF_OF)));
+    case 15:
+        return And(Equal(GetFlag(X86_REF_ZF), Imm(0)), Equal(GetFlag(X86_REF_SF), GetFlag(X86_REF_OF)));
+    }
+
+    ERROR("Invalid condition code");
+    return nullptr;
+}
+
+void IREmitter::SetCPAZSO(SSAInstruction* c, SSAInstruction* p, SSAInstruction* a, SSAInstruction* z, SSAInstruction* s, SSAInstruction* o) {
+    if (c)
+        SetFlag(c, X86_REF_CF);
+    if (p)
+        SetFlag(p, X86_REF_PF);
+    if (a)
+        SetFlag(a, X86_REF_AF);
+    if (z)
+        SetFlag(z, X86_REF_ZF);
+    if (s)
+        SetFlag(s, X86_REF_SF);
+    if (o)
+        SetFlag(o, X86_REF_OF);
+}
+
+void IREmitter::SetExitReason(ExitReason reason) {
+    SSAInstruction* set_exit_reason = insertInstruction(IROpcode::SetExitReason, {}, reason);
+    set_exit_reason->Lock();
+}
+
+void IREmitter::SetFlags(SSAInstruction* flags) {
+    SSAInstruction* c = Andi(flags, 1);
+    SSAInstruction* p = Andi(Shri(flags, 2), 1);
+    SSAInstruction* a = Andi(Shri(flags, 4), 1);
+    SSAInstruction* z = Andi(Shri(flags, 6), 1);
+    SSAInstruction* s = Andi(Shri(flags, 7), 1);
+    SSAInstruction* d = Andi(Shri(flags, 10), 1);
+    SSAInstruction* o = Andi(Shri(flags, 11), 1);
+
+    SetFlag(c, X86_REF_CF);
+    SetFlag(p, X86_REF_PF);
+    SetFlag(a, X86_REF_AF);
+    SetFlag(z, X86_REF_ZF);
+    SetFlag(s, X86_REF_SF);
+    SetFlag(d, X86_REF_DF);
+    SetFlag(o, X86_REF_OF);
+}
+
+SSAInstruction* IREmitter::insertInstruction(IROpcode opcode, std::initializer_list<SSAInstruction*> operands) {
+    SSAInstruction instruction(opcode, operands);
+    return block->InsertAtEnd(std::move(instruction));
+}
+
+SSAInstruction* IREmitter::insertInstruction(IROpcode opcode, std::initializer_list<SSAInstruction*> operands, u64 imm) {
+    SSAInstruction instruction(opcode, operands, imm);
+    return block->InsertAtEnd(std::move(instruction));
+}
+
+SSAInstruction* IREmitter::getGuest(x86_ref_e ref) {
+    if (ref == X86_REF_COUNT) {
+        ERROR("Invalid register reference");
+    }
+
+    SSAInstruction instruction(IROpcode::GetGuest, ref);
+    return block->InsertAtEnd(std::move(instruction));
+}
+
+SSAInstruction* IREmitter::setGuest(x86_ref_e ref, SSAInstruction* value) {
+    if (ref == X86_REF_COUNT) {
+        ERROR("Invalid register reference");
+    }
+
+    SSAInstruction instruction(IROpcode::SetGuest, ref, value);
+    return block->InsertAtEnd(std::move(instruction));
+}
+
+SSAInstruction* IREmitter::getGpr8Low(x86_ref_e ref) {
+    if (ref < X86_REF_RAX || ref > X86_REF_R15) {
+        ERROR("Invalid register reference");
+    }
+
+    return Zext(getGuest(ref), X86_SIZE_BYTE);
+}
+
+SSAInstruction* IREmitter::getGpr8High(x86_ref_e ref) {
+    if (ref < X86_REF_RAX || ref > X86_REF_R15) {
+        ERROR("Invalid register reference");
+    }
+
+    return Zext(Shri(getGuest(ref), 8), X86_SIZE_BYTE);
+}
+
+SSAInstruction* IREmitter::getGpr16(x86_ref_e ref) {
+    if (ref < X86_REF_RAX || ref > X86_REF_R15) {
+        ERROR("Invalid register reference");
+    }
+
+    return Zext(getGuest(ref), X86_SIZE_WORD);
+}
+
+SSAInstruction* IREmitter::getGpr32(x86_ref_e ref) {
+    if (ref < X86_REF_RAX || ref > X86_REF_R15) {
+        ERROR("Invalid register reference");
+    }
+
+    return Zext(getGuest(ref), X86_SIZE_DWORD);
+}
+
+SSAInstruction* IREmitter::getGpr64(x86_ref_e ref) {
+    if (ref < X86_REF_RAX || ref > X86_REF_R15) {
+        ERROR("Invalid register reference");
+    }
+
+    return getGuest(ref);
+}
+
+SSAInstruction* IREmitter::getVector(x86_ref_e ref) {
+    if (ref < X86_REF_XMM0 || ref > X86_REF_XMM15) {
+        ERROR("Invalid register reference");
+    }
+
+    return getGuest(ref);
+}
+
+void IREmitter::setGpr8Low(x86_ref_e ref, SSAInstruction* value) {
+    if (ref < X86_REF_RAX || ref > X86_REF_R15) {
+        ERROR("Invalid register reference");
+    }
+
+    SSAInstruction* old = getGpr64(ref);
+    SSAInstruction* masked_old = Andi(old, 0xFFFFFFFFFFFFFF00);
+    SSAInstruction* masked_value = Zext(value, X86_SIZE_BYTE);
+    SSAInstruction* new_value = Or(masked_old, masked_value);
+    setGuest(ref, new_value);
+}
+
+void IREmitter::setGpr8High(x86_ref_e ref, SSAInstruction* value) {
+    if (ref < X86_REF_RAX || ref > X86_REF_R15) {
+        ERROR("Invalid register reference");
+    }
+
+    SSAInstruction* old = getGpr64(ref);
+    SSAInstruction* masked_old = And(old, Imm(0xFFFFFFFFFFFF00FF));
+    SSAInstruction* masked_value = Zext(value, X86_SIZE_BYTE);
+    SSAInstruction* shifted_value = Shli(masked_value, 8);
+    SSAInstruction* new_value = Or(masked_old, shifted_value);
+    setGuest(ref, new_value);
+}
+
+void IREmitter::setGpr16(x86_ref_e ref, SSAInstruction* value) {
+    if (ref < X86_REF_RAX || ref > X86_REF_R15) {
+        ERROR("Invalid register reference");
+    }
+
+    SSAInstruction* old = getGpr64(ref);
+    SSAInstruction* masked_old = And(old, Imm(0xFFFFFFFFFFFF0000));
+    SSAInstruction* masked_value = Zext(value, X86_SIZE_WORD);
+    SSAInstruction* new_value = Or(masked_old, masked_value);
+    setGuest(ref, new_value);
+}
+
+void IREmitter::setGpr32(x86_ref_e ref, SSAInstruction* value) {
+    if (ref < X86_REF_RAX || ref > X86_REF_R15) {
+        ERROR("Invalid register reference");
+    }
+
+    setGuest(ref, Zext(value, X86_SIZE_DWORD));
+}
+
+void IREmitter::setGpr64(x86_ref_e ref, SSAInstruction* value) {
+    if (ref < X86_REF_RAX || ref > X86_REF_R15) {
+        ERROR("Invalid register reference");
+    }
+
+    setGuest(ref, value);
+}
+
+void IREmitter::setVector(x86_ref_e ref, SSAInstruction* value) {
+    if (ref < X86_REF_XMM0 || ref > X86_REF_XMM15) {
+        ERROR("Invalid register reference");
+    }
+
+    setGuest(ref, value);
+}
+
+SSAInstruction* IREmitter::readByte(SSAInstruction* address) {
+    return insertInstruction(IROpcode::ReadByte, {address});
+}
+
+SSAInstruction* IREmitter::readWord(SSAInstruction* address) {
+    return insertInstruction(IROpcode::ReadWord, {address});
+}
+
+SSAInstruction* IREmitter::readDWord(SSAInstruction* address) {
+    return insertInstruction(IROpcode::ReadDWord, {address});
+}
+
+SSAInstruction* IREmitter::readQWord(SSAInstruction* address) {
+    return insertInstruction(IROpcode::ReadQWord, {address});
+}
+
+SSAInstruction* IREmitter::readXmmWord(SSAInstruction* address) {
+    return insertInstruction(IROpcode::ReadXmmWord, {address});
+}
+
+SSAInstruction* IREmitter::ReadMemory(SSAInstruction* address, x86_size_e size) {
+    switch (size) {
+    case X86_SIZE_BYTE:
+        return readByte(address);
+    case X86_SIZE_WORD:
+        return readWord(address);
+    case X86_SIZE_DWORD:
+        return readDWord(address);
+    case X86_SIZE_QWORD:
+        return readQWord(address);
     case X86_SIZE_XMM:
-        return ir_emit_read_xmmword(block, address);
+        return readXmmWord(address);
     default:
         ERROR("Invalid memory size");
         return nullptr;
     }
 }
 
-SSAInstruction* ir_emit_get_gpr8_low(IRBlock* block, x86_ref_e reg) {
-    if (reg < X86_REF_RAX || reg > X86_REF_R15) {
-        ERROR("Invalid register reference");
+void IREmitter::writeByte(SSAInstruction* address, SSAInstruction* value) {
+    SSAInstruction* instruction = insertInstruction(IROpcode::WriteByte, {address, value});
+    instruction->Lock();
+}
+
+void IREmitter::writeWord(SSAInstruction* address, SSAInstruction* value) {
+    SSAInstruction* instruction = insertInstruction(IROpcode::WriteWord, {address, value});
+    instruction->Lock();
+}
+
+void IREmitter::writeDWord(SSAInstruction* address, SSAInstruction* value) {
+    SSAInstruction* instruction = insertInstruction(IROpcode::WriteDWord, {address, value});
+    instruction->Lock();
+}
+
+void IREmitter::writeQWord(SSAInstruction* address, SSAInstruction* value) {
+    SSAInstruction* instruction = insertInstruction(IROpcode::WriteQWord, {address, value});
+    instruction->Lock();
+}
+
+void IREmitter::writeXmmWord(SSAInstruction* address, SSAInstruction* value) {
+    SSAInstruction* instruction = insertInstruction(IROpcode::WriteXmmWord, {address, value});
+    instruction->Lock();
+}
+
+void IREmitter::WriteMemory(SSAInstruction* address, SSAInstruction* value, x86_size_e size) {
+    switch (size) {
+    case X86_SIZE_BYTE:
+        return writeByte(address, value);
+    case X86_SIZE_WORD:
+        return writeWord(address, value);
+    case X86_SIZE_DWORD:
+        return writeDWord(address, value);
+    case X86_SIZE_QWORD:
+        return writeQWord(address, value);
+    case X86_SIZE_XMM:
+        return writeXmmWord(address, value);
+    default:
+        ERROR("Invalid memory size");
+        return;
     }
-
-    SSAInstruction* full_reg = ir_emit_get_guest(block, reg);
-    SSAInstruction* instruction = ir_emit_zext8(block, full_reg);
-
-    return instruction;
 }
 
-SSAInstruction* ir_emit_get_gpr8_high(IRBlock* block, x86_ref_e reg) {
-    if (reg < X86_REF_RAX || reg > X86_REF_R15) {
-        ERROR("Invalid register reference");
-    }
-
-    SSAInstruction* full_reg = ir_emit_get_guest(block, reg);
-    SSAInstruction* shift = ir_emit_immediate(block, 8);
-    SSAInstruction* shifted = ir_emit_shift_right(block, full_reg, shift);
-    SSAInstruction* instruction = ir_emit_zext8(block, shifted);
-
-    return instruction;
+SSAInstruction* IREmitter::IsCarryAdd(SSAInstruction* source, SSAInstruction* result, x86_size_e size_e) {
+    SSAInstruction* zext_result = Zext(result, size_e);
+    return LessThanUnsigned(zext_result, source);
 }
 
-SSAInstruction* ir_emit_get_gpr16(IRBlock* block, x86_ref_e reg) {
-    if (reg < X86_REF_RAX || reg > X86_REF_R15) {
-        ERROR("Invalid register reference");
-    }
-
-    SSAInstruction* full_reg = ir_emit_get_guest(block, reg);
-    SSAInstruction* instruction = ir_emit_zext16(block, full_reg);
-
-    return instruction;
+SSAInstruction* IREmitter::IsCarryAdc(SSAInstruction* lhs, SSAInstruction* rhs, SSAInstruction* carry, x86_size_e size_e) {
+    SSAInstruction* sum = Add(lhs, rhs);
+    SSAInstruction* sum2 = Add(sum, carry);
+    SSAInstruction* carry1 = IsCarryAdd(lhs, sum, size_e);
+    SSAInstruction* carry2 = IsCarryAdd(sum, sum2, size_e);
+    return Or(carry1, carry2);
 }
 
-SSAInstruction* ir_emit_get_gpr32(IRBlock* block, x86_ref_e reg) {
-    if (reg < X86_REF_RAX || reg > X86_REF_R15) {
-        ERROR("Invalid register reference");
-    }
-
-    SSAInstruction* full_reg = ir_emit_get_guest(block, reg);
-    SSAInstruction* instruction = ir_emit_zext32(block, full_reg);
-
-    return instruction;
+SSAInstruction* IREmitter::IsCarrySbb(SSAInstruction* lhs, SSAInstruction* rhs, SSAInstruction* carry, x86_size_e size_e) {
+    SSAInstruction* sum = Sub(lhs, rhs);
+    SSAInstruction* carry2 = IsCarrySub(sum, carry);
+    SSAInstruction* carry1 = IsCarrySub(lhs, rhs);
+    return Or(carry1, carry2);
 }
 
-SSAInstruction* ir_emit_get_gpr64(IRBlock* block, x86_ref_e reg) {
-    if (reg < X86_REF_RAX || reg > X86_REF_R15) {
-        ERROR("Invalid register reference");
-    }
+SSAInstruction* IREmitter::IsAuxAdd(SSAInstruction* lhs, SSAInstruction* rhs) {
+    SSAInstruction* and1 = Andi(lhs, 0xF);
+    SSAInstruction* and2 = Andi(rhs, 0xF);
+    SSAInstruction* result = Add(and1, and2);
 
-    SSAInstruction* instruction = ir_emit_get_guest(block, reg);
-    return instruction;
+    return GreaterThanUnsigned(result, Imm(0xF));
 }
 
-SSAInstruction* ir_emit_get_vector(IRBlock* block, x86_ref_e reg) {
-    if (reg < X86_REF_XMM0 || reg > X86_REF_XMM15) {
-        ERROR("Invalid register reference");
-    }
-
-    SSAInstruction* instruction = ir_emit_get_guest(block, reg);
-    return instruction;
-}
-
-void ir_emit_set_gpr8_low(IRBlock* block, x86_ref_e reg, SSAInstruction* source) {
-    SSAInstruction* full_reg = ir_emit_get_guest(block, reg);
-    SSAInstruction* mask = ir_emit_immediate(block, 0xFFFFFFFFFFFFFF00);
-    SSAInstruction* masked = ir_emit_and(block, full_reg, mask);
-    SSAInstruction* value = ir_emit_zext8(block, source);
-    SSAInstruction* final_value = ir_emit_or(block, masked, value);
-    ir_emit_set_guest(block, reg, final_value);
-}
-
-void ir_emit_set_gpr8_high(IRBlock* block, x86_ref_e reg, SSAInstruction* source) {
-    SSAInstruction* full_reg = ir_emit_get_guest(block, reg);
-    SSAInstruction* mask = ir_emit_immediate(block, 0xFFFFFFFFFFFF00FF);
-    SSAInstruction* masked = ir_emit_and(block, full_reg, mask);
-    SSAInstruction* value = ir_emit_zext8(block, source);
-    SSAInstruction* shift = ir_emit_immediate(block, 8);
-    SSAInstruction* shifted = ir_emit_shift_left(block, value, shift);
-    SSAInstruction* final_value = ir_emit_or(block, masked, shifted);
-    ir_emit_set_guest(block, reg, final_value);
-}
-
-void ir_emit_set_gpr16(IRBlock* block, x86_ref_e reg, SSAInstruction* source) {
-    SSAInstruction* full_reg = ir_emit_get_guest(block, reg);
-    SSAInstruction* mask = ir_emit_immediate(block, 0xFFFFFFFFFFFF0000);
-    SSAInstruction* masked = ir_emit_and(block, full_reg, mask);
-    SSAInstruction* value = ir_emit_zext16(block, source);
-    SSAInstruction* final_value = ir_emit_or(block, masked, value);
-    ir_emit_set_guest(block, reg, final_value);
-}
-
-void ir_emit_set_gpr32(IRBlock* block, x86_ref_e reg, SSAInstruction* source) {
-    SSAInstruction* final_value = ir_emit_zext32(block, source);
-    ir_emit_set_guest(block, reg, final_value);
-}
-
-void ir_emit_set_gpr64(IRBlock* block, x86_ref_e reg, SSAInstruction* source) {
-    ir_emit_set_guest(block, reg, source);
-}
-
-void ir_emit_set_vector(IRBlock* block, x86_ref_e reg, SSAInstruction* source) {
-    ir_emit_set_guest(block, reg, source);
-}
-
-SSAInstruction* ir_emit_get_zero(IRBlock* block, SSAInstruction* source, x86_size_e size_e) {
-    SSAInstruction* zero = ir_emit_immediate(block, 0);
-    SSAInstruction* zext = ir_emit_zext(block, source, size_e);
-    SSAInstruction* instruction = ir_emit_equal(block, zext, zero);
-
-    return instruction;
-}
-
-SSAInstruction* ir_emit_get_size(IRBlock* block, x86_size_e size_e) {
-    return ir_emit_immediate(block, get_bit_size(size_e));
-}
-
-SSAInstruction* ir_emit_get_sign_mask(IRBlock* block, x86_size_e size_e) {
-    u16 size = get_bit_size(size_e);
-    return ir_emit_immediate(block, 1ull << (size - 1));
-}
-
-SSAInstruction* ir_emit_get_shift_mask_left(IRBlock* block, SSAInstruction* source, x86_size_e size_e) {
-    SSAInstruction* one = ir_emit_immediate(block, 1);
-    SSAInstruction* shift_max = ir_emit_get_size(block, size_e);
-    SSAInstruction* shift = ir_emit_sub(block, shift_max, source);
-    SSAInstruction* mask = ir_emit_shift_left(block, one, shift);
-    return mask;
-}
-
-SSAInstruction* ir_emit_get_shift_mask_right(IRBlock* block, SSAInstruction* source) {
-    SSAInstruction* zero = ir_emit_immediate(block, 0);
-    SSAInstruction* is_zero = ir_emit_equal(block, source, zero);
-    SSAInstruction* one = ir_emit_immediate(block, 1);
-    SSAInstruction* shift = ir_emit_sub(block, source, one);
-    SSAInstruction* mask = ir_emit_shift_left(block, one, shift);
-    return ir_emit_select(block, is_zero, zero, mask);
-}
-
-SSAInstruction* ir_emit_get_sign(IRBlock* block, SSAInstruction* source, x86_size_e size_e) {
-    SSAInstruction* mask = ir_emit_get_sign_mask(block, size_e);
-    SSAInstruction* masked = ir_emit_and(block, source, mask);
-    SSAInstruction* instruction = ir_emit_equal(block, masked, mask);
-
-    return instruction;
-}
-
-SSAInstruction* ir_emit_get_overflow_add(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2, SSAInstruction* result,
-                                         x86_size_e size_e) {
-    SSAInstruction* mask = ir_emit_get_sign_mask(block, size_e);
+SSAInstruction* IREmitter::IsOverflowAdd(SSAInstruction* lhs, SSAInstruction* rhs, SSAInstruction* result, x86_size_e size_e) {
+    SSAInstruction* mask = getSignMask(size_e);
 
     // for x + y = z, overflow occurs if ((z ^ x) & (z ^ y) & mask) == mask
     // which essentially checks if the sign bits of x and y are equal, but the
     // sign bit of z is different
-    SSAInstruction* xor1 = ir_emit_xor(block, result, source1);
-    SSAInstruction* xor2 = ir_emit_xor(block, result, source2);
-    SSAInstruction* masked1 = ir_emit_and(block, xor1, xor2);
-    SSAInstruction* masked2 = ir_emit_and(block, masked1, mask);
+    SSAInstruction* xor1 = Xor(result, lhs);
+    SSAInstruction* xor2 = Xor(result, rhs);
+    SSAInstruction* masked1 = And(xor1, xor2);
+    SSAInstruction* masked2 = And(masked1, mask);
 
-    return ir_emit_equal(block, masked2, mask);
+    return Equal(masked2, mask);
 }
 
-SSAInstruction* ir_emit_get_overflow_sub(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2, SSAInstruction* result,
-                                         x86_size_e size_e) {
-    SSAInstruction* mask = ir_emit_get_sign_mask(block, size_e);
+SSAInstruction* IREmitter::IsCarrySub(SSAInstruction* lhs, SSAInstruction* rhs) {
+    return LessThanUnsigned(lhs, rhs);
+}
+
+SSAInstruction* IREmitter::IsAuxSub(SSAInstruction* lhs, SSAInstruction* rhs) {
+    SSAInstruction* and1 = Andi(lhs, 0xF);
+    SSAInstruction* and2 = Andi(rhs, 0xF);
+
+    return LessThanUnsigned(and1, and2);
+}
+
+SSAInstruction* IREmitter::IsOverflowSub(SSAInstruction* lhs, SSAInstruction* rhs, SSAInstruction* result, x86_size_e size_e) {
+    SSAInstruction* mask = getSignMask(size_e);
 
     // for x - y = z, overflow occurs if ((x ^ y) & (x ^ z) & mask) == mask
-    SSAInstruction* xor1 = ir_emit_xor(block, source1, source2);
-    SSAInstruction* xor2 = ir_emit_xor(block, source1, result);
-    SSAInstruction* masked1 = ir_emit_and(block, xor1, xor2);
-    SSAInstruction* masked2 = ir_emit_and(block, masked1, mask);
+    SSAInstruction* xor1 = Xor(lhs, rhs);
+    SSAInstruction* xor2 = Xor(lhs, result);
+    SSAInstruction* masked1 = And(xor1, xor2);
+    SSAInstruction* masked2 = And(masked1, mask);
 
-    return ir_emit_equal(block, masked2, mask);
+    return Equal(masked2, mask);
 }
 
-SSAInstruction* ir_emit_get_carry_add(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2, SSAInstruction* result, x86_size_e size_e) {
-    (void)source2; // dont need, just keeping for consistency
+SSAInstruction* IREmitter::LoadGuestFromMemory(x86_ref_e ref) {
+    if (ref == X86_REF_COUNT) {
+        ERROR("Invalid register reference");
+    }
 
-    // CF = result < source1, as that means that the result overflowed
-    SSAInstruction* zext_result = ir_emit_zext(block, result, size_e);
-    return ir_emit_less_than_unsigned(block, zext_result, source1);
+    SSAInstruction instruction(IROpcode::LoadGuestFromMemory, ref);
+    return block->InsertAtEnd(std::move(instruction));
 }
 
-SSAInstruction* ir_emit_get_carry_adc(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2, x86_size_e size_e) {
-    SSAInstruction* carry_in = ir_emit_get_flag(block, X86_REF_CF);
-    SSAInstruction* sum = ir_emit_add(block, source1, source2);
-    SSAInstruction* sum_with_carry = ir_emit_add(block, sum, carry_in);
+void IREmitter::StoreGuestToMemory(SSAInstruction* value, x86_ref_e ref) {
+    if (ref == X86_REF_COUNT) {
+        ERROR("Invalid register reference");
+    }
 
-    SSAInstruction* carry1 = ir_emit_get_carry_add(block, source1, source2, sum, size_e);
-    SSAInstruction* carry2 = ir_emit_get_carry_add(block, sum, carry_in, sum_with_carry, size_e);
-
-    return ir_emit_or(block, carry1, carry2);
+    SSAInstruction instruction(IROpcode::StoreGuestToMemory, ref, value);
+    instruction.Lock();
+    block->InsertAtEnd(std::move(instruction));
 }
 
-SSAInstruction* ir_emit_get_carry_sub(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2, SSAInstruction* result, x86_size_e size_e) {
-    (void)result; // dont need, just keeping for consistency
-
-    // CF = source1 < source2, as that means that the result would underflow
-    return ir_emit_less_than_unsigned(block, source1, source2);
+void IREmitter::loadPartialState(std::span<const x86_ref_e> refs) {
+    for (x86_ref_e reg : refs) {
+        SSAInstruction* guest = LoadGuestFromMemory(reg);
+        setGuest(reg, guest);
+    }
 }
 
-SSAInstruction* ir_emit_get_carry_sbb(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2, x86_size_e size_e) {
-    SSAInstruction* carry_in = ir_emit_get_flag(block, X86_REF_CF);
-    SSAInstruction* sum = ir_emit_sub(block, source1, source2);
-    SSAInstruction* sum_with_carry = ir_emit_sub(block, sum, carry_in);
-
-    SSAInstruction* carry1 = ir_emit_get_carry_sub(block, source1, source2, sum, size_e);
-    SSAInstruction* carry2 = ir_emit_get_carry_sub(block, sum, carry_in, sum_with_carry, size_e);
-
-    return ir_emit_or(block, carry1, carry2);
+void IREmitter::storePartialState(std::span<const x86_ref_e> refs) {
+    for (x86_ref_e reg : refs) {
+        SSAInstruction* guest = getGuest(reg);
+        StoreGuestToMemory(guest, reg);
+    }
 }
 
-SSAInstruction* ir_emit_get_aux_add(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    SSAInstruction* mask = ir_emit_immediate(block, 0xF);
-    SSAInstruction* and1 = ir_emit_and(block, source1, mask);
-    SSAInstruction* and2 = ir_emit_and(block, source2, mask);
-    SSAInstruction* result = ir_emit_add(block, and1, and2);
-
-    return ir_emit_greater_than_unsigned(block, result, mask);
+SSAInstruction* IREmitter::getSignMask(x86_size_e size_e) {
+    u16 size = GetBitSize(size_e);
+    return Imm(1ull << (size - 1));
 }
 
-SSAInstruction* ir_emit_get_aux_sub(IRBlock* block, SSAInstruction* source1, SSAInstruction* source2) {
-    SSAInstruction* mask = ir_emit_immediate(block, 0xF);
-    SSAInstruction* and1 = ir_emit_and(block, source1, mask);
-    SSAInstruction* and2 = ir_emit_and(block, source2, mask);
+u16 IREmitter::GetBitSize(x86_size_e size) {
+    switch (size) {
+    case X86_SIZE_BYTE:
+        return 8;
+    case X86_SIZE_WORD:
+        return 16;
+    case X86_SIZE_DWORD:
+        return 32;
+    case X86_SIZE_QWORD:
+        return 64;
+    case X86_SIZE_MM:
+        return 64;
+    case X86_SIZE_XMM:
+        return 128;
+    }
 
-    return ir_emit_less_than_unsigned(block, and1, and2);
+    ERROR("Invalid register size");
+    return 0;
 }
 
-SSAInstruction* ir_emit_set_cpazso(IRBlock* block, SSAInstruction* c, SSAInstruction* p, SSAInstruction* a, SSAInstruction* z, SSAInstruction* s,
-                                   SSAInstruction* o) {
-    if (c)
-        ir_emit_set_flag(block, X86_REF_CF, c);
-    if (p)
-        ir_emit_set_flag(block, X86_REF_PF, p);
-    if (a)
-        ir_emit_set_flag(block, X86_REF_AF, a);
-    if (z)
-        ir_emit_set_flag(block, X86_REF_ZF, z);
-    if (s)
-        ir_emit_set_flag(block, X86_REF_SF, s);
-    if (o)
-        ir_emit_set_flag(block, X86_REF_OF, o);
-
-    return nullptr;
+SSAInstruction* IREmitter::VInsertInteger(SSAInstruction* integer, SSAInstruction* vector, u8 index, x86_size_e size) {
+    u64 immediate_data = (u64)size << 8 | index;
+    return insertInstruction(IROpcode::VInsertInteger, {integer, vector}, immediate_data);
 }
 
-void ir_emit_group1_imm(IRBlock* block, x86_instruction_t* inst) {
+void IREmitter::Group1(x86_instruction_t* inst) {
     x86_group1_e opcode = (x86_group1_e)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
 
     x86_size_e size_e = inst->operand_rm.size;
-    SSAInstruction* rm = ir_emit_get_rm(block, &inst->operand_rm);
-    SSAInstruction* imm = ir_emit_immediate_sext(block, &inst->operand_imm);
+    SSAInstruction* rm = GetRm(inst->operand_rm);
+    SSAInstruction* imm = Imm(ImmSext(inst->operand_imm.immediate.data, inst->operand_imm.size));
     SSAInstruction* result = nullptr;
-    SSAInstruction* zero = ir_emit_immediate(block, 0);
+    SSAInstruction* zero = Imm(0);
     SSAInstruction* c = zero;
     SSAInstruction* o = zero;
     SSAInstruction* a = nullptr;
 
     switch (opcode) {
     case X86_GROUP1_ADD: {
-        result = ir_emit_add(block, rm, imm);
-        c = ir_emit_get_carry_add(block, rm, imm, result, size_e);
-        o = ir_emit_get_overflow_add(block, rm, imm, result, size_e);
-        a = ir_emit_get_aux_add(block, rm, imm);
+        result = Add(rm, imm);
+        c = IsCarryAdd(rm, result, size_e);
+        o = IsOverflowAdd(rm, imm, result, size_e);
+        a = IsAuxAdd(rm, imm);
         break;
     }
     case X86_GROUP1_ADC: {
-        SSAInstruction* carry_in = ir_emit_get_flag(block, X86_REF_CF);
-        SSAInstruction* imm_carry = ir_emit_add(block, imm, carry_in);
-        result = ir_emit_add(block, rm, imm_carry);
-        c = ir_emit_get_carry_adc(block, rm, imm_carry, size_e);
-        o = ir_emit_get_overflow_add(block, rm, imm_carry, result, size_e);
-        a = ir_emit_get_aux_add(block, rm, imm_carry);
+        SSAInstruction* carry_in = GetFlag(X86_REF_CF);
+        SSAInstruction* imm_carry = Add(imm, carry_in);
+        result = Add(rm, imm_carry);
+        c = IsCarryAdc(rm, imm, carry_in, size_e);
+        o = IsOverflowAdd(rm, imm_carry, result, size_e);
+        a = IsAuxAdd(rm, imm_carry);
         break;
     }
     case X86_GROUP1_SBB: {
-        SSAInstruction* carry_in = ir_emit_get_flag(block, X86_REF_CF);
-        SSAInstruction* imm_carry = ir_emit_add(block, imm, carry_in);
-        result = ir_emit_sub(block, rm, imm_carry);
-        c = ir_emit_get_carry_sbb(block, rm, imm_carry, size_e);
-        o = ir_emit_get_overflow_sub(block, rm, imm_carry, result, size_e);
-        a = ir_emit_get_aux_sub(block, rm, imm_carry);
+        SSAInstruction* carry_in = GetFlag(X86_REF_CF);
+        SSAInstruction* imm_carry = Add(imm, carry_in);
+        result = Sub(rm, imm_carry);
+        c = IsCarrySbb(rm, imm, carry_in, size_e);
+        o = IsOverflowSub(rm, imm_carry, result, size_e);
+        a = IsAuxSub(rm, imm_carry);
         break;
     }
     case X86_GROUP1_OR: {
-        result = ir_emit_or(block, rm, imm);
+        result = Or(rm, imm);
         break;
     }
     case X86_GROUP1_AND: {
-        result = ir_emit_and(block, rm, imm);
+        result = And(rm, imm);
         break;
     }
     case X86_GROUP1_SUB: {
-        result = ir_emit_sub(block, rm, imm);
-        c = ir_emit_get_carry_sub(block, rm, imm, result, size_e);
-        o = ir_emit_get_overflow_sub(block, rm, imm, result, size_e);
-        a = ir_emit_get_aux_sub(block, rm, imm);
+        result = Sub(rm, imm);
+        c = IsCarrySub(rm, imm);
+        o = IsOverflowSub(rm, imm, result, size_e);
+        a = IsAuxSub(rm, imm);
         break;
     }
     case X86_GROUP1_XOR: {
-        result = ir_emit_xor(block, rm, imm);
+        result = Xor(rm, imm);
         break;
     }
     case X86_GROUP1_CMP: {
-        result = ir_emit_sub(block, rm, imm);
-        c = ir_emit_get_carry_sub(block, rm, imm, result, size_e);
-        o = ir_emit_get_overflow_sub(block, rm, imm, result, size_e);
-        a = ir_emit_get_aux_sub(block, rm, imm);
+        result = Sub(rm, imm);
+        c = IsCarrySub(rm, imm);
+        o = IsOverflowSub(rm, imm, result, size_e);
+        a = IsAuxSub(rm, imm);
         break;
     }
     }
 
-    SSAInstruction* p = ir_emit_get_parity(block, result);
-    SSAInstruction* z = ir_emit_get_zero(block, result, size_e);
-    SSAInstruction* s = ir_emit_get_sign(block, result, size_e);
+    SSAInstruction* p = Parity(result);
+    SSAInstruction* z = IsZero(result, size_e);
+    SSAInstruction* s = IsNegative(result, size_e);
 
-    ir_emit_set_cpazso(block, c, p, a, z, s, o);
+    SetCPAZSO(c, p, a, z, s, o);
 
     if (opcode != X86_GROUP1_CMP) {
-        ir_emit_set_rm(block, &inst->operand_rm, result);
+        SetRm(inst->operand_rm, result);
     }
 }
 
-void ir_emit_group2(IRBlock* block, x86_instruction_t* inst, SSAInstruction* shift_amount) {
+void IREmitter::Group2(x86_instruction_t* inst, SSAInstruction* shift_amount) {
     x86_group2_e opcode = (x86_group2_e)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
 
     x86_size_e size_e = inst->operand_rm.size;
     u8 shift_mask = size_e == X86_SIZE_QWORD ? 0x3F : 0x1F;
-    SSAInstruction* rm = ir_emit_get_rm(block, &inst->operand_rm);
-    SSAInstruction* shift_value = ir_emit_and(block, shift_amount, ir_emit_immediate(block, shift_mask));
+    SSAInstruction* rm = GetRm(inst->operand_rm);
+    SSAInstruction* shift_value = Andi(shift_amount, shift_mask);
     SSAInstruction* result = nullptr;
     SSAInstruction* c = nullptr;
     SSAInstruction* p = nullptr;
@@ -1301,21 +1217,15 @@ void ir_emit_group2(IRBlock* block, x86_instruction_t* inst, SSAInstruction* shi
 
     switch (opcode) {
     case X86_GROUP2_ROL: {
-        SSAInstruction* size = ir_emit_get_size(block, size_e);
-        SSAInstruction* shift_mask = ir_emit_sub(block, size, ir_emit_immediate(block, 1));
-        SSAInstruction* shift_masked = ir_emit_and(block, shift_value, shift_mask);
-        result = ir_emit_rotate(block, rm, shift_masked, size_e, false);
-        c = ir_emit_and(block, result, ir_emit_immediate(block, 1));
-        SSAInstruction* msb = ir_emit_get_sign(block, result, size_e);
-        o = ir_emit_xor(block, c, msb);
+        result = Rol(rm, shift_value, size_e);
+        SSAInstruction* msb = IsNegative(result, size_e);
+        c = Andi(result, 1);
+        o = Xor(c, msb);
         break;
     }
     case X86_GROUP2_ROR: {
-        SSAInstruction* size = ir_emit_get_size(block, size_e);
-        SSAInstruction* shift_mask = ir_emit_sub(block, size, ir_emit_immediate(block, 1));
-        SSAInstruction* shift_masked = ir_emit_and(block, shift_value, shift_mask);
-        result = ir_emit_rotate(block, rm, shift_masked, size_e, true);
-        c = ir_emit_get_sign(block, result, size_e);
+        result = Ror(rm, shift_value, size_e);
+        c = IsNegative(result, size_e);
         WARN("ROR OF unimplemented");
         break;
     }
@@ -1329,47 +1239,54 @@ void ir_emit_group2(IRBlock* block, x86_instruction_t* inst, SSAInstruction* shi
     }
     case X86_GROUP2_SAL:
     case X86_GROUP2_SHL: {
-        SSAInstruction* msb_mask = ir_emit_get_shift_mask_left(block, shift_value, size_e);
-        result = ir_emit_shift_left(block, rm, shift_value);
-        c = ir_emit_equal(block, ir_emit_and(block, rm, msb_mask), msb_mask);
-        SSAInstruction* sign = ir_emit_get_sign(block, result, size_e);
-        o = ir_emit_xor(block, c, sign);
+        SSAInstruction* shift = Sub(Imm(GetBitSize(size_e)), shift_value);
+        SSAInstruction* msb_mask = Shl(Imm(1), shift);
+        result = Shl(rm, shift_value);
+        c = Equal(And(rm, msb_mask), msb_mask);
+        SSAInstruction* sign = IsNegative(result, size_e);
+        o = Xor(c, sign);
         break;
     }
     case X86_GROUP2_SHR: {
-        SSAInstruction* msb_mask = ir_emit_get_shift_mask_right(block, shift_value);
-        result = ir_emit_shift_right(block, rm, shift_value);
-        c = ir_emit_equal(block, ir_emit_and(block, rm, msb_mask), msb_mask);
-        o = ir_emit_get_sign(block, rm, size_e);
+        SSAInstruction* is_zero = Seqz(shift_value);
+        SSAInstruction* shift = Addi(shift_value, 1);
+        SSAInstruction* mask = Shl(Imm(1), shift);
+        SSAInstruction* msb_mask = Select(is_zero, Imm(0), mask);
+        result = Shr(rm, shift_value);
+        c = Equal(And(rm, msb_mask), msb_mask);
+        o = IsNegative(rm, size_e);
         break;
     }
     case X86_GROUP2_SAR: {
         // Shift left to place MSB to bit 63
-        SSAInstruction* shift_left_count = ir_emit_immediate(block, 64 - get_bit_size(size_e));
-        SSAInstruction* shifted_left = ir_emit_shift_left(block, rm, shift_left_count);
-        SSAInstruction* shift_right = ir_emit_add(block, shift_left_count, shift_value);
-        result = ir_emit_shift_right_arithmetic(block, shifted_left, shift_right);
-        o = ir_emit_immediate(block, 0);
-        SSAInstruction* msb_mask = ir_emit_get_shift_mask_right(block, shift_value);
-        c = ir_emit_equal(block, ir_emit_and(block, rm, msb_mask), msb_mask);
+        u8 anti_shift = 64 - GetBitSize(size_e);
+        SSAInstruction* shifted_left = Shli(rm, anti_shift);
+        SSAInstruction* shift_right = Addi(shift_value, anti_shift);
+        SSAInstruction* is_zero = Seqz(shift_value);
+        SSAInstruction* shift = Addi(shift_value, 1);
+        SSAInstruction* mask = Shl(Imm(1), shift);
+        SSAInstruction* msb_mask = Select(is_zero, Imm(0), mask);
+        result = Sar(shifted_left, shift_right);
+        o = Imm(0);
+        c = Equal(And(rm, msb_mask), msb_mask);
         break;
     }
     }
 
-    p = ir_emit_get_parity(block, result);
-    z = ir_emit_get_zero(block, result, size_e);
-    s = ir_emit_get_sign(block, result, size_e);
+    p = Parity(result);
+    z = IsZero(result, size_e);
+    s = IsNegative(result, size_e);
 
-    ir_emit_set_cpazso(block, c, p, a, z, s, o);
+    SetCPAZSO(c, p, a, z, s, o);
 
-    ir_emit_set_rm(block, &inst->operand_rm, result);
+    SetRm(inst->operand_rm, result);
 }
 
-void ir_emit_group3(IRBlock* block, x86_instruction_t* inst) {
+void IREmitter::Group3(x86_instruction_t* inst) {
     x86_group3_e opcode = (x86_group3_e)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
 
     x86_size_e size_e = inst->operand_rm.size;
-    SSAInstruction* rm = ir_emit_get_rm(block, &inst->operand_rm);
+    SSAInstruction* rm = GetRm(inst->operand_rm);
     SSAInstruction* result = nullptr;
     SSAInstruction* c = nullptr;
     SSAInstruction* p = nullptr;
@@ -1381,80 +1298,117 @@ void ir_emit_group3(IRBlock* block, x86_instruction_t* inst) {
     switch (opcode) {
     case X86_GROUP3_TEST:
     case X86_GROUP3_TEST_: {
-        SSAInstruction* imm = ir_emit_immediate_sext(block, &inst->operand_imm);
-        SSAInstruction* masked = ir_emit_and(block, rm, imm);
-        s = ir_emit_get_sign(block, masked, size_e);
-        z = ir_emit_get_zero(block, masked, size_e);
-        p = ir_emit_get_parity(block, masked);
+        SSAInstruction* imm = Imm(ImmSext(inst->operand_imm.immediate.data, inst->operand_imm.size));
+        SSAInstruction* masked = And(rm, imm);
+        s = IsNegative(masked, size_e);
+        z = IsZero(masked, size_e);
+        p = Parity(masked);
         break;
     }
     case X86_GROUP3_NOT: {
-        result = ir_emit_not(block, rm);
+        result = Not(rm);
         break;
     }
     case X86_GROUP3_NEG: {
-        SSAInstruction* zero = ir_emit_immediate(block, 0);
-        result = ir_emit_sub(block, zero, rm);
-        z = ir_emit_get_zero(block, result, size_e);
-        c = ir_emit_equal(block, z, zero);
-        s = ir_emit_get_sign(block, result, size_e);
-        o = ir_emit_get_overflow_sub(block, zero, rm, result, size_e);
-        a = ir_emit_get_aux_sub(block, zero, rm);
-        p = ir_emit_get_parity(block, result);
+        result = Neg(rm);
+        z = IsZero(result, size_e);
+        c = Seqz(z);
+        s = IsNegative(result, size_e);
+        o = IsOverflowSub(Imm(0), rm, result, size_e);
+        a = IsAuxSub(Imm(0), rm);
+        p = Parity(result);
         break;
     }
     case X86_GROUP3_MUL: {
-        ERROR("Unimplemented");
+        UNIMPLEMENTED();
         break;
     }
     case X86_GROUP3_IMUL: {
-        ERROR("Unimplemented");
+        switch (size_e) {
+        case X86_SIZE_BYTE: {
+            SSAInstruction* al = Sext(GetReg(X86_REF_RAX, X86_SIZE_BYTE), X86_SIZE_BYTE);
+            SSAInstruction* se_rm = Sext(rm, X86_SIZE_BYTE);
+            SSAInstruction* mul = Mul(al, se_rm);
+            SetReg(mul, X86_REF_RAX, X86_SIZE_WORD);
+            break;
+        }
+        case X86_SIZE_WORD: {
+            SSAInstruction* ax = Sext(GetReg(X86_REF_RAX, X86_SIZE_WORD), X86_SIZE_WORD);
+            SSAInstruction* se_rm = Sext(rm, X86_SIZE_WORD);
+            SSAInstruction* mul = Mul(ax, se_rm);
+            SSAInstruction* mul_high = Shri(mul, 16);
+            SetReg(mul, X86_REF_RAX, X86_SIZE_WORD);
+            SetReg(mul_high, X86_REF_RDX, X86_SIZE_WORD);
+            break;
+        }
+        case X86_SIZE_DWORD: {
+            SSAInstruction* eax = Sext(GetReg(X86_REF_RAX, X86_SIZE_DWORD), X86_SIZE_DWORD);
+            SSAInstruction* se_rm = Sext(rm, X86_SIZE_DWORD);
+            SSAInstruction* mul = Mul(eax, se_rm);
+            SSAInstruction* mul_high = Shri(mul, 32);
+            SetReg(mul, X86_REF_RAX, X86_SIZE_DWORD);
+            SetReg(mul_high, X86_REF_RDX, X86_SIZE_DWORD);
+            break;
+        }
+        case X86_SIZE_QWORD: {
+            SSAInstruction* rax = GetReg(X86_REF_RAX, X86_SIZE_QWORD);
+            SSAInstruction* mul = Mul(rax, rm);
+            SSAInstruction* mul_high = Mulh(rax, rm);
+            SetReg(mul, X86_REF_RAX, X86_SIZE_QWORD);
+            SetReg(mul_high, X86_REF_RDX, X86_SIZE_QWORD);
+            break;
+        }
+        default: {
+            UNREACHABLE();
+        }
+        }
         break;
     }
     case X86_GROUP3_DIV: {
         switch (size_e) {
         case X86_SIZE_BYTE: {
             // ax / rm, al := quotient, ah := remainder
-            SSAInstruction* ax = get_reg(block, X86_REF_RAX, X86_SIZE_WORD);
-            SSAInstruction* quotient = ir_emit_divuw(block, ax, rm);
-            SSAInstruction* remainder = ir_emit_remuw(block, ax, rm);
-            ir_emit_set_reg(block, X86_REF_RAX, X86_SIZE_BYTE, quotient);
-            ir_emit_set_reg(block, X86_REF_RAX, X86_SIZE_BYTE, remainder, true);
+            SSAInstruction* ax = GetReg(X86_REF_RAX, X86_SIZE_WORD);
+            SSAInstruction* quotient = Divuw(ax, rm);
+            SSAInstruction* remainder = Remuw(ax, rm);
+            SetReg(quotient, X86_REF_RAX, X86_SIZE_BYTE);
+            SetReg(remainder, X86_REF_RAX, X86_SIZE_BYTE, true);
             break;
         }
         case X86_SIZE_WORD: {
             // dx:ax / rm, ax := quotient, dx := remainder
-            SSAInstruction* ax = get_reg(block, X86_REF_RAX, X86_SIZE_WORD);
-            SSAInstruction* dx = get_reg(block, X86_REF_RDX, X86_SIZE_WORD);
-            SSAInstruction* dx_shifted = ir_emit_shift_left(block, dx, ir_emit_immediate(block, 16));
-            SSAInstruction* dx_ax = ir_emit_or(block, dx_shifted, ax);
-            SSAInstruction* quotient = ir_emit_divuw(block, dx_ax, rm);
-            SSAInstruction* remainder = ir_emit_remuw(block, dx_ax, rm);
-            ir_emit_set_reg(block, X86_REF_RAX, X86_SIZE_WORD, quotient);
-            ir_emit_set_reg(block, X86_REF_RDX, X86_SIZE_WORD, remainder);
+            SSAInstruction* ax = GetReg(X86_REF_RAX, X86_SIZE_WORD);
+            SSAInstruction* dx = GetReg(X86_REF_RDX, X86_SIZE_WORD);
+            SSAInstruction* dx_shifted = Shli(dx, 16);
+            SSAInstruction* dx_ax = Or(dx_shifted, ax);
+            SSAInstruction* quotient = Divuw(dx_ax, rm);
+            SetReg(quotient, X86_REF_RAX, X86_SIZE_WORD);
+            SSAInstruction* remainder = Remuw(dx_ax, rm);
+            SetReg(remainder, X86_REF_RDX, X86_SIZE_WORD);
             break;
         }
         case X86_SIZE_DWORD: {
             // edx:eax / rm, eax := quotient, edx := remainder
-            SSAInstruction* eax = get_reg(block, X86_REF_RAX, X86_SIZE_DWORD);
-            SSAInstruction* edx = get_reg(block, X86_REF_RDX, X86_SIZE_DWORD);
-            SSAInstruction* edx_shifted = ir_emit_shift_left(block, edx, ir_emit_immediate(block, 32));
-            SSAInstruction* edx_eax = ir_emit_or(block, edx_shifted, eax);
-            SSAInstruction* quotient = ir_emit_divu(block, edx_eax, rm);
-            SSAInstruction* remainder = ir_emit_remu(block, edx_eax, rm);
-            ir_emit_set_reg(block, X86_REF_RAX, X86_SIZE_DWORD, quotient);
-            ir_emit_set_reg(block, X86_REF_RDX, X86_SIZE_DWORD, remainder);
+            SSAInstruction* eax = GetReg(X86_REF_RAX, X86_SIZE_DWORD);
+            SSAInstruction* edx = GetReg(X86_REF_RDX, X86_SIZE_DWORD);
+            SSAInstruction* edx_shifted = Shli(edx, 32);
+            SSAInstruction* edx_eax = Or(edx_shifted, eax);
+            SSAInstruction* quotient = Divu(edx_eax, rm);
+            SetReg(quotient, X86_REF_RAX, X86_SIZE_DWORD);
+            SSAInstruction* remainder = Remu(edx_eax, rm);
+            SetReg(remainder, X86_REF_RDX, X86_SIZE_DWORD);
             break;
         }
         case X86_SIZE_QWORD: {
             // rdx:rax / rm, rax := quotient, rdx := remainder
             constexpr static std::array reg_refs = {X86_REF_RAX, X86_REF_RDX};
 
-            ir_store_partial_state(block, reg_refs);
+            storePartialState(reg_refs);
 
-            ir_emit_divu128(block, rm);
+            SSAInstruction* instruction = insertInstruction(IROpcode::Div128, {rm});
+            instruction->Lock();
 
-            ir_load_partial_state(block, reg_refs);
+            loadPartialState(reg_refs);
             break;
         }
         default: {
@@ -1467,46 +1421,50 @@ void ir_emit_group3(IRBlock* block, x86_instruction_t* inst) {
         switch (size_e) {
         case X86_SIZE_BYTE: {
             // ax / rm, al := quotient, ah := remainder
-            SSAInstruction* ax = get_reg(block, X86_REF_RAX, X86_SIZE_WORD);
-            SSAInstruction* quotient = ir_emit_divw(block, ax, rm);
-            SSAInstruction* remainder = ir_emit_remw(block, ax, rm);
-            ir_emit_set_reg(block, X86_REF_RAX, X86_SIZE_BYTE, quotient);
-            ir_emit_set_reg(block, X86_REF_RAX, X86_SIZE_BYTE, remainder, true);
+            SSAInstruction* ax = Sext(GetReg(X86_REF_RAX), X86_SIZE_WORD);
+            SSAInstruction* se_rm = Sext(rm, X86_SIZE_BYTE);
+            SSAInstruction* quotient = Divw(ax, se_rm);
+            SetReg(quotient, X86_REF_RAX, X86_SIZE_BYTE);
+            SSAInstruction* remainder = Remw(ax, se_rm);
+            SetReg(remainder, X86_REF_RAX, X86_SIZE_BYTE, true);
             break;
         }
         case X86_SIZE_WORD: {
             // dx:ax / rm, ax := quotient, dx := remainder
-            SSAInstruction* ax = get_reg(block, X86_REF_RAX, X86_SIZE_WORD);
-            SSAInstruction* dx = get_reg(block, X86_REF_RDX, X86_SIZE_WORD);
-            SSAInstruction* dx_shifted = ir_emit_shift_left(block, dx, ir_emit_immediate(block, 16));
-            SSAInstruction* dx_ax = ir_emit_or(block, dx_shifted, ax);
-            SSAInstruction* quotient = ir_emit_divw(block, dx_ax, rm);
-            SSAInstruction* remainder = ir_emit_remw(block, dx_ax, rm);
-            ir_emit_set_reg(block, X86_REF_RAX, X86_SIZE_WORD, quotient);
-            ir_emit_set_reg(block, X86_REF_RDX, X86_SIZE_WORD, remainder);
+            SSAInstruction* ax = GetReg(X86_REF_RAX, X86_SIZE_WORD);
+            SSAInstruction* dx = GetReg(X86_REF_RDX, X86_SIZE_WORD);
+            SSAInstruction* dx_shifted = Shli(dx, 16);
+            SSAInstruction* dx_ax = Or(dx_shifted, ax);
+            SSAInstruction* se_rm = Sext(rm, X86_SIZE_WORD);
+            SSAInstruction* quotient = Divw(dx_ax, se_rm);
+            SetReg(quotient, X86_REF_RAX, X86_SIZE_WORD);
+            SSAInstruction* remainder = Remw(dx_ax, se_rm);
+            SetReg(remainder, X86_REF_RDX, X86_SIZE_WORD);
             break;
         }
         case X86_SIZE_DWORD: {
             // edx:eax / rm, eax := quotient, edx := remainder
-            SSAInstruction* eax = get_reg(block, X86_REF_RAX, X86_SIZE_DWORD);
-            SSAInstruction* edx = get_reg(block, X86_REF_RDX, X86_SIZE_DWORD);
-            SSAInstruction* edx_shifted = ir_emit_shift_left(block, edx, ir_emit_immediate(block, 32));
-            SSAInstruction* edx_eax = ir_emit_or(block, edx_shifted, eax);
-            SSAInstruction* quotient = ir_emit_div(block, edx_eax, rm);
-            SSAInstruction* remainder = ir_emit_rem(block, edx_eax, rm);
-            ir_emit_set_reg(block, X86_REF_RAX, X86_SIZE_DWORD, quotient);
-            ir_emit_set_reg(block, X86_REF_RDX, X86_SIZE_DWORD, remainder);
+            SSAInstruction* eax = GetReg(X86_REF_RAX, X86_SIZE_DWORD);
+            SSAInstruction* edx = GetReg(X86_REF_RDX, X86_SIZE_DWORD);
+            SSAInstruction* edx_shifted = Shli(edx, 32);
+            SSAInstruction* edx_eax = Or(edx_shifted, eax);
+            SSAInstruction* se_rm = Sext(rm, X86_SIZE_DWORD);
+            SSAInstruction* quotient = Div(edx_eax, se_rm);
+            SetReg(quotient, X86_REF_RAX, X86_SIZE_DWORD);
+            SSAInstruction* remainder = Rem(edx_eax, se_rm);
+            SetReg(remainder, X86_REF_RDX, X86_SIZE_DWORD);
             break;
         }
         case X86_SIZE_QWORD: {
             // rdx:rax / rm, rax := quotient, rdx := remainder
             constexpr static std::array reg_refs = {X86_REF_RAX, X86_REF_RDX};
 
-            ir_store_partial_state(block, reg_refs);
+            storePartialState(reg_refs);
 
-            ir_emit_div128(block, rm);
+            SSAInstruction* instruction = insertInstruction(IROpcode::Div128, {rm});
+            instruction->Lock();
 
-            ir_load_partial_state(block, reg_refs);
+            loadPartialState(reg_refs);
             break;
         }
         default: {
@@ -1517,108 +1475,58 @@ void ir_emit_group3(IRBlock* block, x86_instruction_t* inst) {
     }
     }
 
-    ir_emit_set_cpazso(block, c, p, a, z, s, o);
+    SetCPAZSO(c, p, a, z, s, o);
 
     if (result) {
-        ir_emit_set_rm(block, &inst->operand_rm, result);
+        SetRm(inst->operand_rm, result);
     }
 }
 
-SSAInstruction* ir_emit_get_cc(IRBlock* block, u8 opcode) {
-    switch (opcode & 0xF) {
-    case 0:
-        return ir_emit_get_flag(block, X86_REF_OF);
-    case 1:
-        return ir_emit_get_flag_not(block, X86_REF_OF);
-    case 2:
-        return ir_emit_get_flag(block, X86_REF_CF);
-    case 3:
-        return ir_emit_get_flag_not(block, X86_REF_CF);
-    case 4:
-        return ir_emit_get_flag(block, X86_REF_ZF);
-    case 5:
-        return ir_emit_get_flag_not(block, X86_REF_ZF);
-    case 6:
-        return ir_emit_or(block, ir_emit_get_flag(block, X86_REF_CF), ir_emit_get_flag(block, X86_REF_ZF));
-    case 7:
-        return ir_emit_and(block, ir_emit_get_flag_not(block, X86_REF_CF), ir_emit_get_flag_not(block, X86_REF_ZF));
-    case 8:
-        return ir_emit_get_flag(block, X86_REF_SF);
-    case 9:
-        return ir_emit_get_flag_not(block, X86_REF_SF);
-    case 10:
-        return ir_emit_get_flag(block, X86_REF_PF);
-    case 11:
-        return ir_emit_get_flag_not(block, X86_REF_PF);
-    case 12:
-        return ir_emit_not_equal(block, ir_emit_get_flag(block, X86_REF_SF), ir_emit_get_flag(block, X86_REF_OF));
-    case 13:
-        return ir_emit_equal(block, ir_emit_get_flag(block, X86_REF_SF), ir_emit_get_flag(block, X86_REF_OF));
-    case 14:
-        return ir_emit_or(block, ir_emit_equal(block, ir_emit_get_flag(block, X86_REF_ZF), ir_emit_immediate(block, 1)),
-                          ir_emit_not_equal(block, ir_emit_get_flag(block, X86_REF_SF), ir_emit_get_flag(block, X86_REF_OF)));
-    case 15:
-        return ir_emit_and(block, ir_emit_equal(block, ir_emit_get_flag(block, X86_REF_ZF), ir_emit_immediate(block, 0)),
-                           ir_emit_equal(block, ir_emit_get_flag(block, X86_REF_SF), ir_emit_get_flag(block, X86_REF_OF)));
-    }
-
-    ERROR("Invalid condition code");
-    return nullptr;
+SSAInstruction* IREmitter::GetThreadStatePointer() {
+    return insertInstruction(IROpcode::GetThreadStatePointer, {});
 }
 
-void ir_emit_setcc(IRBlock* block, x86_instruction_t* inst) {
-    ir_emit_set_rm(block, &inst->operand_rm, ir_emit_get_cc(block, inst->opcode));
+void IREmitter::RepStart(IRBlock* loop_block, IRBlock* exit_block) {
+    SSAInstruction* rcx = GetReg(X86_REF_RCX);
+    SSAInstruction* condition = Seqz(rcx);
+    TerminateJumpConditional(condition, exit_block, loop_block);
 }
 
-void ir_emit_set_exit_reason(IRBlock* block, u8 reason) {
-    SSAInstruction* set_exit_reason = ir_emit_no_operands(block, IROpcode::SetExitReason);
-    set_exit_reason->SetImmediateData(reason);
-    set_exit_reason->Lock();
-}
-
-void ir_emit_rep_start(FrontendState* state, const x86_instruction_t& inst, IRBlock* loop_block, IRBlock* exit_block) {
-    x86_operand_t rcx_reg = get_full_reg(X86_REF_RCX);
-    rcx_reg.size = inst.operand_reg.size;
-    SSAInstruction* rcx = ir_emit_get_reg(state->current_block, &rcx_reg);
-    SSAInstruction* zero = ir_emit_immediate(state->current_block, 0);
-    SSAInstruction* condition = ir_emit_equal(state->current_block, rcx, zero);
-    state->current_block->TerminateJumpConditional(condition, exit_block, loop_block);
-
-    // Write the instruction in the loop body
-    state->current_block = loop_block;
-}
-
-void ir_emit_rep_end(FrontendState* state, const x86_instruction_t& inst, x86_rep_e rep_type, IRBlock* loop_block, IRBlock* exit_block) {
-    x86_operand_t rcx_reg = get_full_reg(X86_REF_RCX);
-    rcx_reg.size = inst.operand_reg.size;
-    SSAInstruction* rcx = ir_emit_get_reg(state->current_block, &rcx_reg);
-    SSAInstruction* zero = ir_emit_immediate(state->current_block, 0);
-    SSAInstruction* one = ir_emit_immediate(state->current_block, 1);
-    SSAInstruction* sub = ir_emit_sub(state->current_block, rcx, one);
-    ir_emit_set_reg(state->current_block, &rcx_reg, sub);
-    SSAInstruction* rcx_zero = ir_emit_equal(state->current_block, sub, zero);
+void IREmitter::RepEnd(x86_rep_e rep_type, IRBlock* loop_block, IRBlock* exit_block) {
+    SSAInstruction* rcx = GetReg(X86_REF_RCX);
+    SSAInstruction* zero = Imm(0);
+    SSAInstruction* sub = Addi(rcx, -1ll);
+    SetReg(sub, X86_REF_RCX);
+    SSAInstruction* rcx_zero = Seqz(sub);
     SSAInstruction* condition;
-    SSAInstruction* zf = ir_emit_get_flag(state->current_block, X86_REF_ZF);
+    SSAInstruction* zf = GetFlag(X86_REF_ZF);
     if (rep_type == REP) { // Some instructions don't check the ZF flag
         condition = zero;
     } else if (rep_type == REP_NZ) {
-        condition = ir_emit_not_equal(state->current_block, zf, zero);
+        condition = Snez(zf);
     } else if (rep_type == REP_Z) {
-        condition = ir_emit_equal(state->current_block, zf, zero);
+        condition = Seqz(zf);
     } else {
         UNREACHABLE();
         return;
     }
 
-    SSAInstruction* final_condition = ir_emit_or(state->current_block, rcx_zero, condition);
-    state->current_block->TerminateJumpConditional(final_condition, exit_block, loop_block);
-
-    frontend_compile_block(*state->emulator, state->function, exit_block);
-    state->exit = true;
+    SSAInstruction* final_condition = Or(rcx_zero, condition);
+    TerminateJumpConditional(final_condition, exit_block, loop_block);
+    Exit();
 }
 
-void ir_emit_call_host_function(IRBlock* block, u64 function) {
-    SSAInstruction* call = ir_emit_no_operands(block, IROpcode::CallHostFunction);
-    call->SetImmediateData(function);
-    call->Lock();
+void IREmitter::TerminateJump(IRBlock* target) {
+    ASSERT_MSG(block->GetTermination() == Termination::Null, "Block %s already has a termination", block->GetName().c_str());
+    block->TerminateJump(target);
+}
+
+void IREmitter::TerminateJumpConditional(SSAInstruction* condition, IRBlock* target_true, IRBlock* target_false) {
+    ASSERT_MSG(block->GetTermination() == Termination::Null, "Block %s already has a termination", block->GetName().c_str());
+    block->TerminateJumpConditional(condition, target_true, target_false);
+}
+
+void IREmitter::CallHostFunction(u64 function_address) {
+    SSAInstruction* instruction = insertInstruction(IROpcode::CallHostFunction, {}, function_address);
+    instruction->Lock();
 }

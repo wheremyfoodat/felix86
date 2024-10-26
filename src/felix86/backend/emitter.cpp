@@ -36,6 +36,10 @@ constexpr bool HasZam() {
     return false;
 }
 
+constexpr bool HasZicond() {
+    return false;
+}
+
 void EmitCrash(Backend& backend, ExitReason reason) {
     Emitter::EmitSetExitReason(backend, static_cast<u64>(reason));
     Emitter::EmitJump(backend, backend.GetCrashTarget());
@@ -761,12 +765,36 @@ void Emitter::EmitAnd(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscu
     AS.AND(Rd, Rs1, Rs2);
 }
 
+void Emitter::EmitAndi(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u64 immediate) {
+    if (IsValidSigned12BitImm((i64)immediate)) {
+        AS.ANDI(Rd, Rs, (i64)immediate);
+    } else {
+        UNREACHABLE();
+    }
+}
+
 void Emitter::EmitOr(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
     AS.OR(Rd, Rs1, Rs2);
 }
 
+void Emitter::EmitOri(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u64 immediate) {
+    if (IsValidSigned12BitImm((i64)immediate)) {
+        AS.ORI(Rd, Rs, (i64)immediate);
+    } else {
+        UNREACHABLE();
+    }
+}
+
 void Emitter::EmitXor(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
     AS.XOR(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitXori(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u64 immediate) {
+    if (IsValidSigned12BitImm((i64)immediate)) {
+        AS.XORI(Rd, Rs, (i64)immediate);
+    } else {
+        UNREACHABLE();
+    }
 }
 
 void Emitter::EmitEqual(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
@@ -779,6 +807,14 @@ void Emitter::EmitNotEqual(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, 
     AS.SNEZ(Rd, Rd);
 }
 
+void Emitter::EmitSeqz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    AS.SEQZ(Rd, Rs);
+}
+
+void Emitter::EmitSnez(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    AS.SNEZ(Rd, Rs);
+}
+
 void Emitter::EmitSetLessThanSigned(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
     AS.SLT(Rd, Rs1, Rs2);
 }
@@ -787,19 +823,43 @@ void Emitter::EmitSetLessThanUnsigned(Backend& backend, biscuit::GPR Rd, biscuit
     AS.SLTU(Rd, Rs1, Rs2);
 }
 
-void Emitter::EmitShiftLeft(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+void Emitter::EmitShl(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
     AS.SLL(Rd, Rs1, Rs2); // TODO: add more robust shift IR instructions to abuse C_SLLI & co
 }
 
-void Emitter::EmitShiftRight(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+void Emitter::EmitShli(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, i64 immediate) {
+    if (IsValidSigned12BitImm(immediate)) {
+        AS.SLLI(Rd, Rs, immediate);
+    } else {
+        UNREACHABLE();
+    }
+}
+
+void Emitter::EmitShr(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
     AS.SRL(Rd, Rs1, Rs2);
 }
 
-void Emitter::EmitShiftRightArithmetic(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+void Emitter::EmitShri(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, i64 immediate) {
+    if (IsValidSigned12BitImm(immediate)) {
+        AS.SRLI(Rd, Rs, immediate);
+    } else {
+        UNREACHABLE();
+    }
+}
+
+void Emitter::EmitSar(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
     AS.SRA(Rd, Rs1, Rs2);
 }
 
-void Emitter::EmitLeftRotate8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+void Emitter::EmitSari(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, i64 immediate) {
+    if (IsValidSigned12BitImm(immediate)) {
+        AS.SRAI(Rd, Rs, immediate);
+    } else {
+        UNREACHABLE();
+    }
+}
+
+void Emitter::EmitRol8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
     AS.ANDI(t0, Rs2, 0x7);
     AS.SLLW(Rd, Rs1, t0);
     AS.NEG(t0, t0);
@@ -809,7 +869,7 @@ void Emitter::EmitLeftRotate8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs
     AS.ANDI(Rd, Rd, 0xFF);
 }
 
-void Emitter::EmitLeftRotate16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+void Emitter::EmitRol16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
     AS.ANDI(t0, Rs2, 0x1F);
     AS.SLLW(Rd, Rs1, t0);
     AS.NEG(t0, t0);
@@ -819,12 +879,28 @@ void Emitter::EmitLeftRotate16(Backend& backend, biscuit::GPR Rd, biscuit::GPR R
     AS.ZEXTH(Rd, Rd);
 }
 
-void Emitter::EmitLeftRotate32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+void Emitter::EmitRol32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
     AS.ROLW(Rd, Rs1, Rs2);
 }
 
-void Emitter::EmitLeftRotate64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+void Emitter::EmitRol64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
     AS.ROL(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitRor8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    UNIMPLEMENTED();
+}
+
+void Emitter::EmitRor16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    UNIMPLEMENTED();
+}
+
+void Emitter::EmitRor32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.RORW(Rd, Rs1, Rs2);
+}
+
+void Emitter::EmitRor64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
+    AS.ROR(Rd, Rs1, Rs2);
 }
 
 void Emitter::EmitDiv(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
@@ -872,29 +948,36 @@ void Emitter::EmitMulhu(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, bis
 }
 
 void Emitter::EmitSelect(Backend& backend, biscuit::GPR Rd, biscuit::GPR Condition, biscuit::GPR RsTrue, biscuit::GPR RsFalse) {
-    if (Rd != RsFalse) {
-        Label true_label;
-        AS.MV(Rd, RsTrue);
-        AS.BNEZ(Condition, &true_label);
-        AS.MV(Rd, RsFalse);
-        AS.Bind(&true_label);
+    if (HasZicond()) {
+        // Not my favorite of conditional move instructions
+        AS.CZERO_EQZ(Rd, RsTrue, Condition);
+        AS.CZERO_NEZ(t0, RsFalse, Condition);
+        AS.OR(Rd, Rd, t0);
     } else {
-        // If Rd == RsFalse we can't do this shorthand mode above.
-        Label true_label, end_label;
-        AS.BNEZ(Condition, &true_label);
-        AS.MV(Rd, RsFalse);
-        AS.J(&end_label);
-        AS.Bind(&true_label);
-        AS.MV(Rd, RsTrue);
-        AS.Bind(&end_label);
+        if (Rd != RsFalse) {
+            Label true_label;
+            AS.MV(Rd, RsTrue);
+            AS.BNEZ(Condition, &true_label);
+            AS.MV(Rd, RsFalse);
+            AS.Bind(&true_label);
+        } else {
+            // If Rd == RsFalse we can't do this shorthand mode above.
+            Label true_label, end_label;
+            AS.BNEZ(Condition, &true_label);
+            AS.MV(Rd, RsFalse);
+            AS.J(&end_label);
+            AS.Bind(&true_label);
+            AS.MV(Rd, RsTrue);
+            AS.Bind(&end_label);
+        }
     }
 }
 
-void Emitter::EmitCastVectorFromInteger(Backend& backend, biscuit::Vec Vd, biscuit::GPR Rs) {
+void Emitter::EmitIToV(Backend& backend, biscuit::Vec Vd, biscuit::GPR Rs) {
     AS.VMV_SX(Vd, Rs);
 }
 
-void Emitter::EmitCastIntegerFromVector(Backend& backend, biscuit::GPR Rd, biscuit::Vec Vs) {
+void Emitter::EmitVToI(Backend& backend, biscuit::GPR Rd, biscuit::Vec Vs) {
     AS.VMV_XS(Rd, Vs);
 }
 
@@ -942,15 +1025,27 @@ void Emitter::EmitVXor(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, bisc
     AS.VXOR(Vd, Vs1, Vs2);
 }
 
-void Emitter::EmitVShiftRight(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
+void Emitter::EmitVPackedShr(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
     UNREACHABLE();
 }
 
-void Emitter::EmitVShiftLeft(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
+void Emitter::EmitVShl(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
     UNREACHABLE();
 }
 
 void Emitter::EmitVPackedSubByte(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
+    UNREACHABLE();
+}
+
+void Emitter::EmitVPackedAddByte(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
+    UNREACHABLE();
+}
+
+void Emitter::EmitVPackedAddWord(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
+    UNREACHABLE();
+}
+
+void Emitter::EmitVPackedAddDWord(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
     UNREACHABLE();
 }
 
@@ -967,6 +1062,10 @@ void Emitter::EmitVPackedEqualWord(Backend& backend, biscuit::Vec Vd, biscuit::V
 }
 
 void Emitter::EmitVPackedEqualDWord(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
+    UNREACHABLE();
+}
+
+void Emitter::EmitVPackedEqualQWord(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
     UNREACHABLE();
 }
 

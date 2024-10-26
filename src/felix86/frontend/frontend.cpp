@@ -7,7 +7,6 @@
 #include "felix86/emulator.hpp"
 #include "felix86/frontend/frontend.hpp"
 #include "felix86/frontend/instruction.hpp"
-#include "felix86/ir/emitter.hpp"
 #include "felix86/ir/handlers.hpp"
 
 typedef enum : u8 {
@@ -108,6 +107,8 @@ instruction_metadata_t tertiary_table_38_f2[] = {
 #undef X
 };
 
+void frontend_compile_block(Emulator& emulator, IRFunction* function, IRBlock* block);
+
 u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, bool rex_b, bool rex_x, bool rex_r, modrm_t modrm, sib_t sib) {
     operand_reg->type = X86_OP_TYPE_REGISTER;
     operand_reg->reg.ref = x86_ref_e(X86_REF_RAX + (modrm.reg | (rex_r << 3)));
@@ -183,8 +184,8 @@ u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, bool rex_
     return 0;
 }
 
-void frontend_compile_instruction(FrontendState* state) {
-    u8* data = (u8*)state->current_address;
+void frontend_compile_instruction(FrontendState* state, IREmitter& ir) {
+    u8* data = (u8*)ir.GetCurrentAddress();
 
     x86_instruction_t inst = {};
     int index = 0;
@@ -628,7 +629,7 @@ void frontend_compile_instruction(FrontendState* state) {
         inst.operand_rm.memory.gs_override = gs_override;
         inst.operand_rm.memory.lock = lock;
         if (inst.operand_rm.memory.base == X86_REF_RIP) {
-            inst.operand_rm.memory.displacement += state->current_address + index;
+            inst.operand_rm.memory.displacement += ir.GetCurrentAddress() + index;
             inst.operand_rm.memory.base = X86_REF_COUNT;
         }
     } else if (inst.operand_rm.type != X86_OP_TYPE_NONE) {
@@ -640,12 +641,12 @@ void frontend_compile_instruction(FrontendState* state) {
     ZydisDisassembledInstruction zydis_inst;
     if (ZYAN_SUCCESS(ZydisDisassembleIntel(
             /* machine_mode:    */ ZYDIS_MACHINE_MODE_LONG_64,
-            /* runtime_address: */ state->current_address - g_base_address,
+            /* runtime_address: */ ir.GetCurrentAddress(),
             /* buffer:          */ data,
             /* length:          */ 15,
             /* instruction:     */ &zydis_inst))) {
-        std::string buffer = fmt::format("{:016x} {}", (state->current_address - g_base_address), zydis_inst.text);
-        ir_emit_runtime_comment(state->current_block, buffer);
+        std::string buffer = fmt::format("{:016x} {}", ir.GetCurrentAddress(), zydis_inst.text);
+        ir.Comment(buffer);
     }
 
     bool is_rep = rep_type != NONE;
@@ -654,18 +655,22 @@ void frontend_compile_instruction(FrontendState* state) {
 
     if (is_rep) {
         loop_block = state->function->CreateBlock();
-        exit_block = state->function->CreateBlockAt(state->current_address + inst.length);
-        ir_emit_rep_start(state, inst, loop_block, exit_block);
+        exit_block = state->function->CreateBlockAt(ir.GetCurrentAddress() + inst.length);
+        ir.RepStart(loop_block, exit_block);
+
+        // Write the instruction in the loop body
+        ir.SetBlock(loop_block);
     }
 
     // Call actual decoding function
-    fn(state, &inst);
+    fn(state, ir, &inst);
 
     if (is_rep) {
-        ir_emit_rep_end(state, inst, rep_type, loop_block, exit_block);
+        ir.RepEnd(rep_type, loop_block, exit_block);
+        frontend_compile_block(*state->emulator, state->function, exit_block);
     }
 
-    state->current_address += inst.length;
+    ir.IncrementAddress(inst.length);
 }
 
 void frontend_compile_block(Emulator& emulator, IRFunction* function, IRBlock* block) {
@@ -676,24 +681,23 @@ void frontend_compile_block(Emulator& emulator, IRFunction* function, IRBlock* b
     FrontendState state = {0};
     state.emulator = &emulator;
     state.function = function;
-    state.current_block = block;
-    state.current_address = block->GetStartAddress();
-    state.exit = false;
+
+    IREmitter ir(*block, block->GetStartAddress());
 
     block->SetCompiled();
 
-    while (!state.exit) {
-        frontend_compile_instruction(&state);
+    while (!ir.IsExit()) {
+        frontend_compile_instruction(&state, ir);
     }
 
     if (emulator.GetConfig().print_state) {
         for (u8 i = 0; i < X86_REF_COUNT; i++) {
             // Writeback all state
-            SSAInstruction* value = ir_emit_get_guest(block, x86_ref_e(i));
-            ir_emit_store_guest_to_memory(block, x86_ref_e(i), value);
+            SSAInstruction* value = ir.GetGuest(x86_ref_e(i));
+            ir.StoreGuestToMemory(value, x86_ref_e(i));
         }
 
-        ir_emit_call_host_function(block, (u64)&print_gprs);
+        ir.CallHostFunction((u64)&print_gprs);
     }
 }
 

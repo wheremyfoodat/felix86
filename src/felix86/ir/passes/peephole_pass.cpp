@@ -9,6 +9,23 @@ bool IsInteger64(const SSAInstruction* inst) {
     return !inst->IsImmediate() && inst->GetType() == IRType::Integer64;
 }
 
+bool Peephole12BitImmediate(SSAInstruction& inst, IROpcode replacement) {
+    for (u8 i = 0; i < 2; i++) {
+        SSAInstruction* op1 = inst.GetOperand(i);
+        SSAInstruction* op2 = inst.GetOperand(!i);
+        if (op1->IsImmediate() && IsValidSigned12BitImm(op1->GetImmediateData()) && !op2->IsImmediate()) {
+            Operands op;
+            op.operands[0] = op2;
+            op.immediate_data = op1->GetImmediateData();
+            op.operand_count = 1;
+            inst.Replace(op, replacement);
+            return true;
+        }
+    }
+
+    return false;
+}
+
 IROpcode ReadToRelative(IROpcode read) {
     switch (read) {
     case IROpcode::ReadByte: {
@@ -64,6 +81,21 @@ bool PeepholeAddImmediates(SSAInstruction& inst) {
     return false;
 }
 
+bool PeepholeAddiImmediates(SSAInstruction& inst) {
+    const SSAInstruction* op = inst.GetOperand(0);
+
+    if (op->IsImmediate()) {
+        inst.ReplaceWithImmediate(op->GetImmediateData() + inst.GetImmediateData());
+        return true;
+    }
+
+    return false;
+}
+
+bool PeepholeAdd12BitImmediate(SSAInstruction& inst) {
+    return Peephole12BitImmediate(inst, IROpcode::Addi);
+}
+
 // t2 = t1 + 0
 bool PeepholeAddZero(SSAInstruction& inst) {
     for (u8 i = 0; i < 2; i++) {
@@ -71,6 +103,15 @@ bool PeepholeAddZero(SSAInstruction& inst) {
             inst.ReplaceWithMov(inst.GetOperand(!i));
             return true;
         }
+    }
+
+    return false;
+}
+
+bool PeepholeAddiZero(SSAInstruction& inst) {
+    if (inst.GetImmediateData() == 0) {
+        inst.ReplaceWithMov(inst.GetOperand(0));
+        return true;
     }
 
     return false;
@@ -87,6 +128,10 @@ bool PeepholeAndImmediates(SSAInstruction& inst) {
     }
 
     return false;
+}
+
+bool PeepholeAnd12BitImmediate(SSAInstruction& inst) {
+    return Peephole12BitImmediate(inst, IROpcode::Andi);
 }
 
 // t2 = t1 & t1
@@ -317,6 +362,10 @@ bool PeepholeOrImmediates(SSAInstruction& inst) {
     return false;
 }
 
+bool PeepholeOr12BitImmediate(SSAInstruction& inst) {
+    return Peephole12BitImmediate(inst, IROpcode::Ori);
+}
+
 // t2 = t1 | t1
 bool PeepholeOrSame(SSAInstruction& inst) {
     SSAInstruction* op1 = inst.GetOperand(0);
@@ -386,7 +435,7 @@ bool PeepholeSelectImmediate(SSAInstruction& inst) {
 }
 
 // t2 = imm << imm
-bool PeepholeShiftLeftImmediates(SSAInstruction& inst) {
+bool PeepholeShlImmediates(SSAInstruction& inst) {
     const SSAInstruction* op1 = inst.GetOperand(0);
     const SSAInstruction* op2 = inst.GetOperand(1);
 
@@ -399,7 +448,7 @@ bool PeepholeShiftLeftImmediates(SSAInstruction& inst) {
 }
 
 // t2 = imm >> imm
-bool PeepholeShiftRightArithmeticImmediates(SSAInstruction& inst) {
+bool PeepholeSarImmediates(SSAInstruction& inst) {
     const SSAInstruction* op1 = inst.GetOperand(0);
     const SSAInstruction* op2 = inst.GetOperand(1);
 
@@ -412,7 +461,7 @@ bool PeepholeShiftRightArithmeticImmediates(SSAInstruction& inst) {
 }
 
 // t2 = imm >> imm
-bool PeepholeShiftRightImmediates(SSAInstruction& inst) {
+bool PeepholeShrImmediates(SSAInstruction& inst) {
     const SSAInstruction* op1 = inst.GetOperand(0);
     const SSAInstruction* op2 = inst.GetOperand(1);
 
@@ -613,6 +662,10 @@ bool PeepholeXorImmediates(SSAInstruction& inst) {
     return false;
 }
 
+bool PeepholeXor12BitImmediate(SSAInstruction& inst) {
+    return Peephole12BitImmediate(inst, IROpcode::Xori);
+}
+
 // t2 = t1 ^ t1
 bool PeepholeXorSame(SSAInstruction& inst) {
     SSAInstruction* op1 = inst.GetOperand(0);
@@ -669,19 +722,26 @@ bool PeepholeZextImmediate(SSAInstruction& inst) {
 bool PassManager::peepholePassBlock(IRBlock* block) {
     bool changed = false;
     for (SSAInstruction& inst : block->GetInstructions()) {
+        bool local_changed = false;
         if (!inst.IsLocked()) {
-            bool local_changed = false;
 #define CHECK(x)                                                                                                                                     \
     if (!local_changed)                                                                                                                              \
-    local_changed |= x(inst)
+        local_changed |= x(inst);
             switch (inst.GetOpcode()) {
             case IROpcode::Add: {
                 CHECK(PeepholeAddImmediates);
+                CHECK(PeepholeAdd12BitImmediate);
                 CHECK(PeepholeAddZero);
+                break;
+            }
+            case IROpcode::Addi: {
+                CHECK(PeepholeAddiImmediates);
+                CHECK(PeepholeAddiZero);
                 break;
             }
             case IROpcode::And: {
                 CHECK(PeepholeAndImmediates);
+                CHECK(PeepholeAnd12BitImmediate);
                 CHECK(PeepholeAndZero);
                 CHECK(PeepholeAndTwice);
                 CHECK(PeepholeAndSame);
@@ -689,12 +749,14 @@ bool PassManager::peepholePassBlock(IRBlock* block) {
             }
             case IROpcode::Or: {
                 CHECK(PeepholeOrImmediates);
+                CHECK(PeepholeOr12BitImmediate);
                 CHECK(PeepholeOrZero);
                 CHECK(PeepholeOrSame);
                 break;
             }
             case IROpcode::Xor: {
                 CHECK(PeepholeXorImmediates);
+                CHECK(PeepholeXor12BitImmediate);
                 CHECK(PeepholeXorZero);
                 CHECK(PeepholeXorSame);
                 break;
@@ -760,16 +822,16 @@ bool PassManager::peepholePassBlock(IRBlock* block) {
                 CHECK(PeepholeSelectImmediate);
                 break;
             }
-            case IROpcode::ShiftLeft: {
-                CHECK(PeepholeShiftLeftImmediates);
+            case IROpcode::Shl: {
+                CHECK(PeepholeShlImmediates);
                 break;
             }
-            case IROpcode::ShiftRight: {
-                CHECK(PeepholeShiftRightImmediates);
+            case IROpcode::Shr: {
+                CHECK(PeepholeShrImmediates);
                 break;
             }
-            case IROpcode::ShiftRightArithmetic: {
-                CHECK(PeepholeShiftRightArithmeticImmediates);
+            case IROpcode::Sar: {
+                CHECK(PeepholeSarImmediates);
                 break;
             }
             case IROpcode::Sext8:
@@ -784,13 +846,6 @@ bool PassManager::peepholePassBlock(IRBlock* block) {
                 CHECK(PeepholeSubZero);
                 break;
             }
-            case IROpcode::WriteByte:
-            case IROpcode::WriteWord:
-            case IROpcode::WriteDWord:
-            case IROpcode::WriteQWord: {
-                CHECK(PeepholeWriteRelative);
-                break;
-            }
             case IROpcode::Zext8:
             case IROpcode::Zext16:
             case IROpcode::Zext32: {
@@ -801,8 +856,23 @@ bool PassManager::peepholePassBlock(IRBlock* block) {
                 break;
             }
 
-            changed |= local_changed;
+        } else {
+            inst.Unlock();
+            // Safe optimizations even for locked instructions
+            switch (inst.GetOpcode()) {
+            case IROpcode::WriteByte:
+            case IROpcode::WriteWord:
+            case IROpcode::WriteDWord:
+            case IROpcode::WriteQWord: {
+                CHECK(PeepholeWriteRelative);
+                break;
+            }
+            default:
+                break;
+            }
+            inst.Lock();
         }
+        changed |= local_changed;
     }
 
     return changed;
