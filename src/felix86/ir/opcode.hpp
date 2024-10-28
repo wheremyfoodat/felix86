@@ -6,6 +6,13 @@
 #define IR_OPCODES                                                                                                                                   \
     X(Null)                                                                                                                                          \
     X(GetThreadStatePointer)                                                                                                                         \
+    X(SetVectorStateFloat) /* these set the state of vector operations, to operate on float/doubles or packed data */                                \
+    X(SetVectorStateDouble)                                                                                                                          \
+    X(SetVectorStatePackedByte) /* we do an optimization pass to remove unnecessary SetVectorState* (really we just unlock them and they get removed \
+                                   by dce) */                                                                                                        \
+    X(SetVectorStatePackedWord)                                                                                                                      \
+    X(SetVectorStatePackedDWord)                                                                                                                     \
+    X(SetVectorStatePackedQWord)                                                                                                                     \
     X(SetExitReason)                                                                                                                                 \
     X(CallHostFunction)                                                                                                                              \
     X(Phi)                                                                                                                                           \
@@ -126,28 +133,20 @@
     X(VToI)                                                                                                                                          \
     X(VInsertInteger)                                                                                                                                \
     X(VExtractInteger)                                                                                                                               \
-    X(VUnpackByteLow)                                                                                                                                \
-    X(VUnpackWordLow)                                                                                                                                \
-    X(VUnpackDWordLow)                                                                                                                               \
-    X(VUnpackQWordLow)                                                                                                                               \
+    X(SetVMask)                                                                                                                                      \
     X(VAnd)                                                                                                                                          \
     X(VOr)                                                                                                                                           \
     X(VXor)                                                                                                                                          \
-    X(VPackedShr)                                                                                                                                    \
-    X(VShl)                                                                                                                                          \
-    X(VPackedSubByte)                                                                                                                                \
-    X(VPackedAddByte)                                                                                                                                \
-    X(VPackedAddWord)                                                                                                                                \
-    X(VPackedAddDWord)                                                                                                                               \
-    X(VPackedAddQWord)                                                                                                                               \
-    X(VPackedEqualByte)                                                                                                                              \
-    X(VPackedEqualWord)                                                                                                                              \
-    X(VPackedEqualDWord)                                                                                                                             \
-    X(VPackedEqualQWord)                                                                                                                             \
-    X(VPackedShuffleDWord)                                                                                                                           \
-    X(VMoveByteMask)                                                                                                                                 \
-    X(VPackedMinByte)                                                                                                                                \
-    X(VZext64) /* zero extend the bottom 64-bits of a vector */                                                                                      \
+    X(VSub)                                                                                                                                          \
+    X(VAdd)                                                                                                                                          \
+    X(VEqual)                                                                                                                                        \
+    X(VIota)                                                                                                                                         \
+    X(VGather)                                                                                                                                       \
+    X(VSplat)                                                                                                                                        \
+    X(VSplati)                                                                                                                                       \
+    X(VMergei)                                                                                                                                       \
+    X(VSlli)                                                                                                                                         \
+    X(VSrai)                                                                                                                                         \
     X(Count)
 
 enum class IROpcode : u8 {

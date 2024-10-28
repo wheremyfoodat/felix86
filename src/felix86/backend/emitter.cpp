@@ -18,28 +18,6 @@ void Pop(Backend& backend, biscuit::GPR Rs) {
     AS.ADDI(Registers::StackPointer(), Registers::StackPointer(), 8);
 }
 
-// Nothing ships these extensions yet and AFAIK there's no way to check for them
-// TODO: in the future make it configurable to enable/disable these
-constexpr bool HasZabha() {
-    return false;
-}
-
-constexpr bool HasZacas() {
-    return false;
-}
-
-constexpr bool HasB() {
-    return false;
-}
-
-constexpr bool HasZam() {
-    return false;
-}
-
-constexpr bool HasZicond() {
-    return false;
-}
-
 void EmitCrash(Backend& backend, ExitReason reason) {
     Emitter::EmitSetExitReason(backend, static_cast<u64>(reason));
     Emitter::EmitJump(backend, backend.GetCrashTarget());
@@ -177,7 +155,7 @@ void SoftwareAtomicFetchRMW16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs
 
 // Sanity check for alignment until we have unaligned atomic extensions
 void EmitAlignmentCheck(Backend& backend, biscuit::GPR address, u8 alignment) {
-    if (!HasZam()) {
+    if (!Extensions::Zam) {
         biscuit::Label ok;
         AS.ANDI(address, address, alignment - 1);
         AS.BEQZ(address, &ok);
@@ -250,6 +228,7 @@ void Emitter::EmitJumpConditional(Backend& backend, biscuit::GPR condition, void
 }
 
 void Emitter::EmitCallHostFunction(Backend& backend, u64 function) {
+    // Really naive implementation for now
     EmitPushAllCallerSaved(backend);
 
     AS.LI(t0, (u64)function);
@@ -368,7 +347,7 @@ void Emitter::EmitCpuid(Backend& backend) {
 }
 
 void Emitter::EmitSext8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    if (HasB()) {
+    if (Extensions::B) {
         AS.SEXTB(Rd, Rs);
     } else {
         AS.SLLI(Rd, Rs, 56);
@@ -377,7 +356,7 @@ void Emitter::EmitSext8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
 }
 
 void Emitter::EmitSext16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    if (HasB()) {
+    if (Extensions::B) {
         AS.SEXTH(Rd, Rs);
     } else {
         AS.SLLI(Rd, Rs, 48);
@@ -412,7 +391,7 @@ void Emitter::EmitCtzh(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
 }
 
 void Emitter::EmitCtzw(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    if (HasB()) {
+    if (Extensions::B) {
         AS.CTZW(Rd, Rs);
     } else {
         SoftwareCtz(backend, Rd, Rs, 32);
@@ -420,7 +399,7 @@ void Emitter::EmitCtzw(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
 }
 
 void Emitter::EmitCtz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    if (HasB()) {
+    if (Extensions::B) {
         AS.CTZ(Rd, Rs);
     } else {
         SoftwareCtz(backend, Rd, Rs, 64);
@@ -436,7 +415,7 @@ void Emitter::EmitNeg(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
 }
 
 void Emitter::EmitParity(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    if (HasB()) {
+    if (Extensions::B) {
         AS.ANDI(Rd, Rs, 0xFF);
         AS.CPOPW(Rd, Rd);
     } else {
@@ -492,24 +471,53 @@ void Emitter::EmitReadQWord(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) 
     AS.LD(Rd, 0, Rs);
 }
 
-void Emitter::EmitReadXmmWord(Backend& backend, biscuit::Vec Vd, biscuit::GPR Address) {
-    AS.VLM(Vd, Address);
+void Emitter::EmitReadXmmWord(Backend& backend, biscuit::Vec Vd, biscuit::GPR Address, VectorState state) {
+    switch (state) {
+    case VectorState::PackedByte:
+        AS.VLE8(Vd, Address);
+        break;
+    case VectorState::PackedWord:
+        AS.VLE16(Vd, Address);
+        break;
+    case VectorState::PackedDWord:
+        AS.VLE32(Vd, Address);
+        break;
+    case VectorState::PackedQWord:
+        AS.VLE64(Vd, Address);
+        break;
+    default:
+        UNREACHABLE();
+    }
 }
 
 void Emitter::EmitReadByteRelative(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u64 offset) {
+    ASSERT(IsValidSigned12BitImm(offset));
     AS.LBU(Rd, offset, Rs);
 }
 
 void Emitter::EmitReadWordRelative(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u64 offset) {
+    ASSERT(IsValidSigned12BitImm(offset));
     AS.LHU(Rd, offset, Rs);
 }
 
 void Emitter::EmitReadDWordRelative(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u64 offset) {
+    ASSERT(IsValidSigned12BitImm(offset));
     AS.LWU(Rd, offset, Rs);
 }
 
 void Emitter::EmitReadQWordRelative(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u64 offset) {
+    ASSERT(IsValidSigned12BitImm(offset));
     AS.LD(Rd, offset, Rs);
+}
+
+void Emitter::EmitReadXmmWordRelative(Backend& backend, biscuit::Vec Vd, biscuit::GPR Address, u64 offset, VectorState state) {
+    ASSERT(IsValidSigned12BitImm(offset));
+    if (offset == 0) {
+        EmitReadXmmWord(backend, Vd, Address, state);
+    } else {
+        AS.ADDI(t0, Address, (i64)offset);
+        EmitReadXmmWord(backend, Vd, t0, state);
+    }
 }
 
 void Emitter::EmitWriteByte(Backend& backend, biscuit::GPR Address, biscuit::GPR Rs) {
@@ -528,24 +536,53 @@ void Emitter::EmitWriteQWord(Backend& backend, biscuit::GPR Address, biscuit::GP
     AS.SD(Rs, 0, Address);
 }
 
-void Emitter::EmitWriteXmmWord(Backend& backend, biscuit::GPR Address, biscuit::Vec Vs) {
-    AS.VSM(Vs, Address);
+void Emitter::EmitWriteXmmWord(Backend& backend, biscuit::GPR Address, biscuit::Vec Vs, VectorState state) {
+    switch (state) {
+    case VectorState::PackedByte:
+        AS.VSE8(Vs, Address);
+        break;
+    case VectorState::PackedWord:
+        AS.VSE16(Vs, Address);
+        break;
+    case VectorState::PackedDWord:
+        AS.VSE32(Vs, Address);
+        break;
+    case VectorState::PackedQWord:
+        AS.VSE64(Vs, Address);
+        break;
+    default:
+        UNREACHABLE();
+    }
 }
 
 void Emitter::EmitWriteByteRelative(Backend& backend, biscuit::GPR Address, biscuit::GPR Rs, u64 offset) {
+    ASSERT(IsValidSigned12BitImm(offset));
     AS.SB(Rs, offset, Address);
 }
 
 void Emitter::EmitWriteWordRelative(Backend& backend, biscuit::GPR Address, biscuit::GPR Rs, u64 offset) {
+    ASSERT(IsValidSigned12BitImm(offset));
     AS.SH(Rs, offset, Address);
 }
 
 void Emitter::EmitWriteDWordRelative(Backend& backend, biscuit::GPR Address, biscuit::GPR Rs, u64 offset) {
+    ASSERT(IsValidSigned12BitImm(offset));
     AS.SW(Rs, offset, Address);
 }
 
 void Emitter::EmitWriteQWordRelative(Backend& backend, biscuit::GPR Address, biscuit::GPR Rs, u64 offset) {
+    ASSERT(IsValidSigned12BitImm(offset));
     AS.SD(Rs, offset, Address);
+}
+
+void Emitter::EmitWriteXmmWordRelative(Backend& backend, biscuit::GPR Address, biscuit::Vec Vs, u64 offset, VectorState state) {
+    ASSERT(IsValidSigned12BitImm(offset));
+    if (offset == 0) {
+        EmitWriteXmmWord(backend, Address, Vs, state);
+    } else {
+        AS.ADDI(t0, Address, (i64)offset);
+        EmitWriteXmmWord(backend, t0, Vs, state);
+    }
 }
 
 void Emitter::EmitAdd(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
@@ -561,7 +598,7 @@ void Emitter::EmitAddi(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u64 i
 }
 
 void Emitter::EmitAmoAdd8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
-    if (HasZabha()) {
+    if (Extensions::Zabha) {
         AS.AMOADD_B(ordering, Rd, Rs, Address);
         EmitZext8(backend, Rd, Rd);
     } else {
@@ -570,7 +607,7 @@ void Emitter::EmitAmoAdd8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Addres
 }
 
 void Emitter::EmitAmoAdd16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
-    if (HasZabha()) {
+    if (Extensions::Zabha) {
         EmitAlignmentCheck(backend, Address, 2);
         AS.AMOADD_H(ordering, Rd, Rs, Address);
         EmitZext16(backend, Rd, Rd);
@@ -590,7 +627,7 @@ void Emitter::EmitAmoAdd64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Addre
 }
 
 void Emitter::EmitAmoAnd8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
-    if (HasZabha()) {
+    if (Extensions::Zabha) {
         AS.AMOAND_B(ordering, Rd, Rs, Address);
         EmitZext8(backend, Rd, Rd);
     } else {
@@ -599,7 +636,7 @@ void Emitter::EmitAmoAnd8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Addres
 }
 
 void Emitter::EmitAmoAnd16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
-    if (HasZabha()) {
+    if (Extensions::Zabha) {
         EmitAlignmentCheck(backend, Address, 2);
         AS.AMOAND_H(ordering, Rd, Rs, Address);
         EmitZext16(backend, Rd, Rd);
@@ -620,7 +657,7 @@ void Emitter::EmitAmoAnd64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Addre
 }
 
 void Emitter::EmitAmoOr8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
-    if (HasZabha()) {
+    if (Extensions::Zabha) {
         AS.AMOOR_B(ordering, Rd, Rs, Address);
         EmitZext8(backend, Rd, Rd);
     } else {
@@ -629,7 +666,7 @@ void Emitter::EmitAmoOr8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address
 }
 
 void Emitter::EmitAmoOr16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
-    if (HasZabha()) {
+    if (Extensions::Zabha) {
         EmitAlignmentCheck(backend, Address, 2);
         AS.AMOOR_H(ordering, Rd, Rs, Address);
         EmitZext16(backend, Rd, Rd);
@@ -650,7 +687,7 @@ void Emitter::EmitAmoOr64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Addres
 }
 
 void Emitter::EmitAmoXor8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
-    if (HasZabha()) {
+    if (Extensions::Zabha) {
         AS.AMOXOR_B(ordering, Rd, Rs, Address);
         EmitZext8(backend, Rd, Rd);
     } else {
@@ -659,7 +696,7 @@ void Emitter::EmitAmoXor8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Addres
 }
 
 void Emitter::EmitAmoXor16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
-    if (HasZabha()) {
+    if (Extensions::Zabha) {
         EmitAlignmentCheck(backend, Address, 2);
         AS.AMOXOR_H(ordering, Rd, Rs, Address);
         EmitZext16(backend, Rd, Rd);
@@ -680,7 +717,7 @@ void Emitter::EmitAmoXor64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Addre
 }
 
 void Emitter::EmitAmoSwap8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
-    if (HasZabha()) {
+    if (Extensions::Zabha) {
         AS.AMOSWAP_B(ordering, Rd, Rs, Address);
         EmitZext8(backend, Rd, Rd);
     } else {
@@ -690,7 +727,7 @@ void Emitter::EmitAmoSwap8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Addre
 }
 
 void Emitter::EmitAmoSwap16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Rs, biscuit::Ordering ordering) {
-    if (HasZabha()) {
+    if (Extensions::Zabha) {
         EmitAlignmentCheck(backend, Address, 2);
         AS.AMOSWAP_H(ordering, Rd, Rs, Address);
         EmitZext16(backend, Rd, Rd);
@@ -714,7 +751,7 @@ void Emitter::EmitAmoSwap64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Addr
 void Emitter::EmitAmoCAS8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Expected, biscuit::GPR Rs,
                           biscuit::Ordering ordering) {
     AS.MV(Rd, Expected);
-    if (HasZabha() && HasZacas()) {
+    if (Extensions::Zabha && Extensions::Zacas) {
         AS.AMOCAS_B(ordering, Rd, Rs, Address);
         EmitZext8(backend, Rd, Rd);
     } else {
@@ -725,7 +762,7 @@ void Emitter::EmitAmoCAS8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Addres
 void Emitter::EmitAmoCAS16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Expected, biscuit::GPR Rs,
                            biscuit::Ordering ordering) {
     AS.MV(Rd, Expected);
-    if (HasZabha() && HasZacas()) {
+    if (Extensions::Zabha && Extensions::Zacas) {
         EmitAlignmentCheck(backend, Address, 2);
         AS.AMOCAS_H(ordering, Rd, Rs, Address);
         EmitZext16(backend, Rd, Rd);
@@ -737,7 +774,7 @@ void Emitter::EmitAmoCAS16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Addre
 void Emitter::EmitAmoCAS32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Expected, biscuit::GPR Rs,
                            biscuit::Ordering ordering) {
     AS.MV(Rd, Expected);
-    if (HasZacas()) {
+    if (Extensions::Zacas) {
         EmitAlignmentCheck(backend, Address, 4);
         AS.AMOCAS_W(ordering, Rd, Rs, Address);
         EmitZext32(backend, Rd, Rd);
@@ -749,7 +786,7 @@ void Emitter::EmitAmoCAS32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Addre
 void Emitter::EmitAmoCAS64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Address, biscuit::GPR Expected, biscuit::GPR Rs,
                            biscuit::Ordering ordering) {
     AS.MV(Rd, Expected);
-    if (HasZacas()) {
+    if (Extensions::Zacas) {
         EmitAlignmentCheck(backend, Address, 8);
         AS.AMOCAS_D(ordering, Rd, Rs, Address);
     } else {
@@ -948,7 +985,7 @@ void Emitter::EmitMulhu(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, bis
 }
 
 void Emitter::EmitSelect(Backend& backend, biscuit::GPR Rd, biscuit::GPR Condition, biscuit::GPR RsTrue, biscuit::GPR RsFalse) {
-    if (HasZicond()) {
+    if (Extensions::Zicond) {
         // Not my favorite of conditional move instructions
         AS.CZERO_EQZ(Rd, RsTrue, Condition);
         AS.CZERO_NEZ(t0, RsFalse, Condition);
@@ -981,35 +1018,42 @@ void Emitter::EmitVToI(Backend& backend, biscuit::GPR Rd, biscuit::Vec Vs) {
     AS.VMV_XS(Rd, Vs);
 }
 
+void Emitter::EmitSetVectorStateFloat(Backend& backend) {
+    // Operate on one element, 32-bits
+    AS.VSETIVLI(x0, 1, SEW::E32);
+}
+
+void Emitter::EmitSetVectorStateDouble(Backend& backend) {
+    // Operate on one element, 64-bits
+    AS.VSETIVLI(x0, 1, SEW::E64);
+}
+
+void Emitter::EmitSetVectorStatePackedByte(Backend& backend) {
+    // Operate on VLEN/8 elements, 8-bits
+    static_assert(SUPPORTED_VLEN / 8 < 31); // for when we upgrade to 256-bit vectors
+    AS.VSETIVLI(x0, SUPPORTED_VLEN / 8, SEW::E8);
+}
+
+void Emitter::EmitSetVectorStatePackedWord(Backend& backend) {
+    // Operate on VLEN/16 elements, 16-bits
+    AS.VSETIVLI(x0, SUPPORTED_VLEN / 16, SEW::E16);
+}
+
+void Emitter::EmitSetVectorStatePackedDWord(Backend& backend) {
+    // Operate on VLEN/32 elements, 32-bits
+    AS.VSETIVLI(x0, SUPPORTED_VLEN / 32, SEW::E32);
+}
+
+void Emitter::EmitSetVectorStatePackedQWord(Backend& backend) {
+    // Operate on VLEN/64 elements, 64-bits
+    AS.VSETIVLI(x0, SUPPORTED_VLEN / 64, SEW::E64);
+}
+
 void Emitter::EmitVInsertInteger(Backend& backend, biscuit::Vec, biscuit::GPR, biscuit::Vec, u64) {
     UNREACHABLE();
 }
 
 void Emitter::EmitVExtractInteger(Backend& backend, biscuit::GPR, biscuit::Vec, u64) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVPackedShuffleDWord(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, u64) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVMoveByteMask(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVUnpackByteLow(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVUnpackWordLow(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVUnpackDWordLow(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVUnpackQWordLow(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
     UNREACHABLE();
 }
 
@@ -1025,54 +1069,54 @@ void Emitter::EmitVXor(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, bisc
     AS.VXOR(Vd, Vs1, Vs2);
 }
 
-void Emitter::EmitVPackedShr(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
+void Emitter::EmitVSub(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
     UNREACHABLE();
 }
 
-void Emitter::EmitVShl(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
+void Emitter::EmitVAdd(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
     UNREACHABLE();
 }
 
-void Emitter::EmitVPackedSubByte(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
-    UNREACHABLE();
+void Emitter::EmitVEqual(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2, VecMask masked) {
+    AS.VMSEQ(Vd, Vs1, Vs2, masked);
 }
 
-void Emitter::EmitVPackedAddByte(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
-    UNREACHABLE();
+void Emitter::EmitSetVMask(Backend& backend, biscuit::Vec Vs) {
+    AS.VMV(v0, Vs);
 }
 
-void Emitter::EmitVPackedAddWord(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
-    UNREACHABLE();
+void Emitter::EmitVIota(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, VecMask masked) {
+    AS.VIOTA(Vd, Vs, masked);
 }
 
-void Emitter::EmitVPackedAddDWord(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
-    UNREACHABLE();
+void Emitter::EmitVGather(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2, biscuit::Vec Viota, VecMask masked) {
+    if (Vd != Vs2 && Vd != Viota) {
+        AS.VMV(Vd, Vs1);
+        AS.VRGATHER(Vd, Vs2, Viota, masked);
+    } else {
+        // We don't wanna modify Vs1
+        AS.VMV(v1, Vs1);
+        AS.VRGATHER(v1, Vs2, Viota, masked);
+        AS.VMV(Vd, v1);
+    }
 }
 
-void Emitter::EmitVPackedAddQWord(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
-    UNREACHABLE();
+void Emitter::EmitVSplat(Backend& backend, biscuit::Vec Vd, biscuit::GPR Rs) {
+    AS.VMV(Vd, Rs);
 }
 
-void Emitter::EmitVPackedEqualByte(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
-    UNREACHABLE();
+void Emitter::EmitVSplati(Backend& backend, biscuit::Vec Vd, u64 immediate) {
+    AS.VMV(Vd, immediate);
 }
 
-void Emitter::EmitVPackedEqualWord(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
-    UNREACHABLE();
+void Emitter::EmitVSlli(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, u64 immediate, VecMask masked) {
+    AS.VSLL(Vd, Vs, immediate, masked);
 }
 
-void Emitter::EmitVPackedEqualDWord(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
-    UNREACHABLE();
+void Emitter::EmitVSrai(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, u64 immediate, VecMask masked) {
+    AS.VSRA(Vd, Vs, immediate, masked);
 }
 
-void Emitter::EmitVPackedEqualQWord(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVPackedMinByte(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
-    UNREACHABLE();
-}
-
-void Emitter::EmitVZext64(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs) {
-    UNREACHABLE();
+void Emitter::EmitVMergei(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, u64 immediate) {
+    AS.VMERGE(Vd, Vs, immediate);
 }

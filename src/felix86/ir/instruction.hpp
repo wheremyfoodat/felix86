@@ -25,8 +25,9 @@ struct IRBlock;
 
 struct Operands {
     std::array<SSAInstruction*, 4> operands;
-    u64 immediate_data = 0; // for some sse instructions
+    u64 immediate_data = 0; // for some instructions
     u8 operand_count = 0;
+    VecMask masked = VecMask::No;
 };
 
 struct GetGuest {
@@ -95,9 +96,18 @@ struct SSAInstruction {
         expression_type = ExpressionType::Operands;
     }
 
-    SSAInstruction(IROpcode opcode, std::initializer_list<SSAInstruction*> operands, u64 immediate) : SSAInstruction(opcode, operands) {
+    SSAInstruction(IROpcode opcode, VecMask masked, std::initializer_list<SSAInstruction*> operands) : SSAInstruction(opcode, operands) {
+        Operands& op = AsOperands();
+        op.masked = masked;
+    }
+
+    SSAInstruction(IROpcode opcode, VecMask mask, std::initializer_list<SSAInstruction*> operands, u64 immediate)
+        : SSAInstruction(opcode, mask, operands) {
         SetImmediateData(immediate);
     }
+
+    SSAInstruction(IROpcode opcode, std::initializer_list<SSAInstruction*> operands, u64 immediate)
+        : SSAInstruction(opcode, VecMask::No, operands, immediate) {}
 
     SSAInstruction(u64 immediate) : opcode(IROpcode::Immediate), return_type{IRType::Integer64} {
         Operands op;
@@ -324,6 +334,10 @@ struct SSAInstruction {
         return AsOperands().immediate_data;
     }
 
+    VecMask GetMask() const {
+        return AsOperands().masked;
+    }
+
     void SetImmediateData(u64 immediate_data) {
         AsOperands().immediate_data = immediate_data;
     }
@@ -350,6 +364,8 @@ struct SSAInstruction {
         case IROpcode::ReadQWord:
         case IROpcode::ReadXmmWord:
         case IROpcode::ReadByteRelative:
+        case IROpcode::ReadWordRelative:
+        case IROpcode::ReadDWordRelative:
         case IROpcode::ReadQWordRelative:
         case IROpcode::ReadXmmWordRelative:
             return true;

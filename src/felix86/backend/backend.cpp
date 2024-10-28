@@ -16,6 +16,8 @@ std::string ExitReasonToString(ExitReason reason) {
         return "Hit hlt instruction";
     case ExitReason::EXIT_REASON_BAD_ALIGNMENT:
         return "Bad alignment";
+    case ExitReason::EXIT_REASON_NO_VECTOR:
+        return "Vector extension disabled";
     }
 
     UNREACHABLE();
@@ -29,18 +31,6 @@ void PrintExitReason(ThreadState* state) {
 
 Backend::Backend(Emulator& emulator) : emulator(emulator), memory(allocateCodeCache()), as(memory, code_cache_size) {
     emitNecessaryStuff();
-    CPUInfo cpuinfo;
-    bool has_atomic = cpuinfo.Has(RISCVExtension::A);
-    bool has_compressed = cpuinfo.Has(RISCVExtension::C);
-    bool has_integer = cpuinfo.Has(RISCVExtension::I);
-    bool has_mul = cpuinfo.Has(RISCVExtension::M);
-    bool has_fpu = cpuinfo.Has(RISCVExtension::D) && cpuinfo.Has(RISCVExtension::F);
-    bool has_vector = cpuinfo.Has(RISCVExtension::V);
-
-    if (!has_atomic || !has_compressed || !has_integer || !has_mul || !has_fpu || !has_vector || cpuinfo.GetVlenb() != 128) {
-        if (!g_testing) // too much spam if testing
-            WARN("Backend is missing some extensions or doesn't have VLEN=128");
-    }
 }
 
 Backend::~Backend() {
@@ -53,6 +43,9 @@ void Backend::emitNecessaryStuff() {
 
     /* void enter_dispatcher(ThreadState* state) */
     enter_dispatcher = (decltype(enter_dispatcher))as.GetCursorPointer();
+
+    // Give it an initial valid state
+    as.VSETIVLI(x0, SUPPORTED_VLEN / 8, SEW::E8);
 
     biscuit::GPR address = t0;
 

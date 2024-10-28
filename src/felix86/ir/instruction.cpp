@@ -32,6 +32,12 @@ bool SSAInstruction::IsSameExpression(const SSAInstruction& other) const {
             return false;
         }
 
+        // If either are masked the mask at that time (v0) might have been different so we can't CSE
+        // At least not naively.
+        if (operands.masked == VecMask::Yes || other_operands.masked == VecMask::Yes) {
+            return false;
+        }
+
         return true;
     }
     default:
@@ -51,6 +57,12 @@ IRType SSAInstruction::GetTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
         return IRType::Void;
     }
     case IROpcode::Null:
+    case IROpcode::SetVectorStateFloat:
+    case IROpcode::SetVectorStateDouble:
+    case IROpcode::SetVectorStatePackedByte:
+    case IROpcode::SetVectorStatePackedWord:
+    case IROpcode::SetVectorStatePackedDWord:
+    case IROpcode::SetVectorStatePackedQWord:
     case IROpcode::CallHostFunction:
     case IROpcode::SetExitReason:
     case IROpcode::Comment:
@@ -58,7 +70,8 @@ IRType SSAInstruction::GetTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
     case IROpcode::Cpuid:
     case IROpcode::Rdtsc:
     case IROpcode::Div128:
-    case IROpcode::Divu128: {
+    case IROpcode::Divu128:
+    case IROpcode::SetVMask: {
         return IRType::Void;
     }
     case IROpcode::GetThreadStatePointer:
@@ -157,29 +170,20 @@ IRType SSAInstruction::GetTypeFromOpcode(IROpcode opcode, x86_ref_e ref) {
     case IROpcode::ReadXmmWord:
     case IROpcode::ReadXmmWordRelative:
     case IROpcode::IToV:
-    case IROpcode::VUnpackByteLow:
-    case IROpcode::VUnpackWordLow:
-    case IROpcode::VUnpackDWordLow:
-    case IROpcode::VUnpackQWordLow:
     case IROpcode::VAnd:
     case IROpcode::VOr:
     case IROpcode::VXor:
-    case IROpcode::VPackedShr:
-    case IROpcode::VShl:
-    case IROpcode::VPackedSubByte:
-    case IROpcode::VPackedAddByte:
-    case IROpcode::VPackedAddWord:
-    case IROpcode::VPackedAddDWord:
-    case IROpcode::VPackedAddQWord:
-    case IROpcode::VPackedEqualByte:
-    case IROpcode::VPackedEqualWord:
-    case IROpcode::VPackedEqualDWord:
-    case IROpcode::VPackedEqualQWord:
-    case IROpcode::VPackedShuffleDWord:
-    case IROpcode::VMoveByteMask:
-    case IROpcode::VPackedMinByte:
-    case IROpcode::VZext64:
-    case IROpcode::VInsertInteger: {
+    case IROpcode::VSub:
+    case IROpcode::VAdd:
+    case IROpcode::VEqual:
+    case IROpcode::VInsertInteger:
+    case IROpcode::VSplat:
+    case IROpcode::VSplati:
+    case IROpcode::VMergei:
+    case IROpcode::VGather:
+    case IROpcode::VIota:
+    case IROpcode::VSlli:
+    case IROpcode::VSrai: {
         return IRType::Vector128;
     }
     case IROpcode::WriteByte:
@@ -289,11 +293,18 @@ void SSAInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         BAD(AmoCAS128); // implme
 
         VALIDATE_OPS_INT(GetThreadStatePointer, 0);
+        VALIDATE_OPS_INT(SetVectorStateFloat, 0);
+        VALIDATE_OPS_INT(SetVectorStateDouble, 0);
+        VALIDATE_OPS_INT(SetVectorStatePackedByte, 0);
+        VALIDATE_OPS_INT(SetVectorStatePackedWord, 0);
+        VALIDATE_OPS_INT(SetVectorStatePackedDWord, 0);
+        VALIDATE_OPS_INT(SetVectorStatePackedQWord, 0);
         VALIDATE_OPS_INT(Rdtsc, 0);
         VALIDATE_OPS_INT(Syscall, 0);
         VALIDATE_OPS_INT(Cpuid, 0);
         VALIDATE_OPS_INT(SetExitReason, 0);
         VALIDATE_OPS_INT(CallHostFunction, 0);
+        VALIDATE_OPS_INT(VSplati, 0);
 
         VALIDATE_OPS_INT(Neg, 1);
         VALIDATE_OPS_INT(Addi, 1);
@@ -330,6 +341,7 @@ void SSAInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         VALIDATE_OPS_INT(ReadXmmWordRelative, 1);
         VALIDATE_OPS_INT(Div128, 1);
         VALIDATE_OPS_INT(Divu128, 1);
+        VALIDATE_OPS_INT(VSplat, 1);
 
         VALIDATE_OPS_INT(WriteByte, 2);
         VALIDATE_OPS_INT(WriteWord, 2);
@@ -398,30 +410,20 @@ void SSAInstruction::checkValidity(IROpcode opcode, const Operands& operands) {
         VALIDATE_OPS_INT(AmoCAS64, 3);
 
         VALIDATE_OPS_VECTOR(VToI, 1);
+        VALIDATE_OPS_VECTOR(SetVMask, 1);
+        VALIDATE_OPS_VECTOR(VIota, 1);
         VALIDATE_OPS_VECTOR(VExtractInteger, 1);
-        VALIDATE_OPS_VECTOR(VPackedShuffleDWord, 1);
-        VALIDATE_OPS_VECTOR(VMoveByteMask, 1);
-        VALIDATE_OPS_VECTOR(VZext64, 1);
+        VALIDATE_OPS_VECTOR(VMergei, 1);
+        VALIDATE_OPS_VECTOR(VSlli, 1);
+        VALIDATE_OPS_VECTOR(VSrai, 1);
 
-        VALIDATE_OPS_VECTOR(VUnpackByteLow, 2);
-        VALIDATE_OPS_VECTOR(VUnpackWordLow, 2);
-        VALIDATE_OPS_VECTOR(VUnpackDWordLow, 2);
-        VALIDATE_OPS_VECTOR(VUnpackQWordLow, 2);
         VALIDATE_OPS_VECTOR(VAnd, 2);
         VALIDATE_OPS_VECTOR(VOr, 2);
         VALIDATE_OPS_VECTOR(VXor, 2);
-        VALIDATE_OPS_VECTOR(VPackedShr, 2);
-        VALIDATE_OPS_VECTOR(VShl, 2);
-        VALIDATE_OPS_VECTOR(VPackedSubByte, 2);
-        VALIDATE_OPS_VECTOR(VPackedAddByte, 2);
-        VALIDATE_OPS_VECTOR(VPackedAddWord, 2);
-        VALIDATE_OPS_VECTOR(VPackedAddDWord, 2);
-        VALIDATE_OPS_VECTOR(VPackedAddQWord, 2);
-        VALIDATE_OPS_VECTOR(VPackedEqualByte, 2);
-        VALIDATE_OPS_VECTOR(VPackedEqualWord, 2);
-        VALIDATE_OPS_VECTOR(VPackedEqualDWord, 2);
-        VALIDATE_OPS_VECTOR(VPackedEqualQWord, 2);
-        VALIDATE_OPS_VECTOR(VPackedMinByte, 2);
+        VALIDATE_OPS_VECTOR(VSub, 2);
+        VALIDATE_OPS_VECTOR(VAdd, 2);
+        VALIDATE_OPS_VECTOR(VEqual, 2);
+        VALIDATE_OPS_VECTOR(VGather, 3);
 
     case IROpcode::WriteXmmWord:
     case IROpcode::WriteXmmWordRelative:
@@ -594,8 +596,29 @@ std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands,
     case IROpcode::GetThreadStatePointer: {
         return fmt::format("{} <- ThreadStatePointer", GetNameString(name));
     }
+    case IROpcode::SetVectorStateFloat: {
+        return fmt::format("SetVectorStateFloat()");
+    }
+    case IROpcode::SetVectorStateDouble: {
+        return fmt::format("SetVectorStateDouble()");
+    }
+    case IROpcode::SetVectorStatePackedByte: {
+        return fmt::format("SetVectorStatePackedByte()");
+    }
+    case IROpcode::SetVectorStatePackedWord: {
+        return fmt::format("SetVectorStatePackedWord()");
+    }
+    case IROpcode::SetVectorStatePackedDWord: {
+        return fmt::format("SetVectorStatePackedDWord()");
+    }
+    case IROpcode::SetVectorStatePackedQWord: {
+        return fmt::format("SetVectorStatePackedQWord()");
+    }
     case IROpcode::SetExitReason: {
         return fmt::format("SetExitReason({})", (u8)immediate_data);
+    }
+    case IROpcode::SetVMask: {
+        return fmt::format("SetVMask({})", GetNameString(operands[0]));
     }
     case IROpcode::Immediate: {
         ret += fmt::format("{} <- 0x{:x}", GetNameString(name), immediate_data);
@@ -887,7 +910,7 @@ std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands,
         break;
     }
     case IROpcode::Cpuid: {
-        ret += fmt::format("{} <- {}()", GetNameString(name), "cpuid");
+        ret += fmt::format("CPUID()");
         break;
     }
     case IROpcode::WriteByte: {
@@ -1098,76 +1121,48 @@ std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands,
                            GetNameString(operands[1]));
         break;
     }
-    case IROpcode::VShl: {
-        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vshl", "src1", GetNameString(operands[0]), "src2",
+    case IROpcode::VAdd: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vadd", "src1", GetNameString(operands[0]), "src2",
                            GetNameString(operands[1]));
         break;
     }
-    case IROpcode::VPackedShr: {
-        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "VPackedShr", "src1", GetNameString(operands[0]), "src2",
+    case IROpcode::VIota: {
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "viota", "src", GetNameString(operands[0]));
+        break;
+    }
+    case IROpcode::VSplat: {
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vsplat", "src", GetNameString(operands[0]));
+        break;
+    }
+    case IROpcode::VSplati: {
+        ret += fmt::format("{} <- {}(0x{:x})", GetNameString(name), "vsplati", immediate_data);
+        break;
+    }
+    case IROpcode::VMergei: {
+        ret += fmt::format("{} <- {}({}: {}, 0x{:x})", GetNameString(name), "vmergei", "false_value", GetNameString(operands[0]), immediate_data);
+        break;
+    }
+    case IROpcode::VSlli: {
+        ret += fmt::format("{} <- {}({}: {}, 0x{:x})", GetNameString(name), "vslli", "src", GetNameString(operands[0]), immediate_data);
+        break;
+    }
+    case IROpcode::VSrai: {
+        ret += fmt::format("{} <- {}({}: {}, 0x{:x})", GetNameString(name), "vsrai", "src", GetNameString(operands[0]), immediate_data);
+        break;
+    }
+    case IROpcode::VGather: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {}, {}: {}) ", GetNameString(name), "vgather", "dst", GetNameString(operands[0]), "src",
+                           GetNameString(operands[1]), "iota", GetNameString(operands[2]));
+        break;
+    }
+    case IROpcode::VEqual: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vequal", "src1", GetNameString(operands[0]), "src2",
                            GetNameString(operands[1]));
         break;
     }
-    case IROpcode::VZext64: {
-        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vzext64", "src", GetNameString(operands[0]));
-        break;
-    }
-    case IROpcode::VPackedAddByte: {
-        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vpaddbyte", "src1", GetNameString(operands[0]), "src2",
+    case IROpcode::VSub: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vsub", "src1", GetNameString(operands[0]), "src2",
                            GetNameString(operands[1]));
-        break;
-    }
-    case IROpcode::VPackedAddWord: {
-        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vpaddword", "src1", GetNameString(operands[0]), "src2",
-                           GetNameString(operands[1]));
-        break;
-    }
-    case IROpcode::VPackedAddDWord: {
-        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vpadddword", "src1", GetNameString(operands[0]), "src2",
-                           GetNameString(operands[1]));
-        break;
-    }
-    case IROpcode::VPackedAddQWord: {
-        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vpaddqword", "src1", GetNameString(operands[0]), "src2",
-                           GetNameString(operands[1]));
-        break;
-    }
-    case IROpcode::VPackedEqualByte: {
-        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vpeqbyte", "src1", GetNameString(operands[0]), "src2",
-                           GetNameString(operands[1]));
-        break;
-    }
-    case IROpcode::VPackedEqualWord: {
-        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vpeqword", "src1", GetNameString(operands[0]), "src2",
-                           GetNameString(operands[1]));
-        break;
-    }
-    case IROpcode::VPackedEqualDWord: {
-        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vpeqdword", "src1", GetNameString(operands[0]), "src2",
-                           GetNameString(operands[1]));
-        break;
-    }
-    case IROpcode::VPackedEqualQWord: {
-        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vpeqqword", "src1", GetNameString(operands[0]), "src2",
-                           GetNameString(operands[1]));
-        break;
-    }
-    case IROpcode::VPackedShuffleDWord: {
-        ret += fmt::format("{} <- vpshufdword({}, 0x{:x})", name, operands[0], (u8)immediate_data);
-        break;
-    }
-    case IROpcode::VPackedMinByte: {
-        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vpminbyte", "src1", GetNameString(operands[0]), "src2",
-                           GetNameString(operands[1]));
-        break;
-    }
-    case IROpcode::VPackedSubByte: {
-        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vpsubbyte", "src1", GetNameString(operands[0]), "src2",
-                           GetNameString(operands[1]));
-        break;
-    }
-    case IROpcode::VMoveByteMask: {
-        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vmovbytemask", "src", GetNameString(operands[0]));
         break;
     }
     case IROpcode::VExtractInteger: {
@@ -1176,26 +1171,6 @@ std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands,
     }
     case IROpcode::VInsertInteger: {
         ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vinsertint", "vector", GetNameString(operands[0]), "integer",
-                           GetNameString(operands[1]));
-        break;
-    }
-    case IROpcode::VUnpackByteLow: {
-        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vunpackbytelow", "src1", GetNameString(operands[0]), "src2",
-                           GetNameString(operands[1]));
-        break;
-    }
-    case IROpcode::VUnpackWordLow: {
-        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vunpackwordlow", "src1", GetNameString(operands[0]), "src2",
-                           GetNameString(operands[1]));
-        break;
-    }
-    case IROpcode::VUnpackDWordLow: {
-        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vunpackdwordlow", "src1", GetNameString(operands[0]), "src2",
-                           GetNameString(operands[1]));
-        break;
-    }
-    case IROpcode::VUnpackQWordLow: {
-        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vunpackqwordlow", "src1", GetNameString(operands[0]), "src2",
                            GetNameString(operands[1]));
         break;
     }

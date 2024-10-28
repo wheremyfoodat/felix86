@@ -4,7 +4,6 @@
 #include <stdlib.h>
 #include <sys/random.h>
 #include "felix86/backend/disassembler.hpp"
-#include "felix86/common/print.hpp"
 #include "felix86/emulator.hpp"
 #include "felix86/frontend/frontend.hpp"
 #include "felix86/ir/passes/passes.hpp"
@@ -213,7 +212,14 @@ void* Emulator::compileFunction(u64 rip) {
 
     AllocationMap allocations = ir_graph_coloring_pass(backend_function);
 
+    // Remove unnecessary vector state instructions and add ones needed before stores
+    PassManager::VectorStatePass(&backend_function);
+
     auto [func, size] = backend.EmitFunction(backend_function, allocations);
+
+    if (config.print_blocks) {
+        fmt::print("Backend function IR:\n{}\n", backend_function.Print());
+    }
 
     if (config.print_disassembly) {
         fmt::print("Disassembly of function at 0x{:X}:\n", rip);

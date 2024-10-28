@@ -45,6 +45,36 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         break;
     }
 
+    case IROpcode::SetVectorStateFloat: {
+        EmitSetVectorStateFloat(backend);
+        break;
+    }
+
+    case IROpcode::SetVectorStateDouble: {
+        EmitSetVectorStateDouble(backend);
+        break;
+    }
+
+    case IROpcode::SetVectorStatePackedByte: {
+        EmitSetVectorStatePackedByte(backend);
+        break;
+    }
+
+    case IROpcode::SetVectorStatePackedWord: {
+        EmitSetVectorStatePackedWord(backend);
+        break;
+    }
+
+    case IROpcode::SetVectorStatePackedDWord: {
+        EmitSetVectorStatePackedDWord(backend);
+        break;
+    }
+
+    case IROpcode::SetVectorStatePackedQWord: {
+        EmitSetVectorStatePackedQWord(backend);
+        break;
+    }
+
     case IROpcode::GetThreadStatePointer: {
         // Do nothing, ThreadStatePointer is already in a register
         // This static assert serves as a reminder in case something is changed and this is no longer true
@@ -123,7 +153,7 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
     }
 
     case IROpcode::ReadXmmWordRelative: {
-        UNIMPLEMENTED();
+        EmitReadXmmWordRelative(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData(), inst.GetCurrentState());
         break;
     }
 
@@ -148,7 +178,7 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
     }
 
     case IROpcode::WriteXmmWordRelative: {
-        UNIMPLEMENTED();
+        EmitWriteXmmWordRelative(backend, _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)), inst.GetImmediateData(), inst.GetCurrentState());
         break;
     }
 
@@ -207,7 +237,7 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
     }
 
     case IROpcode::ReadXmmWord: {
-        EmitReadXmmWord(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)));
+        EmitReadXmmWord(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetCurrentState());
         break;
     }
 
@@ -671,12 +701,37 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
     }
 
     case IROpcode::WriteXmmWord: {
-        EmitWriteXmmWord(backend, _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        EmitWriteXmmWord(backend, _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)), inst.GetCurrentState());
         break;
     }
 
-    case IROpcode::VPackedShuffleDWord: {
-        EmitVPackedShuffleDWord(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData());
+    case IROpcode::SetVMask: {
+        EmitSetVMask(backend, _Reg_(inst.GetOperand(0)));
+        break;
+    }
+
+    case IROpcode::VIota: {
+        EmitVIota(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VGather: {
+        EmitVGather(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)), _Reg_(inst.GetOperand(2)), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VSplat: {
+        EmitVSplat(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)));
+        break;
+    }
+
+    case IROpcode::VSplati: {
+        EmitVSplati(backend, _Reg_(inst.GetName()), inst.GetImmediateData());
+        break;
+    }
+
+    case IROpcode::VMergei: {
+        EmitVMergei(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData());
         break;
     }
 
@@ -695,93 +750,28 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         break;
     }
 
-    case IROpcode::VPackedShr: {
-        EmitVPackedShr(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+    case IROpcode::VSub: {
+        EmitVSub(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
         break;
     }
 
-    case IROpcode::VShl: {
-        EmitVShl(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+    case IROpcode::VAdd: {
+        EmitVAdd(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
         break;
     }
 
-    case IROpcode::VUnpackByteLow: {
-        EmitVUnpackByteLow(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+    case IROpcode::VEqual: {
+        EmitVEqual(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)), inst.GetMask());
         break;
     }
 
-    case IROpcode::VUnpackWordLow: {
-        EmitVUnpackWordLow(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+    case IROpcode::VSlli: {
+        EmitVSlli(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData(), inst.GetMask());
         break;
     }
 
-    case IROpcode::VUnpackDWordLow: {
-        EmitVUnpackDWordLow(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
-        break;
-    }
-
-    case IROpcode::VUnpackQWordLow: {
-        EmitVUnpackQWordLow(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
-        break;
-    }
-
-    case IROpcode::VPackedSubByte: {
-        EmitVPackedSubByte(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
-        break;
-    }
-
-    case IROpcode::VPackedAddByte: {
-        EmitVPackedAddByte(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
-        break;
-    }
-
-    case IROpcode::VPackedAddWord: {
-        EmitVPackedAddWord(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
-        break;
-    }
-
-    case IROpcode::VPackedAddDWord: {
-        EmitVPackedAddDWord(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
-        break;
-    }
-
-    case IROpcode::VPackedAddQWord: {
-        EmitVPackedAddQWord(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
-        break;
-    }
-
-    case IROpcode::VPackedEqualByte: {
-        EmitVPackedEqualByte(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
-        break;
-    }
-
-    case IROpcode::VPackedEqualWord: {
-        EmitVPackedEqualWord(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
-        break;
-    }
-
-    case IROpcode::VPackedEqualDWord: {
-        EmitVPackedEqualDWord(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
-        break;
-    }
-
-    case IROpcode::VPackedEqualQWord: {
-        EmitVPackedEqualQWord(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
-        break;
-    }
-
-    case IROpcode::VPackedMinByte: {
-        EmitVPackedMinByte(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
-        break;
-    }
-
-    case IROpcode::VMoveByteMask: {
-        EmitVMoveByteMask(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)));
-        break;
-    }
-
-    case IROpcode::VZext64: {
-        EmitVZext64(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)));
+    case IROpcode::VSrai: {
+        EmitVSrai(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData(), inst.GetMask());
         break;
     }
     }
