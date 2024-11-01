@@ -62,3 +62,19 @@ Set `BUILD_TESTS` to 1/ON/whatever CMake recognizes as truthy.
 Run `felix86_test` to run every test, or `felix86_test "the test name"` to run a specific test.
 
 Also try `felix86_test --help`, it uses Catch2.
+
+## Specifying available extensions
+felix86 will use linux's riscv_hwprobe syscall to try to find the available RISC-V extensions.
+
+However, that syscall doesn't allow for probing all extensions one might want to use.
+Notably, it doesn't check for `Zabha`, `Zam` and `XTheadCondMov`, all of which felix86 can use if available.
+
+You can tell felix86 that you have these extensions using either the command line option `--extensions` or the environment variable `FELIX86_EXTENSIONS`.
+
+These two take a comma separated list of extensions like this:
+`zicond,xtheadcondmov,zabha`
+
+There are cases where you might want to override which extensions are available entirely. For example, if your board has `g,c,v,zicond` you might want felix86 to only use
+the `g,c,v` extensions. This can be achieved with either the command line option `--all-extensions` or the environment variable `FELIX86_ALL_EXTENSIONS`.
+
+felix86 requires `g` and `v` with vlen of at least 128.

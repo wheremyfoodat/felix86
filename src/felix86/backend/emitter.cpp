@@ -954,10 +954,10 @@ void Emitter::EmitSelect(Backend& backend, biscuit::GPR Rd, biscuit::GPR Conditi
     ASSERT(RsTrue != RsFalse);
     if (Extensions::Xtheadcondmov) {
         if (Rd != RsTrue) {
-            AS.MV(Rd, RsFalse);
+            if (Rd != RsFalse)
+                AS.MV(Rd, RsFalse);
             AS.TH_MVNEZ(Rd, RsTrue, Condition);
         } else {
-            AS.MV(Rd, RsTrue);
             AS.TH_MVEQZ(Rd, RsFalse, Condition);
         }
     } else if (Extensions::Zicond) {

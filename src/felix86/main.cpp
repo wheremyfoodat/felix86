@@ -28,9 +28,9 @@ static struct argp_option options[] = {
     {"extensions", 'x', "EXTENSIONS", 0,
      "Manually specify additional available RISC-V extensions, in addition to the ones detected. Useful because some extensions might not be "
      "detectable. Usage example: -e zacas,xtheadcondmov"},
-    {"absolute-extensions", 'X', "EXTENSIONS", 0,
+    {"all-extensions", 'X', "EXTENSIONS", 0,
      "Manually specify every available RISC-V extension. When using this, any extension not specified will be considered unavailable. "
-     "Eg: -e g,c,v,b,zacas"},
+     "Usage example: -e g,c,v,b,zacas"},
 
     {0}};
 

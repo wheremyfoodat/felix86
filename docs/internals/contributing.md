@@ -2,19 +2,23 @@
 
 Contributions are welcome!
 
-## Reporting bugs
-Please [open an issue](https://github.com/OFFTKP/felix86/issues/new) if you find a bug.
-Explain what executable you tried to use and what you did.
-
-A verbose log is appreciated. Run felix86 with the `-v` flag, redirect its output to a file and attach it to your issue.
-E.g: `./felix86 -v <other args here> > out.txt`
-
 ## Testing
-Running the test suite or programs on hardware is appreciated since proper RISC-V hardware with all the necessary extensions is scarce at the moment.
+You can contribute by testing felix86 and reporting bugs.
+
+Running the test suite or programs on RISC-V hardware is appreciated since proper RISC-V hardware with all the necessary extensions is scarce at the moment.
 
 You need a board with the RV64GCV ISA and at least 128-bit vector length.
 
 You can also test on Qemu. See [how to use](./../how-to-use.md).
+
+### Reporting bugs
+Please [open an issue](https://github.com/OFFTKP/felix86/issues/new) if you find a bug.
+Mention what x86-64 executable you tried to emulate and what you did.
+
+A verbose log is appreciated. Run felix86 with the `-V` flag, redirect its output to a file and attach it to your issue.
+E.g: `./felix86 -V <other args here> > out.txt`
+
+You may also need to enable strace. Use the `-t` flag to do so.
 
 ## Coding
 There are no strict coding guidelines. [Some recommendations exist](./conventions.md).
