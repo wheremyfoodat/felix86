@@ -212,21 +212,20 @@ std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, con
             ERROR("Block not found");
         }
 
-        u8* cursor = as.GetCursorPointer();
+        ptrdiff_t cursor = as.GetCodeBuffer().GetCursorOffset();
         as.RewindBuffer(jump.location);
         Emitter::EmitJump(*this, &block_map[jump.target]);
-        as.GetCodeBuffer().SetCursor(cursor);
+        as.AdvanceBuffer(cursor);
     }
 
     for (const ConditionalJump& jump : conditional_jumps) {
         ASSERT(block_map.find(jump.target_true) != block_map.end());
         ASSERT(block_map.find(jump.target_false) != block_map.end());
 
-        u8* cursor = as.GetCursorPointer();
+        ptrdiff_t cursor = as.GetCodeBuffer().GetCursorOffset();
         as.RewindBuffer(jump.location);
-
         Emitter::EmitJumpConditional(*this, jump.allocation.AsGPR(), &block_map[jump.target_true], &block_map[jump.target_false]);
-        as.GetCodeBuffer().SetCursor(cursor);
+        as.AdvanceBuffer(cursor);
     }
 
     void* end = as.GetCursorPointer();

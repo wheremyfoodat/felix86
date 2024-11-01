@@ -59,9 +59,7 @@ public:
     ~CodeBuffer() noexcept;
 
     /// Returns whether or not the memory is managed by the code buffer.
-    [[nodiscard]] bool IsManaged() const noexcept {
-        return m_is_managed;
-    }
+    [[nodiscard]] bool IsManaged() const noexcept { return m_is_managed; }
 
     /// Retrieves the current cursor position within the buffer.
     [[nodiscard]] ptrdiff_t GetCursorOffset() const noexcept {
@@ -90,14 +88,16 @@ public:
 
     /// Retrieves the pointer to an arbitrary location within the buffer.
     [[nodiscard]] uint8_t* GetOffsetPointer(ptrdiff_t offset) noexcept {
-        // BISCUIT_ASSERT(offset >= 0 && offset <= GetCursorOffset());
-        return m_buffer + offset;
+        auto pointer = m_buffer + offset;
+        BISCUIT_ASSERT(pointer >= m_buffer && pointer <= m_buffer + m_capacity);
+        return pointer;
     }
 
     /// Retrieves the pointer to an arbitrary location within the buffer.
     [[nodiscard]] const uint8_t* GetOffsetPointer(ptrdiff_t offset) const noexcept {
-        // BISCUIT_ASSERT(offset >= 0 && offset <= GetCursorOffset());
-        return m_buffer + offset;
+        auto pointer = m_buffer + offset;
+        BISCUIT_ASSERT(pointer >= m_buffer && pointer <= m_buffer + m_capacity);
+        return pointer;
     }
 
     /**
@@ -118,10 +118,17 @@ public:
     }
 
     /**
-     * Set the cursor to some arbitrary location
+     * Allows advancing of the code buffer cursor.
+     * 
+     * @param offset The offset to advance the cursor by.
+     *
+     * @note The offset may not be smaller than the current cursor offset 
+     *       and may not be larger than the current buffer capacity.
      */
-    void SetCursor(uint8_t* cursor) noexcept {
-        m_cursor = cursor;
+    void AdvanceCursor(ptrdiff_t offset) noexcept {
+        auto* forward = m_buffer + offset;
+        BISCUIT_ASSERT(m_cursor <= forward && forward <= m_buffer + m_capacity);
+        m_cursor = forward;
     }
 
     /**
@@ -170,7 +177,8 @@ public:
      */
     template <typename T>
     void Emit(T value) noexcept {
-        static_assert(std::is_trivially_copyable_v<T>, "It's undefined behavior to memcpy a non-trivially-copyable type.");
+        static_assert(std::is_trivially_copyable_v<T>,
+                      "It's undefined behavior to memcpy a non-trivially-copyable type.");
         BISCUIT_ASSERT(HasSpaceFor(sizeof(T)));
 
         std::memcpy(m_cursor, &value, sizeof(T));
