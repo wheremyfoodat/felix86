@@ -92,8 +92,6 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         u32 spill_offset = inst.GetImmediateData();
         if (Rd.IsGPR()) {
             EmitLoadSpill(backend, Rd.AsGPR(), spill_offset);
-        } else if (Rd.IsFPR()) {
-            EmitLoadSpill(backend, Rd.AsFPR(), spill_offset);
         } else if (Rd.IsVec()) {
             EmitLoadSpill(backend, Rd.AsVec(), spill_offset);
         } else {
@@ -107,8 +105,6 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         u32 spill_offset = inst.GetImmediateData();
         if (Rs.IsGPR()) {
             EmitStoreSpill(backend, Rs.AsGPR(), spill_offset);
-        } else if (Rs.IsFPR()) {
-            EmitStoreSpill(backend, Rs.AsFPR(), spill_offset);
         } else if (Rs.IsVec()) {
             EmitStoreSpill(backend, Rs.AsVec(), spill_offset);
         } else {
@@ -122,8 +118,6 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         auto Rs = _Reg_(inst.GetOperand(0));
         if (Rd.IsGPR() && Rs.IsGPR()) {
             EmitMov(backend, Rd.AsGPR(), Rs.AsGPR());
-        } else if (Rd.IsFPR() && Rs.IsFPR()) {
-            EmitMov(backend, Rd.AsFPR(), Rs.AsFPR());
         } else if (Rd.IsVec() && Rs.IsVec()) {
             EmitMov(backend, Rd.AsVec(), Rs.AsVec());
         } else {
@@ -153,7 +147,7 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
     }
 
     case IROpcode::ReadXmmWordRelative: {
-        EmitReadXmmWordRelative(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData(), inst.GetCurrentState());
+        EmitReadXmmWordRelative(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData(), inst.GetVectorState());
         break;
     }
 
@@ -178,7 +172,7 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
     }
 
     case IROpcode::WriteXmmWordRelative: {
-        EmitWriteXmmWordRelative(backend, _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)), inst.GetImmediateData(), inst.GetCurrentState());
+        EmitWriteXmmWordRelative(backend, _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)), inst.GetImmediateData(), inst.GetVectorState());
         break;
     }
 
@@ -237,7 +231,7 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
     }
 
     case IROpcode::ReadXmmWord: {
-        EmitReadXmmWord(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetCurrentState());
+        EmitReadXmmWord(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetVectorState());
         break;
     }
 
@@ -701,7 +695,7 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
     }
 
     case IROpcode::WriteXmmWord: {
-        EmitWriteXmmWord(backend, _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)), inst.GetCurrentState());
+        EmitWriteXmmWord(backend, _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)), inst.GetVectorState());
         break;
     }
 
@@ -730,6 +724,11 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         break;
     }
 
+    case IROpcode::VMerge: {
+        EmitVMerge(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
     case IROpcode::VMergei: {
         EmitVMergei(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData());
         break;
@@ -747,6 +746,11 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
 
     case IROpcode::VXor: {
         EmitVXor(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::VXori: {
+        EmitVXori(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData());
         break;
     }
 
@@ -772,6 +776,61 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
 
     case IROpcode::VSrai: {
         EmitVSrai(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData(), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VSlideDowni: {
+        EmitVSlideDowni(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData(), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VSlideUpi: {
+        EmitVSlideUpi(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetImmediateData(), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VFAdd: {
+        EmitVFAdd(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::VFSub: {
+        EmitVFSub(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::VFMul: {
+        EmitVFMul(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::VFDiv: {
+        EmitVFDiv(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::VFSqrt: {
+        EmitVFSqrt(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)));
+        break;
+    }
+
+    case IROpcode::VFRcp: {
+        EmitVFRcp(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)));
+        break;
+    }
+
+    case IROpcode::VFRcpSqrt: {
+        EmitVFRcpSqrt(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)));
+        break;
+    }
+
+    case IROpcode::VFMin: {
+        EmitVFMin(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::VFMax: {
+        EmitVFMax(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
         break;
     }
     }

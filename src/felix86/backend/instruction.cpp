@@ -5,12 +5,11 @@ BackendInstruction BackendInstruction::FromSSAInstruction(const SSAInstruction* 
     backend_inst.opcode = inst->GetOpcode();
     backend_inst.name = inst->GetName();
     backend_inst.immediate_data = inst->GetImmediateData();
-    backend_inst.mask = inst->GetMask();
+    backend_inst.masked = inst->GetMasked();
+    backend_inst.vector_state = inst->GetVectorState();
 
     if (inst->IsGPR()) {
         backend_inst.desired_type = AllocationType::GPR;
-    } else if (inst->IsFPR()) {
-        backend_inst.desired_type = AllocationType::FPR;
     } else if (inst->IsVec()) {
         backend_inst.desired_type = AllocationType::Vec;
     } else if (inst->IsVoid()) {

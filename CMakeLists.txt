@@ -7,6 +7,7 @@ if (NOT CMAKE_BUILD_TYPE)
 endif()
 
 set(BISCUIT_CODE_BUFFER_MMAP ON)
+set(BUILD_TESTING OFF)
 add_subdirectory(external/biscuit)
 # add_subdirectory(external/plog)
 add_subdirectory(external/Catch2)
@@ -51,6 +52,7 @@ set(FELIX86_IR_SOURCES
     src/felix86/ir/passes/dead_code_elimination_pass.cpp
     src/felix86/ir/passes/extraneous_writeback_pass.cpp
     src/felix86/ir/passes/graph_coloring_pass.cpp
+    src/felix86/ir/passes/immediate_transformation_pass.cpp
     src/felix86/ir/passes/local_cse_pass.cpp
     src/felix86/ir/passes/peephole_pass.cpp
     src/felix86/ir/passes/ssa_pass.cpp
@@ -111,13 +113,14 @@ target_link_libraries(felix86 PRIVATE felix86_core)
 
 if (BUILD_TESTS)
     set(FELIX86_TEST_SOURCES
-        tests/FEX/common.cpp
+        tests/common.cpp
         tests/FEX/fex_test_loader.cpp
         tests/FEX/primary.cpp
         tests/FEX/primary_group.cpp
         tests/FEX/op_size.cpp
         tests/FEX/secondary.cpp
-        tests/FEX/twobyte.cpp
+        tests/FEX/rep.cpp
+        tests/FEX/two_byte.cpp
         tests/FEX/felix86_bugs.cpp
     )
 

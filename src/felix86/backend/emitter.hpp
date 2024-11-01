@@ -9,8 +9,9 @@ struct Backend;
 
 struct Emitter {
     static void Emit(Backend& backend, const AllocationMap& allocations, const BackendInstruction& instruction);
-    static void EmitJump(Backend& backend, void* target);
-    static void EmitJumpConditional(Backend& backend, biscuit::GPR condition, void* target_true, void* target_false);
+    static void EmitJumpFar(Backend& backend, void* target);
+    static void EmitJump(Backend& backend, Label* target);
+    static void EmitJumpConditional(Backend& backend, biscuit::GPR condition, Label* target_true, Label* target_false);
     static void EmitSetExitReason(Backend&, u64);
     static void EmitPushAllCallerSaved(Backend&);
     static void EmitPopAllCallerSaved(Backend&);
@@ -18,13 +19,10 @@ struct Emitter {
 private:
     static void EmitCallHostFunction(Backend&, u64);
     static void EmitMov(Backend&, biscuit::GPR, biscuit::GPR);
-    static void EmitMov(Backend&, biscuit::FPR, biscuit::FPR);
     static void EmitMov(Backend&, biscuit::Vec, biscuit::Vec);
     static void EmitStoreSpill(Backend&, biscuit::GPR, u32);
-    static void EmitStoreSpill(Backend&, biscuit::FPR, u32);
     static void EmitStoreSpill(Backend&, biscuit::Vec, u32);
     static void EmitLoadSpill(Backend&, biscuit::GPR, u32);
-    static void EmitLoadSpill(Backend&, biscuit::FPR, u32);
     static void EmitLoadSpill(Backend&, biscuit::Vec, u32);
     static void EmitImmediate(Backend&, biscuit::GPR, u64);
     static void EmitRdtsc(Backend&);
@@ -144,6 +142,7 @@ private:
     static void EmitVAnd(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
     static void EmitVOr(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
     static void EmitVXor(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
+    static void EmitVXori(Backend&, biscuit::Vec, biscuit::Vec, u64);
     static void EmitVSub(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
     static void EmitVAdd(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
     static void EmitVEqual(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec, VecMask);
@@ -151,7 +150,19 @@ private:
     static void EmitVGather(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec, biscuit::Vec, VecMask);
     static void EmitVSplat(Backend&, biscuit::Vec, biscuit::GPR);
     static void EmitVSplati(Backend&, biscuit::Vec, u64);
+    static void EmitVMerge(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
     static void EmitVMergei(Backend&, biscuit::Vec, biscuit::Vec, u64);
     static void EmitVSlli(Backend&, biscuit::Vec, biscuit::Vec, u64, VecMask);
     static void EmitVSrai(Backend&, biscuit::Vec, biscuit::Vec, u64, VecMask);
+    static void EmitVSlideUpi(Backend&, biscuit::Vec, biscuit::Vec, u64, VecMask);
+    static void EmitVSlideDowni(Backend&, biscuit::Vec, biscuit::Vec, u64, VecMask);
+    static void EmitVFAdd(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
+    static void EmitVFSub(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
+    static void EmitVFMul(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
+    static void EmitVFDiv(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
+    static void EmitVFSqrt(Backend&, biscuit::Vec, biscuit::Vec);
+    static void EmitVFRcp(Backend&, biscuit::Vec, biscuit::Vec);
+    static void EmitVFRcpSqrt(Backend&, biscuit::Vec, biscuit::Vec);
+    static void EmitVFMin(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
+    static void EmitVFMax(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
 };

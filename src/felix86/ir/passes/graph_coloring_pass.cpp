@@ -132,12 +132,6 @@ static bool should_consider_gpr(const InstructionMap& map, u32 inst) {
     return instruction->GetDesiredType() == AllocationType::GPR && !reserved_gpr(*instruction);
 }
 
-static bool should_consider_fpr(const InstructionMap& map, u32 inst) {
-    ASSERT_MSG(map.find(inst) != map.end(), "Instruction not found in map");
-    const BackendInstruction* instruction = map.at(inst).inst;
-    return instruction->GetDesiredType() == AllocationType::FPR;
-}
-
 static bool should_consider_vec(const InstructionMap& map, u32 inst) {
     ASSERT_MSG(map.find(inst) != map.end(), "Instruction not found in map");
     const BackendInstruction* instruction = map.at(inst).inst;
@@ -146,6 +140,10 @@ static bool should_consider_vec(const InstructionMap& map, u32 inst) {
 
 static void spill(BackendFunction& function, u32 node, u32 location, AllocationType spill_type) {
     VERBOSE("Spilling %s", GetNameString(node).c_str());
+    g_spilled_count += 1;
+    if (g_spilled_count > 5) {
+        WARN("Function %016lx has spilled %d times", function.GetStartAddress(), g_spilled_count);
+    }
     for (BackendBlock& block : function.GetBlocks()) {
         auto it = block.GetInstructions().begin();
         while (it != block.GetInstructions().end()) {
@@ -306,6 +304,7 @@ static u32 choose(const InstructionMap& instructions, const std::deque<Node>& no
 
 static AllocationMap run(BackendFunction& function, AllocationType type, bool (*should_consider)(const InstructionMap&, u32),
                          const std::vector<u32>& available_colors, u32& spill_location) {
+    g_spilled_count = 0;
     const u32 k = available_colors.size();
     while (true) {
         // Chaitin-Briggs algorithm
@@ -397,13 +396,9 @@ AllocationMap ir_graph_coloring_pass(BackendFunction& function) {
     AllocationMap allocations;
     u32 spill_location = 0;
 
-    std::vector<u32> available_gprs, available_fprs, available_vecs;
+    std::vector<u32> available_gprs, available_vecs;
     for (auto& gpr : Registers::GetAllocatableGPRs()) {
         available_gprs.push_back(gpr.Index());
-    }
-
-    for (auto& fpr : Registers::GetAllocatableFPRs()) {
-        available_fprs.push_back(fpr.Index());
     }
 
     for (auto& vec : Registers::GetAllocatableVecs()) {
@@ -411,16 +406,11 @@ AllocationMap ir_graph_coloring_pass(BackendFunction& function) {
     }
 
     AllocationMap gpr_map = run(function, AllocationType::GPR, should_consider_gpr, available_gprs, spill_location);
-    AllocationMap fpr_map = run(function, AllocationType::FPR, should_consider_fpr, available_fprs, spill_location);
     AllocationMap vec_map = run(function, AllocationType::Vec, should_consider_vec, available_vecs, spill_location);
 
     // Merge the maps
     for (auto& [name, allocation] : gpr_map) {
         allocations.Allocate(name, biscuit::GPR(allocation));
-    }
-
-    for (auto& [name, allocation] : fpr_map) {
-        allocations.Allocate(name, biscuit::FPR(allocation));
     }
 
     for (auto& [name, allocation] : vec_map) {

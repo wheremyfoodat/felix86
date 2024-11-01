@@ -41,6 +41,7 @@ consteval int match_host(int syscall) {
 #include "felix86/hle/syscalls_common.inc"
 #undef X
     default:
+        ERROR("Host syscall not found: %d", syscall);
         return -1;
     }
 #undef X
@@ -145,6 +146,11 @@ void felix86_syscall(Emulator* emulator, ThreadState* state) {
         STRACE("rseq(...) = %016lx", result);
         break;
     }
+    case felix86_x86_64_time: {
+        result = ::time((time_t*)rdi);
+        STRACE("time(%p) = %016lx", (void*)rdi, result);
+        break;
+    }
     case felix86_x86_64_prlimit64: {
         result = HOST_SYSCALL(prlimit64, rdi, rsi, rdx, r10);
         STRACE("prlimit64(%016lx, %016lx, %016lx, %016lx) = %016lx", rdi, rsi, rdx, r10, result);
@@ -169,6 +175,10 @@ void felix86_syscall(Emulator* emulator, ThreadState* state) {
         ERROR("Unimplemented syscall %s (%016lx)", print_syscall_name(syscall_number), syscall_number);
         break;
     }
+    }
+
+    if (result == -1) {
+        result = -errno;
     }
 
     state->SetGpr(X86_REF_RAX, result);

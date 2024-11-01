@@ -187,7 +187,7 @@ void* Emulator::compileFunction(u64 rip) {
     PassManager::SSAPass(&function);
     PassManager::DeadCodeEliminationPass(&function);
 
-    if (config.optimize) {
+    if (!g_dont_optimize) {
         bool changed = false;
         do {
             changed = false;
@@ -196,11 +196,12 @@ void* Emulator::compileFunction(u64 rip) {
             changed |= PassManager::CopyPropagationPass(&function);
             changed |= PassManager::DeadCodeEliminationPass(&function);
         } while (changed);
+        PassManager::ImmediateTransformationPass(&function);
     }
 
     PassManager::CriticalEdgeSplittingPass(&function);
 
-    if (config.print_blocks) {
+    if (g_print_blocks) {
         fmt::print("{}", function.Print({}));
     }
 
@@ -217,11 +218,11 @@ void* Emulator::compileFunction(u64 rip) {
 
     auto [func, size] = backend.EmitFunction(backend_function, allocations);
 
-    if (config.print_blocks) {
+    if (g_print_blocks) {
         fmt::print("Backend function IR:\n{}\n", backend_function.Print());
     }
 
-    if (config.print_disassembly) {
+    if (g_print_disassembly) {
         fmt::print("Disassembly of function at 0x{:X}:\n", rip);
         fmt::print("{}\n", Disassembler::Disassemble(func, size));
         fflush(stdout);

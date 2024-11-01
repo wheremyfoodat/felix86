@@ -4,6 +4,8 @@
 #include "felix86/ir/block.hpp"
 
 struct IREmitter {
+    using VectorFunc = SSAInstruction* (*)(IREmitter&, SSAInstruction*, SSAInstruction*, VectorState);
+
     IREmitter(IRBlock& block, u64 address) : block(&block), current_address(address) {}
 
     void Exit() {
@@ -42,11 +44,11 @@ struct IREmitter {
     SSAInstruction* GetFlagNot(x86_ref_e flag);
     void SetFlag(SSAInstruction* value, x86_ref_e flag);
 
-    SSAInstruction* GetRm(const x86_operand_t& operand);
-    void SetRm(const x86_operand_t& operand, SSAInstruction* value);
+    SSAInstruction* GetRm(const x86_operand_t& operand, VectorState vector_state = VectorState::Null);
+    void SetRm(const x86_operand_t& operand, SSAInstruction* value, VectorState vector_state = VectorState::Null);
 
-    SSAInstruction* ReadMemory(SSAInstruction* address, x86_size_e size);
-    void WriteMemory(SSAInstruction* address, SSAInstruction* value, x86_size_e size);
+    SSAInstruction* ReadMemory(SSAInstruction* address, x86_size_e size, VectorState vector_state = VectorState::Null);
+    void WriteMemory(SSAInstruction* address, SSAInstruction* value, x86_size_e size, VectorState vector_state = VectorState::Null);
 
     SSAInstruction* LoadGuestFromMemory(x86_ref_e ref);
     void StoreGuestToMemory(SSAInstruction* value, x86_ref_e ref);
@@ -104,23 +106,34 @@ struct IREmitter {
     SSAInstruction* AmoXor(SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size);
     SSAInstruction* AmoSwap(SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size);
     SSAInstruction* AmoCAS(SSAInstruction* address, SSAInstruction* expected, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size);
-    SSAInstruction* VIota(SSAInstruction* mask, VecMask masked = VecMask::No);
-    SSAInstruction* VSplat(SSAInstruction* value);
-    SSAInstruction* VSplati(u64 imm);
-    SSAInstruction* VMergei(u64 true_imm, SSAInstruction* false_value);
-    SSAInstruction* VZero();
-    SSAInstruction* VGather(SSAInstruction* dest, SSAInstruction* source, SSAInstruction* iota, VecMask masked = VecMask::No);
-    SSAInstruction* VEqual(SSAInstruction* lhs, SSAInstruction* rhs, VecMask masked = VecMask::No);
-    SSAInstruction* VSlli(SSAInstruction* value, u8 shift, VecMask masked = VecMask::No);
-    SSAInstruction* VSrai(SSAInstruction* value, u8 shift, VecMask masked = VecMask::No);
-    SSAInstruction* VAdd(SSAInstruction* lhs, SSAInstruction* rhs);
-    SSAInstruction* VSub(SSAInstruction* lhs, SSAInstruction* rhs);
-    SSAInstruction* VAnd(SSAInstruction* lhs, SSAInstruction* rhs);
-    SSAInstruction* VOr(SSAInstruction* lhs, SSAInstruction* rhs);
-    SSAInstruction* VXor(SSAInstruction* lhs, SSAInstruction* rhs);
+    SSAInstruction* VIota(SSAInstruction* mask, VectorState state);
+    SSAInstruction* VSplat(SSAInstruction* value, VectorState state);
+    SSAInstruction* VSplati(u64 imm, VectorState state);
+    SSAInstruction* VMerge(SSAInstruction* true_value, SSAInstruction* false_value, VectorState state);
+    SSAInstruction* VMergei(u64 true_imm, SSAInstruction* false_value, VectorState state);
+    SSAInstruction* VZero(VectorState state);
+    SSAInstruction* VGather(SSAInstruction* dest, SSAInstruction* source, SSAInstruction* iota, VectorState state, VecMask masked = VecMask::No);
+    SSAInstruction* VEqual(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
+    SSAInstruction* VSlli(SSAInstruction* value, u8 shift, VectorState state);
+    SSAInstruction* VSrai(SSAInstruction* value, u8 shift, VectorState state);
+    SSAInstruction* VSlideUpi(SSAInstruction* value, u8 shift, VectorState state);
+    SSAInstruction* VSlideDowni(SSAInstruction* value, u8 shift, VectorState state);
+    SSAInstruction* VZext(SSAInstruction* value, x86_size_e size);
+    SSAInstruction* VAdd(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
+    SSAInstruction* VSub(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
+    SSAInstruction* VAnd(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
+    SSAInstruction* VOr(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
+    SSAInstruction* VXor(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
+    SSAInstruction* VXori(SSAInstruction* lhs, i64 imm, VectorState state);
+    SSAInstruction* VFSqrt(SSAInstruction* value, VectorState state);
+    SSAInstruction* VFRcpSqrt(SSAInstruction* value, VectorState state);
+    SSAInstruction* VFRcp(SSAInstruction* value, VectorState state);
+    SSAInstruction* VFMul(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
+    SSAInstruction* VFDiv(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
+    SSAInstruction* VFSub(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
     SSAInstruction* VInsertInteger(SSAInstruction* integer, SSAInstruction* vector, u8 index, x86_size_e size);
-    SSAInstruction* IToV(SSAInstruction* value);
-    SSAInstruction* VToI(SSAInstruction* value);
+    SSAInstruction* IToV(SSAInstruction* value, VectorState state);
+    SSAInstruction* VToI(SSAInstruction* value, VectorState state);
     SSAInstruction* Lea(const x86_operand_t& operand);
     SSAInstruction* GetFlags();
     SSAInstruction* IsZero(SSAInstruction* value, x86_size_e size);
@@ -134,12 +147,6 @@ struct IREmitter {
     SSAInstruction* IsAuxSub(SSAInstruction* source1, SSAInstruction* source2);
     SSAInstruction* IsOverflowSub(SSAInstruction* source1, SSAInstruction* source2, SSAInstruction* result, x86_size_e size_e);
     SSAInstruction* GetThreadStatePointer();
-    void SetVectorStateFloat();
-    void SetVectorStateDouble();
-    void SetVectorStatePackedByte();
-    void SetVectorStatePackedWord();
-    void SetVectorStatePackedDWord();
-    void SetVectorStatePackedQWord();
     void Group1(x86_instruction_t* inst);
     void Group2(x86_instruction_t* inst, SSAInstruction* shift_amount);
     void Group3(x86_instruction_t* inst);
@@ -152,12 +159,20 @@ struct IREmitter {
     void SetExitReason(ExitReason reason);
     void SetFlags(SSAInstruction* flags);
     void SetVMask(SSAInstruction* mask);
+    void Pcmpeq(x86_instruction_t* inst, VectorState state);
+    void Punpckl(x86_instruction_t* inst, VectorState state);
+    void ScalarRegRm(x86_instruction_t* inst, IROpcode opcode, VectorState state);
+    void PackedRegRm(x86_instruction_t* inst, IROpcode opcode, VectorState state);
+    void ScalarRegRm(x86_instruction_t* inst, VectorFunc func, VectorState state);
+    void PackedRegRm(x86_instruction_t* inst, VectorFunc func, VectorState state);
 
     void RepStart(IRBlock* loop_block, IRBlock* exit_block);
     void RepEnd(x86_rep_e rep_type, IRBlock* loop_block, IRBlock* exit_block);
 
     void TerminateJump(IRBlock* target);
     void TerminateJumpConditional(SSAInstruction* cond, IRBlock* target_true, IRBlock* target_false);
+
+    u64 ImmSext(u64 imm, x86_size_e size);
 
     u64 GetCurrentAddress() {
         return current_address;
@@ -193,7 +208,7 @@ private:
     SSAInstruction* readWord(SSAInstruction* address);
     SSAInstruction* readDWord(SSAInstruction* address);
     SSAInstruction* readQWord(SSAInstruction* address);
-    SSAInstruction* readXmmWord(SSAInstruction* address);
+    SSAInstruction* readXmmWord(SSAInstruction* address, VectorState state);
     void setGpr8Low(x86_ref_e reg, SSAInstruction* value);
     void setGpr8High(x86_ref_e reg, SSAInstruction* value);
     void setGpr16(x86_ref_e reg, SSAInstruction* value);
@@ -204,12 +219,12 @@ private:
     void writeWord(SSAInstruction* address, SSAInstruction* value);
     void writeDWord(SSAInstruction* address, SSAInstruction* value);
     void writeQWord(SSAInstruction* address, SSAInstruction* value);
-    void writeXmmWord(SSAInstruction* address, SSAInstruction* value);
+    void writeXmmWord(SSAInstruction* address, SSAInstruction* value, VectorState state);
     SSAInstruction* getSignMask(x86_size_e size);
     SSAInstruction* insertInstruction(IROpcode opcode, std::initializer_list<SSAInstruction*> operands);
     SSAInstruction* insertInstruction(IROpcode opcode, std::initializer_list<SSAInstruction*> operands, u64 immediate);
-    SSAInstruction* insertInstruction(IROpcode opcode, VecMask masked, std::initializer_list<SSAInstruction*> operands);
-    SSAInstruction* insertInstruction(IROpcode opcode, VecMask masked, std::initializer_list<SSAInstruction*> operands, u64 imm);
+    SSAInstruction* insertInstruction(IROpcode opcode, VectorState state, std::initializer_list<SSAInstruction*> operands);
+    SSAInstruction* insertInstruction(IROpcode opcode, VectorState state, std::initializer_list<SSAInstruction*> operands, u64 imm);
 
     void loadPartialState(std::span<const x86_ref_e> refs);
     void storePartialState(std::span<const x86_ref_e> refs);

@@ -52,14 +52,8 @@ void Backend::emitNecessaryStuff() {
     // Save the current register state of callee-saved registers and return address
     as.ADDI(address, a0, offsetof(ThreadState, gpr_storage));
     const auto& saved_gprs = Registers::GetSavedGPRs();
-    const auto& saved_fprs = Registers::GetSavedFPRs();
     for (size_t i = 0; i < saved_gprs.size(); i++) {
         as.SD(saved_gprs[i], i * sizeof(u64), address);
-    }
-
-    as.ADDI(address, address, saved_gprs.size() * sizeof(u64));
-    for (size_t i = 0; i < saved_fprs.size(); i++) {
-        as.FSD(saved_fprs[i], i * sizeof(u64), address);
     }
 
     // Since we picked callee-saved registers, we don't have to save them when calling stuff,
@@ -92,11 +86,6 @@ void Backend::emitNecessaryStuff() {
         as.LD(saved_gprs[i], i * sizeof(u64), address);
     }
 
-    as.ADDI(address, address, saved_gprs.size() * sizeof(u64));
-    for (size_t i = 0; i < saved_fprs.size(); i++) {
-        as.FLD(saved_fprs[i], i * sizeof(u64), address);
-    }
-
     as.RET();
 
     crash_target = as.GetCursorPointer();
@@ -106,11 +95,6 @@ void Backend::emitNecessaryStuff() {
     as.ADDI(address, address, offsetof(ThreadState, gpr_storage));
     for (size_t i = 0; i < saved_gprs.size(); i++) {
         as.LD(saved_gprs[i], i * sizeof(u64), address);
-    }
-
-    as.ADDI(address, address, saved_gprs.size() * sizeof(u64));
-    for (size_t i = 0; i < saved_fprs.size(); i++) {
-        as.FLD(saved_fprs[i], i * sizeof(u64), address);
     }
 
     as.MV(a0, Registers::ThreadStatePointer());
@@ -152,7 +136,7 @@ void Backend::EnterDispatcher(ThreadState* state) {
 
 std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, const AllocationMap& allocations) {
     void* start = as.GetCursorPointer();
-    tsl::robin_map<const BackendBlock*, void*> block_map;
+    tsl::robin_map<const BackendBlock*, Label> block_map;
 
     struct ConditionalJump {
         ptrdiff_t location;
@@ -181,7 +165,7 @@ std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, con
             as.SUB(Registers::StackPointer(), Registers::StackPointer(), t0);
         }
 
-        block_map[block] = as.GetCursorPointer();
+        as.Bind(&block_map[block]);
 
         for (const BackendInstruction& inst : block->GetInstructions()) {
             Emitter::Emit(*this, allocations, inst);
@@ -199,10 +183,7 @@ std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, con
             const BackendBlock* target = &function.GetBlock(block->GetSuccessor(0));
             direct_jumps.push_back({offset, target});
             // Some space for the backpatched jump
-            for (int i = 0; i < 18; i++) {
-                as.NOP();
-            }
-            as.EBREAK();
+            as.NOP();
             break;
         }
         case Termination::JumpConditional: {
@@ -212,14 +193,12 @@ std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, con
             const BackendBlock* target_false = &function.GetBlock(block->GetSuccessor(1));
             conditional_jumps.push_back({offset, condition, target_true, target_false});
             // Some space for the backpatched jump
-            for (int i = 0; i < 18; i++) {
-                as.NOP();
-            }
-            as.EBREAK();
+            as.NOP();
+            as.NOP();
             break;
         }
         case Termination::BackToDispatcher: {
-            Emitter::EmitJump(*this, (void*)compile_next);
+            Emitter::EmitJumpFar(*this, (void*)compile_next);
             break;
         }
         default: {
@@ -235,7 +214,7 @@ std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, con
 
         u8* cursor = as.GetCursorPointer();
         as.RewindBuffer(jump.location);
-        Emitter::EmitJump(*this, block_map[jump.target]);
+        Emitter::EmitJump(*this, &block_map[jump.target]);
         as.GetCodeBuffer().SetCursor(cursor);
     }
 
@@ -246,7 +225,7 @@ std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, con
         u8* cursor = as.GetCursorPointer();
         as.RewindBuffer(jump.location);
 
-        Emitter::EmitJumpConditional(*this, jump.allocation.AsGPR(), block_map[jump.target_true], block_map[jump.target_false]);
+        Emitter::EmitJumpConditional(*this, jump.allocation.AsGPR(), &block_map[jump.target_true], &block_map[jump.target_false]);
         as.GetCodeBuffer().SetCursor(cursor);
     }
 

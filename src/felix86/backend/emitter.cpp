@@ -20,7 +20,7 @@ void Pop(Backend& backend, biscuit::GPR Rs) {
 
 void EmitCrash(Backend& backend, ExitReason reason) {
     Emitter::EmitSetExitReason(backend, static_cast<u64>(reason));
-    Emitter::EmitJump(backend, backend.GetCrashTarget());
+    Emitter::EmitJumpFar(backend, backend.GetCrashTarget());
 }
 
 void SoftwareCtz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u32 size) {
@@ -168,41 +168,29 @@ void EmitAlignmentCheck(Backend& backend, biscuit::GPR address, u8 alignment) {
 
 void Emitter::EmitPushAllCallerSaved(Backend& backend) {
     auto& caller_saved_gprs = Registers::GetCallerSavedGPRs();
-    auto& caller_saved_fprs = Registers::GetCallerSavedFPRs();
 
-    constexpr i64 size = 8 * (caller_saved_gprs.size() + caller_saved_fprs.size());
-    constexpr i64 gprs_size = 8 * caller_saved_gprs.size();
+    constexpr i64 size = 8 * caller_saved_gprs.size();
 
     AS.ADDI(Registers::StackPointer(), Registers::StackPointer(), -size);
 
     for (size_t i = 0; i < caller_saved_gprs.size(); i++) {
         AS.SD(caller_saved_gprs[i], i * 8, Registers::StackPointer());
     }
-
-    for (size_t i = 0; i < caller_saved_fprs.size(); i++) {
-        AS.FSD(caller_saved_fprs[i], gprs_size + i * 8, Registers::StackPointer());
-    }
 }
 
 void Emitter::EmitPopAllCallerSaved(Backend& backend) {
     auto& caller_saved_gprs = Registers::GetCallerSavedGPRs();
-    auto& caller_saved_fprs = Registers::GetCallerSavedFPRs();
 
-    constexpr i64 size = 8 * (caller_saved_gprs.size() + caller_saved_fprs.size());
-    constexpr i64 gprs_size = 8 * caller_saved_gprs.size();
+    constexpr i64 size = 8 * caller_saved_gprs.size();
 
     for (size_t i = 0; i < caller_saved_gprs.size(); i++) {
         AS.LD(caller_saved_gprs[i], i * 8, Registers::StackPointer());
     }
 
-    for (size_t i = 0; i < caller_saved_fprs.size(); i++) {
-        AS.FLD(caller_saved_fprs[i], gprs_size + i * 8, Registers::StackPointer());
-    }
-
     AS.ADDI(Registers::StackPointer(), Registers::StackPointer(), size);
 }
 
-void Emitter::EmitJump(Backend& backend, void* target) {
+void Emitter::EmitJumpFar(Backend& backend, void* target) {
     auto my_abs = [](u64 x) -> u64 { return x < 0 ? -x : x; };
 
     // Check if target is in one MB range
@@ -215,23 +203,19 @@ void Emitter::EmitJump(Backend& backend, void* target) {
     }
 }
 
-void Emitter::EmitJumpConditional(Backend& backend, biscuit::GPR condition, void* target_true, void* target_false) {
-    Label false_label;
+void Emitter::EmitJump(Backend& backend, Label* target) {
+    AS.J(target);
+}
 
-    // TODO: emit relative jumps if possible
-    AS.BEQZ(condition, &false_label);
-    AS.LI(t0, (u64)target_true);
-    AS.JR(t0);
-    AS.Bind(&false_label);
-    AS.LI(t0, (u64)target_false);
-    AS.JR(t0);
+void Emitter::EmitJumpConditional(Backend& backend, biscuit::GPR condition, Label* target_true, Label* target_false) {
+    AS.BEQZ(condition, target_false);
+    AS.J(target_true);
 }
 
 void Emitter::EmitCallHostFunction(Backend& backend, u64 function) {
     // Really naive implementation for now
     EmitPushAllCallerSaved(backend);
 
-    AS.LI(t0, (u64)function);
     AS.MV(a0, Registers::ThreadStatePointer());
     AS.JALR(t0);
 
@@ -253,14 +237,6 @@ void Emitter::EmitMov(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
     AS.MV(Rd, Rs);
 }
 
-void Emitter::EmitMov(Backend& backend, biscuit::FPR Rd, biscuit::FPR Rs) {
-    if (Rd == Rs) {
-        return;
-    }
-
-    AS.FMV_D(Rd, Rs);
-}
-
 void Emitter::EmitMov(Backend& backend, biscuit::Vec Rd, biscuit::Vec Rs) {
     if (Rd == Rs) {
         return;
@@ -279,16 +255,6 @@ void Emitter::EmitStoreSpill(Backend& backend, biscuit::GPR Rd, u32 spill_offset
     }
 }
 
-void Emitter::EmitStoreSpill(Backend& backend, biscuit::FPR Rd, u32 spill_offset) {
-    if (spill_offset < 2048) {
-        AS.FSD(Rd, spill_offset, Registers::StackPointer());
-    } else {
-        AS.LI(t0, spill_offset);
-        AS.ADD(t0, t0, Registers::StackPointer());
-        AS.FSD(Rd, 0, t0);
-    }
-}
-
 void Emitter::EmitStoreSpill(Backend& backend, biscuit::Vec Rd, u32 spill_offset) {
     UNREACHABLE();
 }
@@ -300,16 +266,6 @@ void Emitter::EmitLoadSpill(Backend& backend, biscuit::GPR Rd, u32 spill_offset)
         AS.LI(t0, spill_offset);
         AS.ADD(t0, t0, Registers::StackPointer());
         AS.LD(Rd, 0, t0);
-    }
-}
-
-void Emitter::EmitLoadSpill(Backend& backend, biscuit::FPR Rd, u32 spill_offset) {
-    if (spill_offset < 2048) {
-        AS.FLD(Rd, spill_offset, Registers::StackPointer());
-    } else {
-        AS.LI(t0, spill_offset);
-        AS.ADD(t0, t0, Registers::StackPointer());
-        AS.FLD(Rd, 0, t0);
     }
 }
 
@@ -418,6 +374,8 @@ void Emitter::EmitParity(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
     if (Extensions::B) {
         AS.ANDI(Rd, Rs, 0xFF);
         AS.CPOPW(Rd, Rd);
+        AS.ANDI(Rd, Rd, 1);
+        AS.XORI(Rd, Rd, 1);
     } else {
         // clang-format off
         static bool bitcount[] = {
@@ -448,11 +406,13 @@ void Emitter::EmitParity(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
 }
 
 void Emitter::EmitDiv128(Backend& backend, biscuit::GPR Rs) {
-    UNREACHABLE();
+    AS.MV(a1, Rs);
+    EmitCallHostFunction(backend, (u64)felix86_div128);
 }
 
 void Emitter::EmitDivu128(Backend& backend, biscuit::GPR Rs) {
-    UNREACHABLE();
+    AS.MV(a1, Rs);
+    EmitCallHostFunction(backend, (u64)felix86_divu128);
 }
 
 void Emitter::EmitReadByte(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
@@ -479,13 +439,16 @@ void Emitter::EmitReadXmmWord(Backend& backend, biscuit::Vec Vd, biscuit::GPR Ad
     case VectorState::PackedWord:
         AS.VLE16(Vd, Address);
         break;
+    case VectorState::Float:
     case VectorState::PackedDWord:
         AS.VLE32(Vd, Address);
         break;
+    case VectorState::Double:
     case VectorState::PackedQWord:
         AS.VLE64(Vd, Address);
         break;
-    default:
+    case VectorState::AnyPacked:
+    case VectorState::Null:
         UNREACHABLE();
     }
 }
@@ -544,13 +507,16 @@ void Emitter::EmitWriteXmmWord(Backend& backend, biscuit::GPR Address, biscuit::
     case VectorState::PackedWord:
         AS.VSE16(Vs, Address);
         break;
+    case VectorState::Float:
     case VectorState::PackedDWord:
         AS.VSE32(Vs, Address);
         break;
+    case VectorState::Double:
     case VectorState::PackedQWord:
         AS.VSE64(Vs, Address);
         break;
-    default:
+    case VectorState::AnyPacked:
+    case VectorState::Null:
         UNREACHABLE();
     }
 }
@@ -985,10 +951,21 @@ void Emitter::EmitMulhu(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, bis
 }
 
 void Emitter::EmitSelect(Backend& backend, biscuit::GPR Rd, biscuit::GPR Condition, biscuit::GPR RsTrue, biscuit::GPR RsFalse) {
-    if (Extensions::Zicond) {
-        // Not my favorite of conditional move instructions
-        AS.CZERO_EQZ(Rd, RsTrue, Condition);
+    ASSERT(RsTrue != RsFalse);
+    if (Extensions::Xtheadcondmov) {
+        if (Rd != RsTrue) {
+            AS.MV(Rd, RsFalse);
+            AS.TH_MVNEZ(Rd, RsTrue, Condition);
+        } else {
+            AS.MV(Rd, RsTrue);
+            AS.TH_MVEQZ(Rd, RsFalse, Condition);
+        }
+    } else if (Extensions::Zicond) {
+        // Not my favorite of conditional move patterns.
+        // This was done like that because no other RISC-V instructions
+        // need a third read port.
         AS.CZERO_NEZ(t0, RsFalse, Condition);
+        AS.CZERO_EQZ(Rd, RsTrue, Condition);
         AS.OR(Rd, Rd, t0);
     } else {
         if (Rd != RsFalse) {
@@ -1016,6 +993,42 @@ void Emitter::EmitIToV(Backend& backend, biscuit::Vec Vd, biscuit::GPR Rs) {
 
 void Emitter::EmitVToI(Backend& backend, biscuit::GPR Rd, biscuit::Vec Vs) {
     AS.VMV_XS(Rd, Vs);
+}
+
+void Emitter::EmitVFAdd(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {
+    AS.VFADD(Vd, Vs2, Vs1);
+}
+
+void Emitter::EmitVFSub(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {
+    AS.VFSUB(Vd, Vs2, Vs1);
+}
+
+void Emitter::EmitVFMul(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {
+    AS.VFMUL(Vd, Vs2, Vs1);
+}
+
+void Emitter::EmitVFDiv(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {
+    AS.VFDIV(Vd, Vs2, Vs1);
+}
+
+void Emitter::EmitVFSqrt(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs) {
+    AS.VFSQRT(Vd, Vs);
+}
+
+void Emitter::EmitVFRcp(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs) {
+    AS.VFREC7(Vd, Vs);
+}
+
+void Emitter::EmitVFRcpSqrt(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs) {
+    AS.VFRSQRT7(Vd, Vs);
+}
+
+void Emitter::EmitVFMin(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {
+    AS.VFMIN(Vd, Vs2, Vs1);
+}
+
+void Emitter::EmitVFMax(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {
+    AS.VFMAX(Vd, Vs2, Vs1);
 }
 
 void Emitter::EmitSetVectorStateFloat(Backend& backend) {
@@ -1057,28 +1070,32 @@ void Emitter::EmitVExtractInteger(Backend& backend, biscuit::GPR, biscuit::Vec, 
     UNREACHABLE();
 }
 
-void Emitter::EmitVAnd(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
-    AS.VAND(Vd, Vs1, Vs2);
+void Emitter::EmitVAnd(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {
+    AS.VAND(Vd, Vs2, Vs1);
 }
 
-void Emitter::EmitVOr(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
-    AS.VOR(Vd, Vs1, Vs2);
+void Emitter::EmitVOr(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {
+    AS.VOR(Vd, Vs2, Vs1);
 }
 
-void Emitter::EmitVXor(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
-    AS.VXOR(Vd, Vs1, Vs2);
+void Emitter::EmitVXor(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {
+    AS.VXOR(Vd, Vs2, Vs1);
 }
 
-void Emitter::EmitVSub(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
+void Emitter::EmitVXori(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, u64 immediate) {
+    AS.VXOR(Vd, Vs, immediate);
+}
+
+void Emitter::EmitVSub(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {
     UNREACHABLE();
 }
 
-void Emitter::EmitVAdd(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2) {
-    UNREACHABLE();
+void Emitter::EmitVAdd(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {
+    AS.VADD(Vd, Vs2, Vs1);
 }
 
-void Emitter::EmitVEqual(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs1, biscuit::Vec Vs2, VecMask masked) {
-    AS.VMSEQ(Vd, Vs1, Vs2, masked);
+void Emitter::EmitVEqual(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1, VecMask masked) {
+    AS.VMSEQ(Vd, Vs2, Vs1, masked);
 }
 
 void Emitter::EmitSetVMask(Backend& backend, biscuit::Vec Vs) {
@@ -1117,6 +1134,23 @@ void Emitter::EmitVSrai(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, u64 
     AS.VSRA(Vd, Vs, immediate, masked);
 }
 
+void Emitter::EmitVMerge(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {
+    AS.VMERGE(Vd, Vs1, Vs2);
+}
+
 void Emitter::EmitVMergei(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, u64 immediate) {
     AS.VMERGE(Vd, Vs, immediate);
+}
+
+void Emitter::EmitVSlideDowni(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, u64 immediate, VecMask masked) {
+    AS.VSLIDEDOWN(Vd, Vs, immediate, masked);
+}
+
+void Emitter::EmitVSlideUpi(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, u64 immediate, VecMask masked) {
+    if (Vd == Vs) {
+        AS.VMV(v1, Vs);
+        AS.VSLIDEUP(Vd, v1, immediate, masked);
+    } else {
+        AS.VSLIDEUP(Vd, Vs, immediate, masked);
+    }
 }
