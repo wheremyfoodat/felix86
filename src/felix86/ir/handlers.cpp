@@ -595,6 +595,21 @@ IR_HANDLE(mov_moffs_eax) { // mov moffs32, eax - 0xa3
     ir.WriteMemory(ir.Imm(inst->operand_imm.immediate.data), eax, inst->operand_reg.size);
 }
 
+IR_HANDLE(movs) { // movsb - 0xa4
+    x86_size_e size_e = inst->operand_reg.size;
+    SSAInstruction* rsi = ir.GetReg(X86_REF_RSI);
+    SSAInstruction* rdi = ir.GetReg(X86_REF_RDI);
+    SSAInstruction* rsi_val = ir.ReadMemory(rsi, size_e);
+    ir.WriteMemory(rdi, rsi_val, size_e);
+
+    u8 immediate = ir.GetBitSize(size_e) / 8;
+    SSAInstruction* imm = ir.Select(ir.GetFlag(X86_REF_DF), ir.Imm(-immediate), ir.Imm(immediate));
+    SSAInstruction* rsi_add = ir.Add(rsi, imm);
+    SSAInstruction* rdi_add = ir.Add(rdi, imm);
+    ir.SetReg(rsi_add, X86_REF_RSI);
+    ir.SetReg(rdi_add, X86_REF_RDI);
+}
+
 IR_HANDLE(test_eax_imm) { // test eax, imm32 - 0xa9
     x86_size_e size_e = inst->operand_reg.size;
     SSAInstruction* reg = ir.GetReg(inst->operand_reg);
@@ -753,6 +768,7 @@ IR_HANDLE(cld) { // cld - 0xfc
 }
 
 IR_HANDLE(std) { // std - 0xfd
+    WARN("Direction flag set to 1");
     ir.SetFlag(ir.Imm(1), X86_REF_DF);
 }
 
@@ -841,7 +857,9 @@ IR_HANDLE(group5) { // inc/dec/call/jmp/push rm32 - 0xff
         break;
     }
     case X86_GROUP5_JMP: {
-        SSAInstruction* rm = ir.GetRm(inst->operand_rm);
+        x86_operand_t rm_op = inst->operand_rm;
+        rm_op.size = X86_SIZE_QWORD;
+        SSAInstruction* rm = ir.GetRm(rm_op);
         ir.SetReg(rm, X86_REF_RIP);
         ir.TerminateJump(state->function->GetExit());
         ir.Exit();
@@ -957,15 +975,15 @@ IR_HANDLE(imul_r32_rm32) { // imul r32/64, rm32/64 - 0x0f 0xaf
 
 IR_HANDLE(cmpxchg) { // cmpxchg - 0x0f 0xb0-0xb1
     x86_size_e size_e = inst->operand_reg.size;
-    SSAInstruction* eax = ir.GetReg(X86_REF_RAX);
+    SSAInstruction* eax = ir.GetReg(X86_REF_RAX, size_e);
 
     if (inst->operand_rm.type == X86_OP_TYPE_MEMORY) {
         SSAInstruction* address = ir.Lea(inst->operand_rm);
         SSAInstruction* reg = ir.GetReg(inst->operand_reg);
         SSAInstruction* actual = ir.AmoCAS(address, eax, reg, MemoryOrdering::AqRl, size_e);
 
-        ir.SetReg(actual, X86_REF_RAX);
-        ir.SetFlag(ir.Equal(actual, reg), X86_REF_ZF);
+        ir.SetReg(actual, X86_REF_RAX, size_e);
+        ir.SetFlag(ir.Equal(actual, eax), X86_REF_ZF);
     } else {
         UNREACHABLE();
         // Think the following is wrong for w/e reason
@@ -1280,11 +1298,6 @@ IR_HANDLE(rcpss) { // rcpss xmm, xmm32 - 0xf3 0x0f 0x53
 
 IR_HANDLE(rcpps) {
     ir.PackedRegRm(inst, felix86_rcp, VectorState::PackedDWord);
-}
-
-IR_HANDLE(movdqu_xmm_xmm128) { // movdqu xmm, xmm128 - 0xf3 0x0f 0x6f
-    SSAInstruction* rm = ir.GetRm(inst->operand_rm);
-    ir.SetReg(inst->operand_reg, rm);
 }
 
 IR_HANDLE(movq_xmm_xmm64) { // movq xmm, xmm64 - 0xf3 0x0f 0x7e

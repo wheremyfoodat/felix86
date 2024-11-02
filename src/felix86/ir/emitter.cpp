@@ -458,13 +458,13 @@ SSAInstruction* IREmitter::AmoCAS(SSAInstruction* address, SSAInstruction* expec
                                   x86_size_e size) {
     switch (size) {
     case x86_size_e::X86_SIZE_BYTE:
-        return insertInstruction(IROpcode::AmoSwap8, {address, expected, source}, (u8)ordering);
+        return insertInstruction(IROpcode::AmoCAS8, {address, expected, source}, (u8)ordering);
     case x86_size_e::X86_SIZE_WORD:
-        return insertInstruction(IROpcode::AmoSwap16, {address, expected, source}, (u8)ordering);
+        return insertInstruction(IROpcode::AmoCAS16, {address, expected, source}, (u8)ordering);
     case x86_size_e::X86_SIZE_DWORD:
-        return insertInstruction(IROpcode::AmoSwap32, {address, expected, source}, (u8)ordering);
+        return insertInstruction(IROpcode::AmoCAS32, {address, expected, source}, (u8)ordering);
     case x86_size_e::X86_SIZE_QWORD:
-        return insertInstruction(IROpcode::AmoSwap64, {address, expected, source}, (u8)ordering);
+        return insertInstruction(IROpcode::AmoCAS64, {address, expected, source}, (u8)ordering);
     default:
         UNREACHABLE();
         return nullptr;
@@ -733,9 +733,11 @@ SSAInstruction* IREmitter::Lea(const x86_operand_t& operand) {
 
     SSAInstruction* base_final = base;
     if (operand.memory.fs_override) {
+        WARN("Accessing FS base register");
         SSAInstruction* fs = getGuest(X86_REF_FS);
         base_final = Add(base, fs);
     } else if (operand.memory.gs_override) {
+        WARN("Accessing GS base register");
         SSAInstruction* gs = getGuest(X86_REF_GS);
         base_final = Add(base, gs);
     }
@@ -1426,11 +1428,10 @@ void IREmitter::Group2(x86_instruction_t* inst, SSAInstruction* shift_amount) {
     }
     case X86_GROUP2_SHR: {
         SSAInstruction* is_zero = Seqz(shift_value);
-        SSAInstruction* shift = Addi(shift_value, 1);
+        SSAInstruction* shift = Addi(shift_value, -1);
         SSAInstruction* mask = Shl(Imm(1), shift);
-        SSAInstruction* msb_mask = Select(is_zero, Imm(0), mask);
         result = Shr(rm, shift_value);
-        c = Equal(And(rm, msb_mask), msb_mask);
+        c = Select(is_zero, Imm(0), Equal(And(rm, mask), mask));
         o = IsNegative(rm, size_e);
         break;
     }
@@ -1440,12 +1441,11 @@ void IREmitter::Group2(x86_instruction_t* inst, SSAInstruction* shift_amount) {
         SSAInstruction* shifted_left = Shli(rm, anti_shift);
         SSAInstruction* shift_right = Addi(shift_value, anti_shift);
         SSAInstruction* is_zero = Seqz(shift_value);
-        SSAInstruction* shift = Addi(shift_value, 1);
+        SSAInstruction* shift = Addi(shift_value, -1);
         SSAInstruction* mask = Shl(Imm(1), shift);
-        SSAInstruction* msb_mask = Select(is_zero, Imm(0), mask);
         result = Sar(shifted_left, shift_right);
         o = Imm(0);
-        c = Equal(And(rm, msb_mask), msb_mask);
+        c = Select(is_zero, Imm(0), Equal(And(rm, mask), mask));
         break;
     }
     }
@@ -1619,7 +1619,7 @@ void IREmitter::Group3(x86_instruction_t* inst) {
 
             storePartialState(reg_refs);
 
-            SSAInstruction* instruction = insertInstruction(IROpcode::Div128, {rm});
+            SSAInstruction* instruction = insertInstruction(IROpcode::Divu128, {rm});
             instruction->Lock();
 
             loadPartialState(reg_refs);

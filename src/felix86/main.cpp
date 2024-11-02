@@ -1,3 +1,4 @@
+#include <thread>
 #include <argp.h>
 #include "biscuit/cpuinfo.hpp"
 #include "felix86/common/log.hpp"
@@ -76,7 +77,9 @@ void print_extensions() {
         extensions += "zicond";
     }
 
-    LOG("Extensions enabled for the recompiler: %s", extensions.c_str());
+    if (!extensions.empty()) {
+        LOG("Extensions enabled for the recompiler: %s", extensions.c_str());
+    }
 }
 
 static error_t parse_opt(int key, char* arg, struct argp_state* state) {
@@ -169,6 +172,10 @@ int main(int argc, char* argv[]) {
 
     LOG("felix86 version %s", FELIX86_VERSION);
 
+#ifdef __x86_64__
+    WARN("You're running an x86-64 executable version of felix86, get ready for a crash soon");
+#endif
+
     initialize_globals();
     initialize_extensions();
     print_extensions();
@@ -203,13 +210,18 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    Emulator emulator(config);
+    std::thread main_thread([argc, &config]() {
+        pthread_setname_np(pthread_self(), "MainThread");
 
-    if (argc == 1) {
-        ERROR("Unimplemented");
-    } else {
-        emulator.Run();
-    }
+        Emulator emulator(config);
+
+        if (argc == 1) {
+            ERROR("Unimplemented");
+        } else {
+            emulator.Run();
+        }
+    });
+    main_thread.join();
 
     felix86_exit(0);
 }

@@ -12,6 +12,7 @@ bool ExitsVM(IROpcode opcode) {
     case IROpcode::Rdtsc:
     case IROpcode::Div128:
     case IROpcode::Divu128:
+    case IROpcode::CallHostFunction:
         return true;
     default:
         return false;
@@ -131,7 +132,10 @@ void PassManager::VectorStatePass(BackendFunction* function) {
                                     case VectorState::PackedWord:
                                         opcode = IROpcode::SetVectorStatePackedWord;
                                         break;
+                                    case VectorState::AnyPacked:
                                     case VectorState::PackedDWord:
+                                    case VectorState::Float:
+                                    case VectorState::Double:
                                         opcode = IROpcode::SetVectorStatePackedDWord;
                                         break;
                                     case VectorState::PackedQWord:

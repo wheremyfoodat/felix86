@@ -1,4 +1,5 @@
 #include "felix86/common/log.hpp"
+#include "felix86/common/print.hpp"
 #include "felix86/ir/emitter.hpp"
 #include "felix86/ir/function.hpp"
 
