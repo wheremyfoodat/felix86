@@ -831,6 +831,11 @@ std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands,
                            GetNameString(operands[1]));
         break;
     }
+    case IROpcode::VMinu: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vminu", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
+        break;
+    }
     case IROpcode::VXori: {
         ret += fmt::format("{} <- {}({}: {}, 0x{:x})", GetNameString(name), "vxori", "src", GetNameString(operands[0]), immediate_data);
         break;
@@ -865,8 +870,16 @@ std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands,
         ret += fmt::format("{} <- {}({}: {}, 0x{:x})", GetNameString(name), "vslli", "src", GetNameString(operands[0]), immediate_data);
         break;
     }
+    case IROpcode::VSrli: {
+        ret += fmt::format("{} <- {}({}: {}, 0x{:x})", GetNameString(name), "vsrli", "src", GetNameString(operands[0]), immediate_data);
+        break;
+    }
     case IROpcode::VSrai: {
         ret += fmt::format("{} <- {}({}: {}, 0x{:x})", GetNameString(name), "vsrai", "src", GetNameString(operands[0]), immediate_data);
+        break;
+    }
+    case IROpcode::VMSeqi: {
+        ret += fmt::format("{} <- {}({}: {}, 0x{:x})", GetNameString(name), "vmseqi", "src", GetNameString(operands[0]), immediate_data);
         break;
     }
     case IROpcode::VSlideDowni: {
@@ -875,6 +888,16 @@ std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands,
     }
     case IROpcode::VSlideUpi: {
         ret += fmt::format("{} <- {}({}: {}, 0x{:x})", GetNameString(name), "vslideupi", "src", GetNameString(operands[0]), immediate_data);
+        break;
+    }
+    case IROpcode::VSlide1Up: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vslide1up", "integer", GetNameString(operands[0]), "vector",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::VSlide1Down: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vslide1down", "integer", GetNameString(operands[0]), "vector",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::VGather: {

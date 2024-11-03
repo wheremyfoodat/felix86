@@ -116,9 +116,13 @@ struct IREmitter {
     SSAInstruction* VGather(SSAInstruction* dest, SSAInstruction* source, SSAInstruction* iota, VectorState state, VecMask masked = VecMask::No);
     SSAInstruction* VEqual(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
     SSAInstruction* VSlli(SSAInstruction* value, u8 shift, VectorState state);
+    SSAInstruction* VSrli(SSAInstruction* value, u8 shift, VectorState state);
     SSAInstruction* VSrai(SSAInstruction* value, u8 shift, VectorState state);
+    SSAInstruction* VMSeqi(SSAInstruction* value, VectorState state, u64 imm);
     SSAInstruction* VSlideUpi(SSAInstruction* value, u8 shift, VectorState state);
     SSAInstruction* VSlideDowni(SSAInstruction* value, u8 shift, VectorState state);
+    SSAInstruction* VSlide1Up(SSAInstruction* integer, SSAInstruction* vector, VectorState state);
+    SSAInstruction* VSlide1Down(SSAInstruction* integer, SSAInstruction* vector, VectorState state);
     SSAInstruction* VZext(SSAInstruction* value, x86_size_e size);
     SSAInstruction* VAdd(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
     SSAInstruction* VSub(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
@@ -151,6 +155,7 @@ struct IREmitter {
     void Group1(x86_instruction_t* inst);
     void Group2(x86_instruction_t* inst, SSAInstruction* shift_amount);
     void Group3(x86_instruction_t* inst);
+    void Group14(x86_instruction_t* inst);
     void Syscall();
     void Cpuid();
     void Rdtsc();
@@ -162,6 +167,7 @@ struct IREmitter {
     void SetVMask(SSAInstruction* mask);
     void Pcmpeq(x86_instruction_t* inst, VectorState state);
     void Punpckl(x86_instruction_t* inst, VectorState state);
+    void Punpckh(x86_instruction_t* inst, VectorState state);
     void ScalarRegRm(x86_instruction_t* inst, IROpcode opcode, VectorState state);
     void PackedRegRm(x86_instruction_t* inst, IROpcode opcode, VectorState state);
     void ScalarRegRm(x86_instruction_t* inst, VectorFunc func, VectorState state);

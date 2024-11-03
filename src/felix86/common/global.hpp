@@ -5,12 +5,16 @@
 #define SUPPORTED_VLEN 128
 extern bool g_verbose;
 extern bool g_quiet;
+extern bool g_aot;
 extern bool g_testing;
 extern bool g_strace;
 extern bool g_dont_optimize;
 extern bool g_print_blocks;
+extern bool g_print_block_start;
 extern bool g_print_state;
 extern bool g_print_disassembly;
+extern bool g_cache_functions;
+extern bool g_coalesce;
 extern bool g_extensions_manually_specified;
 extern u32 g_spilled_count;
 

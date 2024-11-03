@@ -78,7 +78,7 @@ IR_HANDLE(error) {
             /* length:          */ 15,
             /* instruction:     */ &zydis_inst))) {
         std::string buffer = fmt::format("{}", zydis_inst.text);
-        ERROR("Hit error instruction: %s", buffer.c_str());
+        ERROR("Hit error instruction: %s (address: %016lx, opcode: %02x)", buffer.c_str(), ir.GetCurrentAddress(), inst->opcode);
     } else {
         ERROR("Hit error instruction and couldn't even disassemble it. Opcode: %02x", inst->opcode);
     }
@@ -473,8 +473,8 @@ IR_HANDLE(jcc_rel) { // jcc rel8 - 0x70-0x7f
     ir.TerminateJumpConditional(condition_mov, block_true, block_false);
     ir.Exit();
 
-    frontend_compile_block(*state->emulator, state->function, block_false);
-    frontend_compile_block(*state->emulator, state->function, block_true);
+    frontend_compile_block(state->function, block_false);
+    frontend_compile_block(state->function, block_true);
 }
 
 IR_HANDLE(group1) { // add/or/adc/sbb/and/sub/xor/cmp
@@ -731,7 +731,7 @@ IR_HANDLE(jmp_rel32) { // jmp rel32 - 0xe9
     ir.TerminateJump(target);
     ir.Exit();
 
-    frontend_compile_block(*state->emulator, state->function, target);
+    frontend_compile_block(state->function, target);
 }
 
 IR_HANDLE(jmp_rel8) { // jmp rel8 - 0xeb
@@ -742,11 +742,17 @@ IR_HANDLE(jmp_rel8) { // jmp rel8 - 0xeb
     ir.TerminateJump(target);
     ir.Exit();
 
-    frontend_compile_block(*state->emulator, state->function, target);
+    frontend_compile_block(state->function, target);
 }
 
 IR_HANDLE(hlt) { // hlt - 0xf4
     ir.SetExitReason(EXIT_REASON_HLT);
+    ir.TerminateJump(state->function->GetExit());
+    ir.Exit();
+}
+
+IR_HANDLE(ud2) { // ud2 - 0x0f 0x0b
+    ir.SetExitReason(EXIT_REASON_UD2);
     ir.TerminateJump(state->function->GetExit());
     ir.Exit();
 }
@@ -920,10 +926,20 @@ IR_HANDLE(movhps_xmm_m64) {
         ERROR("movhps xmm, m64 but m64 is not a memory operand");
     }
 
-    SSAInstruction* xmm = ir.GetReg(inst->operand_reg);
-    SSAInstruction* m64 = ir.GetRm(inst->operand_rm);
-    SSAInstruction* xmm_dest = ir.VInsertInteger(m64, xmm, 1, X86_SIZE_QWORD);
-    ir.SetReg(inst->operand_reg, xmm_dest);
+    SSAInstruction* low = ir.GetReg(inst->operand_reg);
+    SSAInstruction* high;
+    if (inst->operand_rm.type == X86_OP_TYPE_MEMORY) {
+        inst->operand_rm.size = X86_SIZE_QWORD;
+        SSAInstruction* m64 = ir.GetRm(inst->operand_rm);
+        high = ir.IToV(m64, VectorState::PackedQWord);
+    } else {
+        inst->operand_rm.size = X86_SIZE_XMM;
+        high = ir.GetReg(inst->operand_rm);
+    }
+    SSAInstruction* shifted = ir.VSlideUpi(high, 1, VectorState::PackedQWord);
+    ir.SetVMask(ir.VSplati(0b10, VectorState::PackedQWord));
+    SSAInstruction* result = ir.VMerge(shifted, low, VectorState::PackedQWord);
+    ir.SetReg(inst->operand_reg, result);
 }
 
 IR_HANDLE(mov_xmm128_xmm) { // movups/movaps xmm128, xmm - 0x0f 0x29
@@ -1069,6 +1085,49 @@ IR_HANDLE(punpcklqdq) { // punpcklqdq xmm, xmm/m128 - 0x66 0x0f 0x6c
     ir.Punpckl(inst, VectorState::PackedQWord);
 }
 
+IR_HANDLE(punpckhbw) { // punpckhbw xmm, xmm/m128 - 0x66 0x0f 0x68
+    ir.Punpckh(inst, VectorState::PackedByte);
+}
+
+IR_HANDLE(punpckhwd) { // punpckhwd xmm, xmm/m128 - 0x66 0x0f 0x69
+    ir.Punpckh(inst, VectorState::PackedWord);
+}
+
+IR_HANDLE(punpckhdq) { // punpckhdq xmm, xmm/m128 - 0x66 0x0f 0x6a
+    ir.Punpckh(inst, VectorState::PackedDWord);
+}
+
+IR_HANDLE(punpckhqdq) { // punpckhqdq xmm, xmm/m128 - 0x66 0x0f 0x6d
+    ir.Punpckh(inst, VectorState::PackedQWord);
+}
+
+IR_HANDLE(pshufd) { // pshufd xmm, xmm/m128, imm8 - 0x66 0x0f 0x70
+    u8 imm = inst->operand_imm.immediate.data;
+    u8 el0 = imm & 0b11;
+    u8 el1 = (imm >> 2) & 0b11;
+    u8 el2 = (imm >> 4) & 0b11;
+    u8 el3 = (imm >> 6) & 0b11;
+    SSAInstruction* first = ir.VSplati(el3, VectorState::PackedDWord);
+    SSAInstruction* second = ir.VSlide1Up(ir.Imm(el2), first, VectorState::PackedDWord);
+    SSAInstruction* third = ir.VSlide1Up(ir.Imm(el1), second, VectorState::PackedDWord);
+    SSAInstruction* fourth = ir.VSlide1Up(ir.Imm(el0), third, VectorState::PackedDWord);
+    SSAInstruction* source = ir.GetRm(inst->operand_rm, VectorState::PackedDWord);
+    SSAInstruction* result = ir.VGather(ir.VZero(VectorState::PackedDWord), source, fourth, VectorState::PackedDWord);
+    ir.SetReg(inst->operand_reg, result);
+}
+
+IR_HANDLE(group14) {
+    ir.Group14(inst);
+}
+
+IR_HANDLE(pmovmskb) {
+    SSAInstruction* rm = ir.GetRm(inst->operand_rm, VectorState::PackedByte);
+    SSAInstruction* shifted = ir.VSrli(rm, 7, VectorState::PackedByte);
+    SSAInstruction* mask = ir.VMSeqi(shifted, VectorState::PackedByte, 1);
+    static_assert(SUPPORTED_VLEN == 128); // if vlen changes, change the zext below
+    ir.SetReg(inst->operand_reg, ir.Zext(ir.VToI(mask, VectorState::PackedByte), X86_SIZE_WORD));
+}
+
 IR_HANDLE(movq_xmm_rm32) { // movq xmm, rm32 - 0x66 0x0f 0x6e
     x86_size_e size_e = inst->operand_rm.size;
     VectorState vector_state = VectorState::Null;
@@ -1136,8 +1195,28 @@ IR_HANDLE(movq_xmm64_xmm) { // movq xmm64, xmm - 0x66 0x0f 0xd6
     }
 }
 
+IR_HANDLE(pminub) { // pminub xmm, xmm/m128 - 0x66 0x0f 0xda
+    ir.PackedRegRm(inst, IROpcode::VMinu, VectorState::PackedByte);
+}
+
 IR_HANDLE(pand) { // pand xmm, xmm/m128 - 0x66 0x0f 0xdb
     ir.PackedRegRm(inst, IROpcode::VAnd, VectorState::AnyPacked);
+}
+
+IR_HANDLE(paddb) { // paddb xmm, xmm/m128 - 0x66 0x0f 0xfc
+    ir.PackedRegRm(inst, IROpcode::VAdd, VectorState::PackedByte);
+}
+
+IR_HANDLE(paddw) { // paddw xmm, xmm/m128 - 0x66 0x0f 0xfd
+    ir.PackedRegRm(inst, IROpcode::VAdd, VectorState::PackedWord);
+}
+
+IR_HANDLE(paddd) { // paddd xmm, xmm/m128 - 0x66 0x0f 0xfe
+    ir.PackedRegRm(inst, IROpcode::VAdd, VectorState::PackedDWord);
+}
+
+IR_HANDLE(paddq) { // paddq xmm, xmm/m128 - 0x66 0x0f 0xd4
+    ir.PackedRegRm(inst, IROpcode::VAdd, VectorState::PackedQWord);
 }
 
 IR_HANDLE(pandn) {
@@ -1158,6 +1237,18 @@ IR_HANDLE(pxor) { // pxor xmm, xmm/m128 - 0x66 0x0f 0xef
 
 IR_HANDLE(psubb) { // psubb xmm, xmm/m128 - 0x66 0x0f 0xf8
     ir.PackedRegRm(inst, IROpcode::VSub, VectorState::PackedByte);
+}
+
+IR_HANDLE(psubw) { // psubw xmm, xmm/m128 - 0x66 0x0f 0xf9
+    ir.PackedRegRm(inst, IROpcode::VSub, VectorState::PackedWord);
+}
+
+IR_HANDLE(psubd) { // psubd xmm, xmm/m128 - 0x66 0x0f 0xfa
+    ir.PackedRegRm(inst, IROpcode::VSub, VectorState::PackedDWord);
+}
+
+IR_HANDLE(psubq) { // psubq xmm, xmm/m128 - 0x66 0x0f 0xfb
+    ir.PackedRegRm(inst, IROpcode::VSub, VectorState::PackedQWord);
 }
 
 // ███████ ███████  ██████  ██████  ███    ██ ██████   █████  ██████  ██    ██     ███████ ██████

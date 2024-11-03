@@ -34,6 +34,12 @@ struct InterferenceGraph {
         return node;
     }
 
+    u32 Random() {
+        auto it = graph.begin();
+        std::advance(it, rand() % graph.size());
+        return it->first;
+    }
+
     void AddNode(const Node& node) {
         for (u32 edge : node.edges) {
             AddEdge(node.id, edge);
@@ -77,11 +83,13 @@ struct InterferenceGraph {
         return false;
     }
 
-private:
-    tsl::robin_map<u32, std::unordered_set<u32>> graph;
-};
+    void Reserve(size_t size) {
+        graph.reserve(size);
+    }
 
-using LivenessSet = std::unordered_set<u32>;
+private:
+    std::unordered_map<u32, std::unordered_set<u32>> graph;
+};
 
 struct InstructionMetadata {
     BackendInstruction* inst = nullptr;
@@ -90,7 +98,11 @@ struct InstructionMetadata {
     bool infinite_cost = false;
 };
 
-using InstructionMap = tsl::robin_map<u32, InstructionMetadata>;
+using LivenessSet = std::unordered_set<u32>;
+
+using CoalescingHeuristic = bool (*)(BackendFunction& function, InterferenceGraph& graph, u32 k, u32 lhs, u32 rhs);
+
+using InstructionMap = std::unordered_map<u32, InstructionMetadata>;
 
 static bool reserved_gpr(const BackendInstruction& inst) {
     switch (inst.GetOpcode()) {
@@ -192,10 +204,6 @@ static void build(BackendFunction& function, const InstructionMap& instructions,
         const BackendBlock* block = blocks[counter];
         size_t i = block->GetIndex();
         for (const BackendInstruction& inst : block->GetInstructions()) {
-            if (should_consider(instructions, inst.GetName())) {
-                def[i].insert(inst.GetName());
-            }
-
             for (u8 j = 0; j < inst.GetOperandCount(); j++) {
                 if (instructions.at(inst.GetOperand(j)).inst == nullptr) {
                     ERROR("Null operand %d for instruction %s", j, inst.Print().c_str());
@@ -206,6 +214,10 @@ static void build(BackendFunction& function, const InstructionMap& instructions,
                     // Not defined in this block ie. upwards exposed, live range goes outside current block
                     use[i].insert(inst.GetOperand(j));
                 }
+            }
+
+            if (should_consider(instructions, inst.GetName())) {
+                def[i].insert(inst.GetName());
             }
         }
     }
@@ -219,10 +231,8 @@ static void build(BackendFunction& function, const InstructionMap& instructions,
             // j is the index in the postorder list, but we need the index in the blocks list
             size_t i = block->GetIndex();
 
-            LivenessSet in_old = in[i];
-            LivenessSet out_old = out[i];
-
-            in[i].clear();
+            LivenessSet in_old = std::move(in[i]);
+            in[i] = {};
 
             // in[b] = use[b] U (out[b] - def[b])
             in[i].insert(use[i].begin(), use[i].end());
@@ -234,7 +244,8 @@ static void build(BackendFunction& function, const InstructionMap& instructions,
 
             in[i].insert(out_minus_def.begin(), out_minus_def.end());
 
-            out[i].clear();
+            LivenessSet out_old = std::move(out[i]);
+            out[i] = {};
             // out[b] = U (in[s]) for all s in succ[b]
             for (u8 k = 0; k < block->GetSuccessorCount(); k++) {
                 const BackendBlock* succ = &function.GetBlock(block->GetSuccessor(k));
@@ -248,6 +259,8 @@ static void build(BackendFunction& function, const InstructionMap& instructions,
             }
         }
     } while (changed);
+
+    graph.Reserve(instructions.size());
 
     for (const BackendBlock* block : blocks) {
         LivenessSet live_now;
@@ -302,6 +315,85 @@ static u32 choose(const InstructionMap& instructions, const std::deque<Node>& no
     return chosen;
 }
 
+bool george_coalescing_heuristic(BackendFunction& function, InterferenceGraph& graph, u32 k, u32 lhs, u32 rhs) {
+    // A conservative heuristic.
+    // Safe to coalesce x and y if for every neighbor t of x, either t already interferes with y or t has degree < k
+    u32 u = lhs;
+    u32 v = rhs;
+
+    auto& u_neighbors = graph.GetInterferences(u);
+    ASSERT(u_neighbors.find(v) == u_neighbors.end());
+    bool u_conquers_v = true;
+    for (u32 t : graph.GetInterferences(v)) {
+        if (u_neighbors.find(t) == u_neighbors.end() && graph.GetInterferences(t).size() >= k) {
+            u_conquers_v = false;
+            break;
+        }
+    }
+
+    auto& v_neighbors = graph.GetInterferences(v);
+    bool v_conquers_u = true;
+    for (u32 t : graph.GetInterferences(u)) {
+        if (v_neighbors.find(t) == v_neighbors.end() && graph.GetInterferences(t).size() >= k) {
+            v_conquers_u = false;
+            break;
+        }
+    }
+
+    return u_conquers_v || v_conquers_u;
+}
+
+bool aggressive_coalescing_heuristic(BackendFunction& function, InterferenceGraph& graph, u32 k, u32 lhs, u32 rhs) {
+    // An aggressive heuristic.
+    // Coalesce every move that doesn't interfere.
+    auto& edges = graph.GetInterferences(lhs);
+    ASSERT(edges.find(rhs) == edges.end());
+    return true;
+}
+
+void coalesce(BackendFunction& function, u32 lhs, u32 rhs) {
+    VERBOSE("Coalesced %s and %s", GetNameString(lhs).c_str(), GetNameString(rhs).c_str());
+    for (BackendBlock& block : function.GetBlocks()) {
+        for (BackendInstruction& inst : block.GetInstructions()) {
+            for (u8 i = 0; i < inst.GetOperandCount(); i++) {
+                if (inst.GetOperand(i) == lhs) {
+                    inst.SetOperand(i, rhs);
+                }
+            }
+            if (inst.GetName() == lhs) {
+                inst.SetName(rhs);
+            }
+        }
+    }
+}
+
+bool try_coalesce(BackendFunction& function, InstructionMap& map, InterferenceGraph& graph, bool (*should_consider)(const InstructionMap&, u32),
+                  u32 k, CoalescingHeuristic heuristic) {
+    for (auto& block : function.GetBlocks()) {
+        auto it = block.GetInstructions().begin();
+        auto end = block.GetInstructions().end();
+        while (it != end) {
+            BackendInstruction& inst = *it;
+            if (inst.GetOpcode() == IROpcode::Mov) {
+                if (should_consider(map, inst.GetName()), should_consider(map, inst.GetOperand(0))) {
+                    u32 lhs = inst.GetName();
+                    u32 rhs = inst.GetOperand(0);
+                    auto& edges = graph.GetInterferences(lhs);
+                    if (edges.find(rhs) == edges.end()) {
+                        if (heuristic(function, graph, k, lhs, rhs)) {
+                            coalesce(function, lhs, rhs);
+                            it = block.GetInstructions().erase(it);
+                            return true;
+                        }
+                    }
+                }
+            }
+            ++it;
+        }
+    }
+    return false;
+}
+
 static AllocationMap run(BackendFunction& function, AllocationType type, bool (*should_consider)(const InstructionMap&, u32),
                          const std::vector<u32>& available_colors, u32& spill_location) {
     g_spilled_count = 0;
@@ -310,11 +402,22 @@ static AllocationMap run(BackendFunction& function, AllocationType type, bool (*
         // Chaitin-Briggs algorithm
         std::deque<Node> nodes;
         InterferenceGraph graph;
+        InstructionMap instructions;
         AllocationMap allocations;
-        InstructionMap instructions = create_instruction_map(function);
-        build(function, instructions, graph, should_consider);
+        bool coalesced = false;
+
+        do {
+            coalesced = false;
+            graph = InterferenceGraph();
+            instructions = create_instruction_map(function);
+            build(function, instructions, graph, should_consider);
+            if (g_coalesce) {
+                coalesced = try_coalesce(function, instructions, graph, should_consider, k, george_coalescing_heuristic);
+            }
+        } while (coalesced);
 
         for (auto& [name, edges] : graph) {
+            ASSERT_MSG(instructions.find(name) != instructions.end(), "Instruction %s not found in map", GetNameString(name).c_str());
             instructions.at(name).interferences = edges.size();
         }
 
@@ -343,7 +446,8 @@ static AllocationMap run(BackendFunction& function, AllocationType type, bool (*
             while (!graph.empty()) {
                 // Pick some vertex using a heuristic and remove it.
                 // If it causes some node to have less than k neighbors, repeat at step 1, otherwise repeat step 2.
-                nodes.push_back(graph.RemoveNode(graph.begin()->first));
+                // TODO: pick heuristic that isn't random
+                nodes.push_back(graph.RemoveNode(graph.Random()));
 
                 if (graph.HasLessThanK(k)) {
                     repeat_outer = true;

@@ -18,6 +18,8 @@ std::string ExitReasonToString(ExitReason reason) {
         return "Bad alignment";
     case ExitReason::EXIT_REASON_NO_VECTOR:
         return "Vector extension disabled";
+    case ExitReason::EXIT_REASON_UD2:
+        return "Hit ud2 instruction";
     }
 
     UNREACHABLE();
@@ -134,6 +136,11 @@ void Backend::EnterDispatcher(ThreadState* state) {
     enter_dispatcher(state);
 }
 
+void print_address(u64 address) {
+    fmt::print("Entering block 0x{:016x}\n", address);
+    fflush(stdout);
+}
+
 std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, const AllocationMap& allocations) {
     void* start = as.GetCursorPointer();
     tsl::robin_map<const BackendBlock*, Label> block_map;
@@ -159,13 +166,22 @@ std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, con
         const BackendBlock* block = *it;
 
         VERBOSE("Block %d (0x%016lx) corresponds to %p", block->GetIndex(), block->GetStartAddress(), as.GetCursorPointer());
+
+        as.Bind(&block_map[block]);
+
+        if (g_print_block_start) {
+            Emitter::EmitPushAllCallerSaved(*this);
+            as.LI(a0, block->GetStartAddress());
+            as.LI(t0, (u64)print_address);
+            as.JALR(t0);
+            Emitter::EmitPopAllCallerSaved(*this);
+        }
+
         if (block->GetIndex() == 0 && allocations.GetSpillSize() > 0) {
             // Entry block, setup the stack pointer
             as.LI(t0, allocations.GetSpillSize());
             as.SUB(Registers::StackPointer(), Registers::StackPointer(), t0);
         }
-
-        as.Bind(&block_map[block]);
 
         for (const BackendInstruction& inst : block->GetInstructions()) {
             Emitter::Emit(*this, allocations, inst);

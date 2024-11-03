@@ -489,6 +489,47 @@ void IREmitter::Punpckl(x86_instruction_t* inst, VectorState state) {
     SetReg(inst->operand_reg, result);
 }
 
+void IREmitter::Punpckh(x86_instruction_t* inst, VectorState state) {
+    u32 mask1, mask2;
+    switch (state) {
+    case VectorState::PackedByte:
+        mask1 = 0b01010101'00000000;
+        mask2 = 0b10101010'00000000;
+        break;
+    case VectorState::PackedWord:
+        mask1 = 0b0101'0000;
+        mask2 = 0b1010'0000;
+        break;
+    case VectorState::PackedDWord:
+        mask1 = 0b01'00;
+        mask2 = 0b10'00;
+        break;
+    case VectorState::PackedQWord:
+        mask1 = 0b10;
+        mask2 = 0b10;
+        break;
+    default:
+        UNREACHABLE();
+        return;
+    }
+
+    SSAInstruction* rm = GetRm(inst->operand_rm, state);
+    SSAInstruction* reg = GetReg(inst->operand_reg);
+    // Essentially two "vdecompress" (viota + vrgather) instructions
+    // If an element index is out of range ( vs1[i] >= VLMAX ) then zero is returned for the element value.
+    // This means we don't care to reduce the splat to only the first two elements
+    SSAInstruction* rm_mask = VSplat(Imm(mask1), state);
+    SSAInstruction* rm_iota = VIota(rm_mask, state);
+    SetVMask(rm_mask);
+    SSAInstruction* zero = VZero(state);
+    SSAInstruction* rm_gathered = VGather(zero, rm, rm_iota, state, VecMask::Yes);
+    SSAInstruction* reg_mask = VSplat(Imm(mask2), state);
+    SSAInstruction* reg_iota = VIota(reg_mask, state);
+    SetVMask(reg_mask);
+    SSAInstruction* result = VGather(rm_gathered, reg, reg_iota, state, VecMask::Yes);
+    SetReg(inst->operand_reg, result);
+}
+
 void IREmitter::Pcmpeq(x86_instruction_t* inst, VectorState state) {
     SSAInstruction* rm = GetRm(inst->operand_rm, state);
     SSAInstruction* reg = GetReg(inst->operand_reg);
@@ -604,8 +645,16 @@ SSAInstruction* IREmitter::VSlli(SSAInstruction* value, u8 shift, VectorState st
     return insertInstruction(IROpcode::VSlli, state, {value}, shift);
 }
 
+SSAInstruction* IREmitter::VSrli(SSAInstruction* value, u8 shift, VectorState state) {
+    return insertInstruction(IROpcode::VSrli, state, {value}, shift);
+}
+
 SSAInstruction* IREmitter::VSrai(SSAInstruction* value, u8 shift, VectorState state) {
     return insertInstruction(IROpcode::VSrai, state, {value}, shift);
+}
+
+SSAInstruction* IREmitter::VMSeqi(SSAInstruction* value, VectorState state, u64 imm) {
+    return insertInstruction(IROpcode::VMSeqi, state, {value}, imm);
 }
 
 SSAInstruction* IREmitter::VSlideDowni(SSAInstruction* value, u8 shift, VectorState state) {
@@ -614,6 +663,14 @@ SSAInstruction* IREmitter::VSlideDowni(SSAInstruction* value, u8 shift, VectorSt
 
 SSAInstruction* IREmitter::VSlideUpi(SSAInstruction* value, u8 shift, VectorState state) {
     return insertInstruction(IROpcode::VSlideUpi, state, {value}, shift);
+}
+
+SSAInstruction* IREmitter::VSlide1Up(SSAInstruction* integer, SSAInstruction* vector, VectorState state) {
+    return insertInstruction(IROpcode::VSlide1Up, state, {integer, vector});
+}
+
+SSAInstruction* IREmitter::VSlide1Down(SSAInstruction* integer, SSAInstruction* vector, VectorState state) {
+    return insertInstruction(IROpcode::VSlide1Down, state, {integer, vector});
 }
 
 SSAInstruction* IREmitter::VFSqrt(SSAInstruction* value, VectorState state) {
@@ -1694,6 +1751,10 @@ void IREmitter::Group3(x86_instruction_t* inst) {
     if (result) {
         SetRm(inst->operand_rm, result);
     }
+}
+
+void IREmitter::Group14(x86_instruction_t* inst) {
+    UNIMPLEMENTED();
 }
 
 SSAInstruction* IREmitter::GetThreadStatePointer() {

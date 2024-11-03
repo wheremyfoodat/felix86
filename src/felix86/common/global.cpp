@@ -13,12 +13,16 @@
 
 bool g_verbose = false;
 bool g_quiet = false;
+bool g_aot = false;
 bool g_testing = false;
 bool g_strace = false;
 bool g_dont_optimize = false;
 bool g_print_blocks = false;
+bool g_print_block_start = false;
 bool g_print_state = false;
 bool g_print_disassembly = false;
+bool g_cache_functions = false;
+bool g_coalesce = true;
 bool g_extensions_manually_specified = false;
 u32 g_spilled_count = 0;
 
@@ -119,6 +123,25 @@ void initialize_globals() {
     if (quiet_env) {
         g_quiet = true;
         environment += "\nFELIX86_QUIET";
+    }
+
+    const char* dont_coalesce_env = getenv("FELIX86_NO_COALESCE");
+    if (dont_coalesce_env) {
+        g_coalesce = false;
+        environment += "\nFELIX86_NO_COALESCE";
+    }
+
+    const char* print_start_of_block_env = getenv("FELIX86_PRINT_BLOCK_START");
+    if (print_start_of_block_env) {
+        g_print_block_start = true;
+        environment += "\nFELIX86_PRINT_BLOCK_START";
+    }
+
+    if (!g_testing) {
+        const char* cache_env = getenv("FELIX86_CACHE");
+        if (cache_env) {
+            g_cache_functions = true;
+        }
     }
 
     if (!g_quiet && !environment.empty()) {
