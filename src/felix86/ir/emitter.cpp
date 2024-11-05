@@ -128,6 +128,11 @@ SSAInstruction* IREmitter::Add(SSAInstruction* lhs, SSAInstruction* rhs) {
     return insertInstruction(IROpcode::Add, {lhs, rhs});
 }
 
+SSAInstruction* IREmitter::AddShifted(SSAInstruction* lhs, SSAInstruction* rhs, u8 shift) {
+    ASSERT(shift == 1 || shift == 2 || shift == 3);
+    return insertInstruction(IROpcode::AddShifted, {lhs, rhs}, shift);
+}
+
 SSAInstruction* IREmitter::Addi(SSAInstruction* lhs, i64 rhs) {
     ASSERT(IsValidSigned12BitImm(rhs));
     return insertInstruction(IROpcode::Addi, {lhs}, rhs);
@@ -477,56 +482,75 @@ void IREmitter::Punpckl(x86_instruction_t* inst, VectorState state) {
     // Essentially two "vdecompress" (viota + vrgather) instructions
     // If an element index is out of range ( vs1[i] >= VLMAX ) then zero is returned for the element value.
     // This means we don't care to reduce the splat to only the first two elements
+    // Doing iota with these masks essentially creates something like
+    // [3 3 2 2 1 1 0 0] and [4 3 3 2 2 1 1 0]
+    // And the gather itself is also masked
+    // So for the reg it picks:
+    // [h g f e d c b a]
+    // [4 3 3 2 2 1 1 0]
+    // [0 1 0 1 0 1 0 1]
+    // [x d x c x b x a]
+    // And for the rm it picks:
+    // [p o n m l k j i]
+    // [3 3 2 2 1 1 0 0]
+    // [1 0 1 0 1 0 1 0]
+    // [l x k x j x i x]
+    // Which is the correct interleaving of the two vectors
+    // [h g f e d c b a]
+    // [p o n m l k j i]
+    // -----------------
+    // [l d k c j b i a]
     SSAInstruction* rm_mask = VSplat(Imm(0b10101010), state);
-    SSAInstruction* rm_iota = VIota(rm_mask, state);
     SetVMask(rm_mask);
+    SSAInstruction* rm_iota = VIota(rm_mask, state);
     SSAInstruction* zero = VZero(state);
     SSAInstruction* rm_gathered = VGather(zero, rm, rm_iota, state, VecMask::Yes);
     SSAInstruction* reg_mask = VSplat(Imm(0b01010101), state);
-    SSAInstruction* reg_iota = VIota(reg_mask, state);
     SetVMask(reg_mask);
+    SSAInstruction* reg_iota = VIota(reg_mask, state);
     SSAInstruction* result = VGather(rm_gathered, reg, reg_iota, state, VecMask::Yes);
     SetReg(inst->operand_reg, result);
 }
 
 void IREmitter::Punpckh(x86_instruction_t* inst, VectorState state) {
-    u32 mask1, mask2;
+    int num;
     switch (state) {
-    case VectorState::PackedByte:
-        mask1 = 0b01010101'00000000;
-        mask2 = 0b10101010'00000000;
+    case VectorState::PackedByte: {
+        num = 8;
         break;
-    case VectorState::PackedWord:
-        mask1 = 0b0101'0000;
-        mask2 = 0b1010'0000;
+    }
+    case VectorState::PackedWord: {
+        num = 4;
         break;
-    case VectorState::PackedDWord:
-        mask1 = 0b01'00;
-        mask2 = 0b10'00;
+    }
+    case VectorState::PackedDWord: {
+        num = 2;
         break;
-    case VectorState::PackedQWord:
-        mask1 = 0b10;
-        mask2 = 0b10;
+    }
+    case VectorState::PackedQWord: {
+        num = 1;
         break;
-    default:
+    }
+    default: {
         UNREACHABLE();
         return;
+    }
     }
 
     SSAInstruction* rm = GetRm(inst->operand_rm, state);
     SSAInstruction* reg = GetReg(inst->operand_reg);
-    // Essentially two "vdecompress" (viota + vrgather) instructions
-    // If an element index is out of range ( vs1[i] >= VLMAX ) then zero is returned for the element value.
-    // This means we don't care to reduce the splat to only the first two elements
-    SSAInstruction* rm_mask = VSplat(Imm(mask1), state);
-    SSAInstruction* rm_iota = VIota(rm_mask, state);
+    // Like punpckl but we add a number to pick the high elements
+    SSAInstruction* rm_mask = VSplat(Imm(0b10101010), state);
     SetVMask(rm_mask);
+    SSAInstruction* rm_iota = VIota(rm_mask, state);
+    SSAInstruction* rm_iota_added = VAddi(rm_iota, num, state);
     SSAInstruction* zero = VZero(state);
-    SSAInstruction* rm_gathered = VGather(zero, rm, rm_iota, state, VecMask::Yes);
-    SSAInstruction* reg_mask = VSplat(Imm(mask2), state);
-    SSAInstruction* reg_iota = VIota(reg_mask, state);
+    SSAInstruction* rm_gathered = VGather(zero, rm, rm_iota_added, state, VecMask::Yes);
+    SSAInstruction* reg_mask = VSplat(Imm(0b01010101), state);
     SetVMask(reg_mask);
-    SSAInstruction* result = VGather(rm_gathered, reg, reg_iota, state, VecMask::Yes);
+    SSAInstruction* reg_iota = VIota(reg_mask, state);
+    SSAInstruction* reg_iota_added = VAddi(reg_iota, num, state);
+    SSAInstruction* result = VGather(rm_gathered, reg, reg_iota_added, state, VecMask::Yes);
     SetReg(inst->operand_reg, result);
 }
 
@@ -629,6 +653,10 @@ SSAInstruction* IREmitter::VIota(SSAInstruction* mask, VectorState state) {
     return insertInstruction(IROpcode::VIota, state, {mask});
 }
 
+SSAInstruction* IREmitter::VId(VectorState state) {
+    return insertInstruction(IROpcode::VId, state, {});
+}
+
 SSAInstruction* IREmitter::VGather(SSAInstruction* dest, SSAInstruction* source, SSAInstruction* iota, VectorState state, VecMask masked) {
     SSAInstruction* instruction = insertInstruction(IROpcode::VGather, state, {dest, source, iota});
     if (masked == VecMask::Yes) {
@@ -663,6 +691,10 @@ SSAInstruction* IREmitter::VSlideDowni(SSAInstruction* value, u8 shift, VectorSt
 
 SSAInstruction* IREmitter::VSlideUpi(SSAInstruction* value, u8 shift, VectorState state) {
     return insertInstruction(IROpcode::VSlideUpi, state, {value}, shift);
+}
+
+SSAInstruction* IREmitter::VSlideUpZeroesi(SSAInstruction* value, u8 shift, VectorState state) {
+    return insertInstruction(IROpcode::VSlideUpZeroesi, state, {value}, shift);
 }
 
 SSAInstruction* IREmitter::VSlide1Up(SSAInstruction* integer, SSAInstruction* vector, VectorState state) {
@@ -723,6 +755,10 @@ SSAInstruction* IREmitter::VEqual(SSAInstruction* lhs, SSAInstruction* rhs, Vect
 
 SSAInstruction* IREmitter::VAdd(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state) {
     return insertInstruction(IROpcode::VAdd, state, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VAddi(SSAInstruction* lhs, i64 rhs, VectorState state) {
+    return insertInstruction(IROpcode::VAddi, state, {lhs}, rhs);
 }
 
 SSAInstruction* IREmitter::VSub(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state) {
@@ -802,8 +838,12 @@ SSAInstruction* IREmitter::Lea(const x86_operand_t& operand) {
     SSAInstruction* address = base_final;
     if (index) {
         ASSERT(operand.memory.scale >= 0 && operand.memory.scale <= 3);
-        SSAInstruction* scaled_index = Shli(index, operand.memory.scale);
-        address = Add(base_final, scaled_index);
+        if (Extensions::B || Extensions::Xtheadba) {
+            SSAInstruction* scaled_index = Shli(index, operand.memory.scale);
+            address = Add(base_final, scaled_index);
+        } else {
+            address = AddShifted(base_final, index, operand.memory.scale);
+        }
     }
 
     SSAInstruction* displaced_address = address;
@@ -1360,7 +1400,7 @@ SSAInstruction* IREmitter::VInsertInteger(SSAInstruction* integer, SSAInstructio
 }
 
 void IREmitter::Group1(x86_instruction_t* inst) {
-    x86_group1_e opcode = (x86_group1_e)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
+    ::Group1 opcode = (::Group1)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
 
     x86_size_e size_e = inst->operand_rm.size;
     SSAInstruction* rm = GetRm(inst->operand_rm);
@@ -1372,14 +1412,14 @@ void IREmitter::Group1(x86_instruction_t* inst) {
     SSAInstruction* a = nullptr;
 
     switch (opcode) {
-    case X86_GROUP1_ADD: {
+    case Group1::Add: {
         result = Add(rm, imm);
         c = IsCarryAdd(rm, result, size_e);
         o = IsOverflowAdd(rm, imm, result, size_e);
         a = IsAuxAdd(rm, imm);
         break;
     }
-    case X86_GROUP1_ADC: {
+    case Group1::Adc: {
         SSAInstruction* carry_in = GetFlag(X86_REF_CF);
         SSAInstruction* imm_carry = Add(imm, carry_in);
         result = Add(rm, imm_carry);
@@ -1388,7 +1428,7 @@ void IREmitter::Group1(x86_instruction_t* inst) {
         a = IsAuxAdd(rm, imm_carry);
         break;
     }
-    case X86_GROUP1_SBB: {
+    case Group1::Sbb: {
         SSAInstruction* carry_in = GetFlag(X86_REF_CF);
         SSAInstruction* imm_carry = Add(imm, carry_in);
         result = Sub(rm, imm_carry);
@@ -1397,26 +1437,26 @@ void IREmitter::Group1(x86_instruction_t* inst) {
         a = IsAuxSub(rm, imm_carry);
         break;
     }
-    case X86_GROUP1_OR: {
+    case Group1::Or: {
         result = Or(rm, imm);
         break;
     }
-    case X86_GROUP1_AND: {
+    case Group1::And: {
         result = And(rm, imm);
         break;
     }
-    case X86_GROUP1_SUB: {
+    case Group1::Sub: {
         result = Sub(rm, imm);
         c = IsCarrySub(rm, imm);
         o = IsOverflowSub(rm, imm, result, size_e);
         a = IsAuxSub(rm, imm);
         break;
     }
-    case X86_GROUP1_XOR: {
+    case Group1::Xor: {
         result = Xor(rm, imm);
         break;
     }
-    case X86_GROUP1_CMP: {
+    case Group1::Cmp: {
         result = Sub(rm, imm);
         c = IsCarrySub(rm, imm);
         o = IsOverflowSub(rm, imm, result, size_e);
@@ -1431,13 +1471,13 @@ void IREmitter::Group1(x86_instruction_t* inst) {
 
     SetCPAZSO(c, p, a, z, s, o);
 
-    if (opcode != X86_GROUP1_CMP) {
+    if (opcode != Group1::Cmp) {
         SetRm(inst->operand_rm, result);
     }
 }
 
 void IREmitter::Group2(x86_instruction_t* inst, SSAInstruction* shift_amount) {
-    x86_group2_e opcode = (x86_group2_e)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
+    ::Group2 opcode = (::Group2)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
 
     x86_size_e size_e = inst->operand_rm.size;
     u8 shift_mask = size_e == X86_SIZE_QWORD ? 0x3F : 0x1F;
@@ -1452,29 +1492,29 @@ void IREmitter::Group2(x86_instruction_t* inst, SSAInstruction* shift_amount) {
     SSAInstruction* o = nullptr;
 
     switch (opcode) {
-    case X86_GROUP2_ROL: {
+    case Group2::Rol: {
         result = Rol(rm, shift_value, size_e);
         SSAInstruction* msb = IsNegative(result, size_e);
         c = Andi(result, 1);
         o = Xor(c, msb);
         break;
     }
-    case X86_GROUP2_ROR: {
+    case Group2::Ror: {
         result = Ror(rm, shift_value, size_e);
         c = IsNegative(result, size_e);
         WARN("ROR OF unimplemented");
         break;
     }
-    case X86_GROUP2_RCL: {
+    case Group2::Rcl: {
         ERROR("Why? :(");
         break;
     }
-    case X86_GROUP2_RCR: {
+    case Group2::Rcr: {
         ERROR("Why? :(");
         break;
     }
-    case X86_GROUP2_SAL:
-    case X86_GROUP2_SHL: {
+    case Group2::Sal:
+    case Group2::Shl: {
         SSAInstruction* shift = Sub(Imm(GetBitSize(size_e)), shift_value);
         SSAInstruction* msb_mask = Shl(Imm(1), shift);
         result = Shl(rm, shift_value);
@@ -1483,7 +1523,7 @@ void IREmitter::Group2(x86_instruction_t* inst, SSAInstruction* shift_amount) {
         o = Xor(c, sign);
         break;
     }
-    case X86_GROUP2_SHR: {
+    case Group2::Shr: {
         SSAInstruction* is_zero = Seqz(shift_value);
         SSAInstruction* shift = Addi(shift_value, -1);
         SSAInstruction* mask = Shl(Imm(1), shift);
@@ -1492,7 +1532,7 @@ void IREmitter::Group2(x86_instruction_t* inst, SSAInstruction* shift_amount) {
         o = IsNegative(rm, size_e);
         break;
     }
-    case X86_GROUP2_SAR: {
+    case Group2::Sar: {
         // Shift left to place MSB to bit 63
         u8 anti_shift = 64 - GetBitSize(size_e);
         SSAInstruction* shifted_left = Shli(rm, anti_shift);
@@ -1517,7 +1557,7 @@ void IREmitter::Group2(x86_instruction_t* inst, SSAInstruction* shift_amount) {
 }
 
 void IREmitter::Group3(x86_instruction_t* inst) {
-    x86_group3_e opcode = (x86_group3_e)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
+    ::Group3 opcode = (::Group3)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
 
     x86_size_e size_e = inst->operand_rm.size;
     SSAInstruction* rm = GetRm(inst->operand_rm);
@@ -1530,8 +1570,8 @@ void IREmitter::Group3(x86_instruction_t* inst) {
     SSAInstruction* o = nullptr;
 
     switch (opcode) {
-    case X86_GROUP3_TEST:
-    case X86_GROUP3_TEST_: {
+    case Group3::Test:
+    case Group3::Test_: {
         SSAInstruction* imm = Imm(ImmSext(inst->operand_imm.immediate.data, inst->operand_imm.size));
         SSAInstruction* masked = And(rm, imm);
         s = IsNegative(masked, size_e);
@@ -1539,11 +1579,11 @@ void IREmitter::Group3(x86_instruction_t* inst) {
         p = Parity(masked);
         break;
     }
-    case X86_GROUP3_NOT: {
+    case Group3::Not: {
         result = Not(rm);
         break;
     }
-    case X86_GROUP3_NEG: {
+    case Group3::Neg: {
         result = Neg(rm);
         z = IsZero(result, size_e);
         c = Seqz(z);
@@ -1553,7 +1593,7 @@ void IREmitter::Group3(x86_instruction_t* inst) {
         p = Parity(result);
         break;
     }
-    case X86_GROUP3_MUL: {
+    case Group3::Mul: {
         switch (size_e) {
         case X86_SIZE_BYTE: {
             SSAInstruction* al = Zext(GetReg(X86_REF_RAX, X86_SIZE_BYTE), X86_SIZE_BYTE);
@@ -1594,7 +1634,7 @@ void IREmitter::Group3(x86_instruction_t* inst) {
         }
         break;
     }
-    case X86_GROUP3_IMUL: {
+    case Group3::IMul: {
         switch (size_e) {
         case X86_SIZE_BYTE: {
             SSAInstruction* al = Sext(GetReg(X86_REF_RAX, X86_SIZE_BYTE), X86_SIZE_BYTE);
@@ -1635,7 +1675,7 @@ void IREmitter::Group3(x86_instruction_t* inst) {
         }
         break;
     }
-    case X86_GROUP3_DIV: {
+    case Group3::Div: {
         switch (size_e) {
         case X86_SIZE_BYTE: {
             // ax / rm, al := quotient, ah := remainder
@@ -1688,7 +1728,7 @@ void IREmitter::Group3(x86_instruction_t* inst) {
         }
         break;
     }
-    case X86_GROUP3_IDIV: {
+    case Group3::IDiv: {
         switch (size_e) {
         case X86_SIZE_BYTE: {
             // ax / rm, al := quotient, ah := remainder
@@ -1754,7 +1794,52 @@ void IREmitter::Group3(x86_instruction_t* inst) {
 }
 
 void IREmitter::Group14(x86_instruction_t* inst) {
-    UNIMPLEMENTED();
+    ::Group14 opcode = (::Group14)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
+    ASSERT(inst->operand_rm.type == X86_OP_TYPE_REGISTER);
+    switch (opcode) {
+        case Group14::PSrlQ: {
+            u8 shift = inst->operand_imm.immediate.data & 0x3F;
+            SSAInstruction* reg = GetRm(inst->operand_rm);
+            SSAInstruction* shifted;
+            if (shift > 31) {
+                shifted = VSrl(reg, Imm(shift), VectorState::PackedQWord);
+            } else {
+                shifted = VSrli(reg, shift, VectorState::PackedQWord);
+            }
+            SetRm(inst->operand_rm, shifted);
+            break;
+        }
+        case Group14::PSllQ: {
+            u8 shift = inst->operand_imm.immediate.data & 0x3F;
+            SSAInstruction* reg = GetRm(inst->operand_rm);
+            SSAInstruction* shifted;
+            if (shift > 31) {
+                shifted = VSll(reg, Imm(shift), VectorState::PackedQWord);
+            } else {
+                shifted = VSlli(reg, shift, VectorState::PackedQWord);
+            }
+            SetRm(inst->operand_rm, shifted);
+            break;
+        }
+        case Group14::PSrlDQ: {
+            u8 shift = inst->operand_imm.immediate.data & 0x3F;
+            if (shift > 15) 
+                shift = 16;
+            SSAInstruction* reg = GetRm(inst->operand_rm);
+            SSAInstruction* shifted = VSlideDowni(reg, shift, VectorState::PackedByte);
+            SetRm(inst->operand_rm, shifted);
+            break;
+        }
+        case Group14::PSllDQ: {
+            u8 shift = inst->operand_imm.immediate.data & 0x3F;
+            if (shift > 15) 
+                shift = 16;
+            SSAInstruction* reg = GetRm(inst->operand_rm);
+            SSAInstruction* shifted = VSlideUpZeroesi(reg, shift, VectorState::PackedByte);
+            SetRm(inst->operand_rm, shifted);
+            break;
+        }
+    }
 }
 
 SSAInstruction* IREmitter::GetThreadStatePointer() {

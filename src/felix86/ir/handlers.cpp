@@ -780,7 +780,7 @@ IR_HANDLE(std) { // std - 0xfd
 
 IR_HANDLE(group4) { // inc/dec rm8 - 0xfe
     x86_size_e size_e = inst->operand_reg.size;
-    x86_group4_e opcode = (x86_group4_e)(inst->operand_reg.reg.ref - X86_REF_RAX);
+    Group4 opcode = (Group4)(inst->operand_reg.reg.ref - X86_REF_RAX);
 
     SSAInstruction* rm = ir.GetRm(inst->operand_rm);
     SSAInstruction* one = ir.Imm(1);
@@ -790,20 +790,20 @@ IR_HANDLE(group4) { // inc/dec rm8 - 0xfe
     SSAInstruction* a = nullptr;
 
     switch (opcode) {
-    case X86_GROUP4_INC: {
+    case Group4::Inc: {
         result = ir.Addi(rm, 1);
         o = ir.IsOverflowAdd(rm, one, result, size_e);
         a = ir.IsAuxAdd(rm, one);
         break;
     }
-    case X86_GROUP4_DEC: {
+    case Group4::Dec: {
         result = ir.Addi(rm, -1);
         o = ir.IsOverflowSub(rm, one, result, size_e);
         a = ir.IsAuxSub(rm, one);
         break;
     }
     default: {
-        ERROR("Unknown opcode for group4: %02x", opcode);
+        ERROR("Unknown opcode for group4: %02x", (int)opcode);
         break;
     }
     }
@@ -817,9 +817,9 @@ IR_HANDLE(group4) { // inc/dec rm8 - 0xfe
 }
 
 IR_HANDLE(group5) { // inc/dec/call/jmp/push rm32 - 0xff
-    x86_group5_e opcode = (x86_group5_e)(inst->operand_reg.reg.ref - X86_REF_RAX);
+    Group5 opcode = (Group5)(inst->operand_reg.reg.ref - X86_REF_RAX);
     switch (opcode) {
-    case X86_GROUP5_INC: {
+    case Group5::Inc: {
         x86_size_e size_e = inst->operand_rm.size;
         SSAInstruction* rm = ir.GetRm(inst->operand_rm);
         SSAInstruction* one = ir.Imm(1);
@@ -833,7 +833,7 @@ IR_HANDLE(group5) { // inc/dec/call/jmp/push rm32 - 0xff
         ir.SetRm(inst->operand_rm, result);
         break;
     }
-    case X86_GROUP5_DEC: {
+    case Group5::Dec: {
         x86_size_e size_e = inst->operand_rm.size;
         SSAInstruction* rm = ir.GetRm(inst->operand_rm);
         SSAInstruction* one = ir.Imm(1);
@@ -847,7 +847,7 @@ IR_HANDLE(group5) { // inc/dec/call/jmp/push rm32 - 0xff
         ir.SetRm(inst->operand_rm, result);
         break;
     }
-    case X86_GROUP5_CALL: {
+    case Group5::Call: {
         x86_operand_t rm_op = inst->operand_rm;
         rm_op.size = X86_SIZE_QWORD;
         u64 return_address = ir.GetCurrentAddress() + inst->length;
@@ -862,7 +862,7 @@ IR_HANDLE(group5) { // inc/dec/call/jmp/push rm32 - 0xff
         ir.Exit();
         break;
     }
-    case X86_GROUP5_JMP: {
+    case Group5::Jmp: {
         x86_operand_t rm_op = inst->operand_rm;
         rm_op.size = X86_SIZE_QWORD;
         SSAInstruction* rm = ir.GetRm(rm_op);
@@ -872,7 +872,7 @@ IR_HANDLE(group5) { // inc/dec/call/jmp/push rm32 - 0xff
         break;
     }
     default: {
-        ERROR("Unimplemented group 5 opcode: %02x during %016lx", opcode, ir.GetCurrentAddress());
+        ERROR("Unimplemented group 5 opcode: %02x during %016lx", (int)opcode, ir.GetCurrentAddress());
         break;
     }
     }
@@ -921,25 +921,25 @@ IR_HANDLE(syscall) { // syscall - 0x0f 0x05
     ir.Syscall();
 }
 
-IR_HANDLE(movhps_xmm_m64) {
-    if (inst->operand_rm.type != X86_OP_TYPE_MEMORY) {
-        ERROR("movhps xmm, m64 but m64 is not a memory operand");
-    }
-
+IR_HANDLE(movhps_xmm_xmm64) {
     SSAInstruction* low = ir.GetReg(inst->operand_reg);
     SSAInstruction* high;
     if (inst->operand_rm.type == X86_OP_TYPE_MEMORY) {
-        inst->operand_rm.size = X86_SIZE_QWORD;
-        SSAInstruction* m64 = ir.GetRm(inst->operand_rm);
-        high = ir.IToV(m64, VectorState::PackedQWord);
+        high = ir.GetRm(inst->operand_rm, VectorState::Double);
     } else {
-        inst->operand_rm.size = X86_SIZE_XMM;
         high = ir.GetReg(inst->operand_rm);
     }
     SSAInstruction* shifted = ir.VSlideUpi(high, 1, VectorState::PackedQWord);
     ir.SetVMask(ir.VSplati(0b10, VectorState::PackedQWord));
     SSAInstruction* result = ir.VMerge(shifted, low, VectorState::PackedQWord);
     ir.SetReg(inst->operand_reg, result);
+}
+
+IR_HANDLE(movhps_m64_xmm) {
+    ASSERT(inst->operand_rm.type == X86_OP_TYPE_MEMORY);
+    SSAInstruction* xmm = ir.GetReg(inst->operand_reg);
+    SSAInstruction* slide = ir.VSlideDowni(xmm, 1, VectorState::PackedQWord);
+    ir.SetRm(inst->operand_rm, slide, VectorState::Double);
 }
 
 IR_HANDLE(mov_xmm128_xmm) { // movups/movaps xmm128, xmm - 0x0f 0x29
@@ -987,6 +987,42 @@ IR_HANDLE(imul_r32_rm32) { // imul r32/64, rm32/64 - 0x0f 0xaf
     SSAInstruction* reg = ir.GetReg(inst->operand_reg);
     SSAInstruction* result = ir.Mul(ir.Sext(reg, size_e), ir.Sext(rm, size_e));
     ir.SetReg(inst->operand_reg, result);
+
+    // Check if top bits are not sign extension of bottom bits
+    switch (size_e) {
+    case X86_SIZE_WORD: {
+        SSAInstruction* result_high = ir.Shri(result, 16);
+        SSAInstruction* sext = ir.Sext(result, X86_SIZE_WORD);
+        SSAInstruction* masked = ir.And(result_high, ir.Imm(0xffff));
+        SSAInstruction* sext_masked = ir.And(sext, ir.Imm(0xffff));
+        SSAInstruction* not_equal = ir.NotEqual(masked, sext_masked);
+        ir.SetFlag(not_equal, X86_REF_OF);
+        ir.SetFlag(not_equal, X86_REF_CF);
+        break;
+    }
+    case X86_SIZE_DWORD: {
+        SSAInstruction* result_high = ir.Shri(result, 32);
+        SSAInstruction* sext = ir.Sext(result, X86_SIZE_DWORD);
+        SSAInstruction* masked = ir.And(result_high, ir.Imm(0xffffffff));
+        SSAInstruction* sext_masked = ir.And(sext, ir.Imm(0xffffffff));
+        SSAInstruction* not_equal = ir.NotEqual(masked, sext_masked);
+        ir.SetFlag(not_equal, X86_REF_OF);
+        ir.SetFlag(not_equal, X86_REF_CF);
+        break;
+    }
+    case X86_SIZE_QWORD: {
+        SSAInstruction* result_high = ir.Mulh(reg, rm);
+        SSAInstruction* sext = ir.Sari(result, 63);
+        SSAInstruction* not_equal = ir.NotEqual(result_high, sext);
+        ir.SetFlag(not_equal, X86_REF_OF);
+        ir.SetFlag(not_equal, X86_REF_CF);
+        break;
+    }
+    default: {
+        UNREACHABLE();
+        break;
+    }
+    }
 }
 
 IR_HANDLE(cmpxchg) { // cmpxchg - 0x0f 0xb0-0xb1
@@ -1102,6 +1138,7 @@ IR_HANDLE(punpckhqdq) { // punpckhqdq xmm, xmm/m128 - 0x66 0x0f 0x6d
 }
 
 IR_HANDLE(pshufd) { // pshufd xmm, xmm/m128, imm8 - 0x66 0x0f 0x70
+    ASSERT(inst->operand_rm.size == X86_SIZE_XMM);
     u8 imm = inst->operand_imm.immediate.data;
     u8 el0 = imm & 0b11;
     u8 el1 = (imm >> 2) & 0b11;

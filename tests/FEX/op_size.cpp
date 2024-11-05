@@ -1,7 +1,7 @@
 #include "fex_test_loader.hpp"
 
 #define OP_SIZE(opcode)                                                                                                                              \
-    CATCH_TEST_CASE("OpSize_" #opcode, "[FEX][OpSize]") {                                                                                            \
+    CATCH_TEST_CASE("66_" #opcode, "[FEX][OpSize]") {                                                                                                \
         FEXTestLoader::RunTest("ASM/OpSize/66_" #opcode ".asm");                                                                                     \
     }
 
@@ -31,6 +31,7 @@ OP_SIZE(6C)
 OP_SIZE(6D)
 OP_SIZE(6E)
 OP_SIZE(70)
+OP_SIZE(73)
 OP_SIZE(74)
 OP_SIZE(75)
 OP_SIZE(76)

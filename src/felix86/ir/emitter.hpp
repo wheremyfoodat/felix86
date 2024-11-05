@@ -55,6 +55,7 @@ struct IREmitter {
 
     SSAInstruction* Imm(u64 value);
     SSAInstruction* Add(SSAInstruction* lhs, SSAInstruction* rhs);
+    SSAInstruction* AddShifted(SSAInstruction* lhs, SSAInstruction* rhs, u8 shift);
     SSAInstruction* Addi(SSAInstruction* lhs, i64 rhs);
     SSAInstruction* Sub(SSAInstruction* lhs, SSAInstruction* rhs);
     SSAInstruction* Shl(SSAInstruction* lhs, SSAInstruction* rhs);
@@ -108,6 +109,7 @@ struct IREmitter {
     // Compares [Address] with Expected and if equal, stores Source in [Address]. Also returns original value at [Address].
     SSAInstruction* AmoCAS(SSAInstruction* address, SSAInstruction* expected, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size);
     SSAInstruction* VIota(SSAInstruction* mask, VectorState state);
+    SSAInstruction* VId(VectorState state);
     SSAInstruction* VSplat(SSAInstruction* value, VectorState state);
     SSAInstruction* VSplati(u64 imm, VectorState state);
     SSAInstruction* VMerge(SSAInstruction* true_value, SSAInstruction* false_value, VectorState state);
@@ -115,16 +117,20 @@ struct IREmitter {
     SSAInstruction* VZero(VectorState state);
     SSAInstruction* VGather(SSAInstruction* dest, SSAInstruction* source, SSAInstruction* iota, VectorState state, VecMask masked = VecMask::No);
     SSAInstruction* VEqual(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
+    SSAInstruction* VSll(SSAInstruction* value, SSAInstruction* shift, VectorState state);
     SSAInstruction* VSlli(SSAInstruction* value, u8 shift, VectorState state);
+    SSAInstruction* VSrl(SSAInstruction* value, SSAInstruction* shift, VectorState state);
     SSAInstruction* VSrli(SSAInstruction* value, u8 shift, VectorState state);
     SSAInstruction* VSrai(SSAInstruction* value, u8 shift, VectorState state);
     SSAInstruction* VMSeqi(SSAInstruction* value, VectorState state, u64 imm);
     SSAInstruction* VSlideUpi(SSAInstruction* value, u8 shift, VectorState state);
+    SSAInstruction* VSlideUpZeroesi(SSAInstruction* value, u8 shift, VectorState state);
     SSAInstruction* VSlideDowni(SSAInstruction* value, u8 shift, VectorState state);
     SSAInstruction* VSlide1Up(SSAInstruction* integer, SSAInstruction* vector, VectorState state);
     SSAInstruction* VSlide1Down(SSAInstruction* integer, SSAInstruction* vector, VectorState state);
     SSAInstruction* VZext(SSAInstruction* value, x86_size_e size);
     SSAInstruction* VAdd(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
+    SSAInstruction* VAddi(SSAInstruction* lhs, i64 imm, VectorState state);
     SSAInstruction* VSub(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
     SSAInstruction* VAnd(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
     SSAInstruction* VOr(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);

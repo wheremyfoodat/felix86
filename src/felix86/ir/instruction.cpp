@@ -363,6 +363,11 @@ std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands,
         ret += fmt::format("{} <- {} {} {}", GetNameString(name), GetNameString(operands[0]), "+", GetNameString(operands[1]));
         break;
     }
+    case IROpcode::AddShifted: {
+        ret +=
+            fmt::format("{} <- {} {} ({} << {}) ", GetNameString(name), GetNameString(operands[0]), "+", GetNameString(operands[1]), immediate_data);
+        break;
+    }
     case IROpcode::Addi: {
         ret += fmt::format("{} <- {} {} 0x{:x}", GetNameString(name), GetNameString(operands[0]), "+", (i64)immediate_data);
         ;
@@ -845,6 +850,14 @@ std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands,
                            GetNameString(operands[1]));
         break;
     }
+    case IROpcode::VAddi: {
+        ret += fmt::format("{} <- {}({}: {}, 0x{:x})", GetNameString(name), "vaddi", "src", GetNameString(operands[0]), immediate_data);
+        break;
+    }
+    case IROpcode::VId: {
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vid", "src", GetNameString(operands[0]));
+        break;
+    }
     case IROpcode::VIota: {
         ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "viota", "src", GetNameString(operands[0]));
         break;
@@ -870,8 +883,18 @@ std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands,
         ret += fmt::format("{} <- {}({}: {}, 0x{:x})", GetNameString(name), "vslli", "src", GetNameString(operands[0]), immediate_data);
         break;
     }
+    case IROpcode::VSll: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vsll", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
+        break;
+    }
     case IROpcode::VSrli: {
         ret += fmt::format("{} <- {}({}: {}, 0x{:x})", GetNameString(name), "vsrli", "src", GetNameString(operands[0]), immediate_data);
+        break;
+    }
+    case IROpcode::VSrl: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vsrl", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
         break;
     }
     case IROpcode::VSrai: {
@@ -888,6 +911,10 @@ std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands,
     }
     case IROpcode::VSlideUpi: {
         ret += fmt::format("{} <- {}({}: {}, 0x{:x})", GetNameString(name), "vslideupi", "src", GetNameString(operands[0]), immediate_data);
+        break;
+    }
+    case IROpcode::VSlideUpZeroesi: {
+        ret += fmt::format("{} <- {}({}: {}, 0x{:x})", GetNameString(name), "vslideupzeroesi", "src", GetNameString(operands[0]), immediate_data);
         break;
     }
     case IROpcode::VSlide1Up: {
