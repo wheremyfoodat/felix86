@@ -1,18 +1,18 @@
 #include "FEX/fex_test_loader.hpp"
 
 #define PRIMARY_TEST(opcode)                                                                                                                         \
-    CATCH_TEST_CASE("Primary_" #opcode, "[FEX][Primary]") {                                                                                          \
+    CATCH_TEST_CASE("Primary_" #opcode, "Primary") {                                                                                                 \
         FEXTestLoader::RunTest("ASM/Primary/Primary_" #opcode ".asm");                                                                               \
     }
 
 #define PRIMARY_TEST_NO_PREFIX(opcode)                                                                                                               \
-    CATCH_TEST_CASE("Primary_" #opcode, "[FEX][Primary]") {                                                                                          \
+    CATCH_TEST_CASE("Primary_" #opcode, "Primary") {                                                                                                 \
         FEXTestLoader::RunTest("ASM/Primary/" #opcode ".asm");                                                                                       \
     }
 
-#define PRIMARY_TEST_BASE(name)  \
-    CATCH_TEST_CASE(#name, "[FEX]") { \
-        FEXTestLoader::RunTest("ASM/" #name ".asm"); \
+#define PRIMARY_TEST_BASE(name)                                                                                                                      \
+    CATCH_TEST_CASE(#name, "[FEX]") {                                                                                                                \
+        FEXTestLoader::RunTest("ASM/" #name ".asm");                                                                                                 \
     }
 
 #define PRIMARY_TEST_KNOWN_FAILURE(opcode)
@@ -91,10 +91,13 @@ PRIMARY_TEST(E9)
 PRIMARY_TEST(EB)
 
 PRIMARY_TEST_BASE(lea)
-PRIMARY_TEST_BASE(pslldq)
 
 PRIMARY_TEST_NO_PREFIX(SHL)
 PRIMARY_TEST_NO_PREFIX(SHR)
+PRIMARY_TEST_NO_PREFIX(ROL_Flags)
+PRIMARY_TEST_NO_PREFIX(ROL_OF)
+PRIMARY_TEST_NO_PREFIX(ROR_Flags)
+PRIMARY_TEST_NO_PREFIX(ROR_OF)
 
 // Need unaligned atomics
 PRIMARY_TEST_KNOWN_FAILURE(01_Atomic16)

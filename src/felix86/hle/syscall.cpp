@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "felix86/common/log.hpp"
@@ -33,9 +34,6 @@ enum {
 };
 
 consteval int match_host(int syscall) {
-#if defined(__x86_64__)
-    return syscall;
-#elif defined(__riscv)
 #define X(name)                                                                                                                                      \
     case felix86_x86_64_##name:                                                                                                                      \
         return felix86_riscv64_##name;
@@ -47,16 +45,9 @@ consteval int match_host(int syscall) {
         return -1;
     }
 #undef X
-#else
-#error "What are you trying to compile on!?"
-#endif
 }
 
-#ifdef __x86_64__
-static_assert(match_host(felix86_x86_64_setxattr) == felix86_x86_64_setxattr);
-#elif defined(__riscv)
 static_assert(match_host(felix86_x86_64_setxattr) == felix86_riscv64_setxattr);
-#endif
 
 const char* print_syscall_name(u64 syscall_number) {
     switch (syscall_number) {
@@ -172,14 +163,30 @@ void felix86_syscall(Emulator* emulator, ThreadState* state) {
         STRACE("mprotect(%p, %016lx, %d) = %016lx", (void*)rdi, rsi, (int)rdx, result);
         break;
     }
+    case felix86_x86_64_close: {
+        result = HOST_SYSCALL(close, rdi);
+        STRACE("close(%d) = %d", (int)rdi, (int)result);
+        break;
+    }
     case felix86_x86_64_fstat: {
         x64Stat* guest_stat = (x64Stat*)rsi;
         struct stat host_stat;
         result = HOST_SYSCALL(fstat, rdi, &host_stat);
+        STRACE("fstat(%d, %p) = %d", (int)rdi, (void*)rsi, (int)result);
         if (result != -1) {
             *guest_stat = host_stat;
+            // print every stat member
+            STRACE("st_dev : %ld", guest_stat->st_dev);
+            STRACE("st_ino : %ld", guest_stat->st_ino);
+            STRACE("st_mode : %d", guest_stat->st_mode);
+            STRACE("st_nlink : %ld", guest_stat->st_nlink);
+            STRACE("st_uid : %d", guest_stat->st_uid);
+            STRACE("st_gid : %d", guest_stat->st_gid);
+            STRACE("st_rdev : %ld", guest_stat->st_rdev);
+            STRACE("st_size : %ld", guest_stat->st_size);
+            STRACE("st_blksize : %ld", guest_stat->st_blksize);
+            STRACE("st_blocks : %ld", guest_stat->st_blocks);
         }
-        STRACE("fstat(%d, %p) = %d", (int)rdi, (void*)rsi, (int)result);
         break;
     }
     case felix86_x86_64_ioctl: {
@@ -192,9 +199,44 @@ void felix86_syscall(Emulator* emulator, ThreadState* state) {
         STRACE("write(%d, %s, %d) = %d", (int)rdi, (const char*)rsi, (int)rdx, (int)result);
         break;
     }
+    case felix86_x86_64_writev: {
+        result = HOST_SYSCALL(writev, rdi, (const struct iovec*)rsi, rdx);
+        STRACE("writev(%d, %p, %d) = %d", (int)rdi, (void*)rsi, (int)rdx, (int)result);
+        break;
+    }
     case felix86_x86_64_exit_group: {
         VERBOSE("Emulator called exit_group(%d)", (int)rdi);
         result = HOST_SYSCALL(exit_group, rdi);
+        break;
+    }
+    case felix86_x86_64_access: {
+        result = fs.FAccessAt(AT_FDCWD, (const char*)rdi, rsi, 0);
+        STRACE("access(%s, %d) = %d", (const char*)rdi, (int)rsi, (int)result);
+        break;
+    }
+    case felix86_x86_64_read: {
+        result = HOST_SYSCALL(read, rdi, (void*)rsi, rdx);
+        STRACE("read(%d, %p, %d) = %d", (int)rdi, (void*)rsi, (int)rdx, (int)result);
+        break;
+    }
+    case felix86_x86_64_openat: {
+        result = fs.OpenAt(rdi, (const char*)rsi, rdx, r10);
+        STRACE("openat(%d, %s, %d, %d) = %d", (int)rdi, (const char*)rsi, (int)rdx, (int)r10, (int)result);
+        break;
+    }
+    case felix86_x86_64_pread64: {
+        result = HOST_SYSCALL(pread64, rdi, (void*)rsi, rdx, r10);
+        STRACE("pread64(%d, %p, %d, %d) = %d", (int)rdi, (void*)rsi, (int)rdx, (int)r10, (int)result);
+        break;
+    }
+    case felix86_x86_64_mmap: {
+        result = HOST_SYSCALL(mmap, rdi, rsi, rdx, r10, r8, r9);
+        STRACE("mmap(%p, %016lx, %d, %d, %d, %d) = %016lx", (void*)rdi, rsi, (int)rdx, (int)r10, (int)r8, (int)r9, result);
+        break;
+    }
+    case felix86_x86_64_munmap: {
+        result = HOST_SYSCALL(munmap, rdi, rsi);
+        STRACE("munmap(%p, %016lx) = %016lx", (void*)rdi, rsi, result);
         break;
     }
     default: {

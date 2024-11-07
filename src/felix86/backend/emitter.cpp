@@ -7,6 +7,12 @@
 
 namespace {
 
+void felix86_rdtsc(ThreadState* state) {
+    WARN("Rdtsc called, ignoring...");
+    state->SetGpr(X86_REF_RAX, 0);
+    state->SetGpr(X86_REF_RDX, 0);
+}
+
 biscuit::GPR Push(Backend& backend, biscuit::GPR Rs) {
     AS.ADDI(Registers::StackPointer(), Registers::StackPointer(), -8);
     AS.SD(Rs, 0, Registers::StackPointer());
@@ -24,6 +30,7 @@ void EmitCrash(Backend& backend, ExitReason reason) {
 }
 
 void SoftwareCtz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u32 size) {
+    ASSERT(Rd != Rs);
     const auto& gprs = Registers::GetAllocatableGPRs();
     biscuit::GPR mask = Push(backend, gprs[0]);
     biscuit::GPR counter = Push(backend, gprs[1]);
@@ -50,6 +57,7 @@ using Operation = std::function<void(biscuit::Assembler&, biscuit::GPR, biscuit:
 
 void SoftwareAtomicFetchRMW8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, biscuit::GPR Address, biscuit::Ordering ordering,
                              Operation operation) {
+    ASSERT(Rd != Rs && Rd != Address);
     if (ordering != biscuit::Ordering::AQRL) {
         UNIMPLEMENTED();
     }
@@ -103,6 +111,7 @@ void SoftwareAtomicFetchRMW8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs,
 
 void SoftwareAtomicFetchRMW16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, biscuit::GPR Address, biscuit::Ordering ordering,
                               Operation operation) {
+    ASSERT(Rd != Rs && Rd != Address);
     if (ordering != biscuit::Ordering::AQRL) {
         UNIMPLEMENTED();
     }
@@ -305,7 +314,13 @@ void Emitter::EmitImmediate(Backend& backend, biscuit::GPR Rd, u64 immediate) {
 }
 
 void Emitter::EmitRdtsc(Backend& backend) {
-    UNREACHABLE();
+    EmitPushAllCallerSaved(backend);
+
+    AS.MV(a0, Registers::ThreadStatePointer());
+    AS.LI(a1, (u64)felix86_rdtsc);
+    AS.JALR(a1);
+
+    EmitPopAllCallerSaved(backend);
 }
 
 void Emitter::EmitSyscall(Backend& backend) {
@@ -356,28 +371,28 @@ void Emitter::EmitZext8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
 }
 
 void Emitter::EmitZext16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    AS.SLLI(Rd, Rs, 48);
-    AS.SRLI(Rd, Rd, 48);
+    if (Extensions::B) {
+        AS.ZEXTH(Rd, Rs);
+    } else {
+        AS.SLLI(Rd, Rs, 48);
+        AS.SRLI(Rd, Rd, 48);
+    }
 }
 
 void Emitter::EmitZext32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    AS.SLLI(Rd, Rs, 32);
-    AS.SRLI(Rd, Rd, 32);
+    if (Extensions::B) {
+        AS.ZEXTW(Rd, Rs);
+    } else {
+        AS.SLLI(Rd, Rs, 32);
+        AS.SRLI(Rd, Rd, 32);
+    }
 }
 
 void Emitter::EmitClz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    AS.CLZ(Rd, Rs);
-}
-
-void Emitter::EmitCtzh(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    SoftwareCtz(backend, Rd, Rs, 16);
-}
-
-void Emitter::EmitCtzw(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
     if (Extensions::B) {
-        AS.CTZW(Rd, Rs);
+        AS.CLZ(Rd, Rs);
     } else {
-        SoftwareCtz(backend, Rd, Rs, 32);
+        ERROR("IMPLME: SoftwareClz");
     }
 }
 
@@ -423,6 +438,7 @@ void Emitter::EmitParity(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
             0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,
             1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
         };
+        static_assert(sizeof(bitcount) == 256, "Invalid bitcount table size");
         // clang-format on
 
         AS.LI(t0, (u64)&bitcount);
@@ -846,6 +862,32 @@ void Emitter::EmitAmoCAS64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Addre
     }
 }
 
+void Emitter::EmitCZeroEqz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, biscuit::GPR Cond) {
+    if (Extensions::Zicond) {
+        AS.CZERO_EQZ(Rd, Rs, Cond);
+    } else {
+        Label eqz;
+        if (Rd != Rs)
+            AS.MV(Rd, Rs);
+        AS.BNEZ(Cond, &eqz);
+        AS.LI(Rd, 0);
+        AS.Bind(&eqz);
+    }
+}
+
+void Emitter::EmitCZeroNez(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, biscuit::GPR Cond) {
+    if (Extensions::Zicond) {
+        AS.CZERO_NEZ(Rd, Rs, Cond);
+    } else {
+        Label nez;
+        if (Rd != Rs)
+            AS.MV(Rd, Rs);
+        AS.BEQZ(Cond, &nez);
+        AS.LI(Rd, 0);
+        AS.Bind(&nez);
+    }
+}
+
 void Emitter::EmitSub(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
     AS.SUB(Rd, Rs1, Rs2);
 }
@@ -948,40 +990,12 @@ void Emitter::EmitSari(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, i64 i
     }
 }
 
-void Emitter::EmitRol8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
-    AS.ANDI(t0, Rs2, 0x7);
-    AS.SLLW(Rd, Rs1, t0);
-    AS.NEG(t0, t0);
-    AS.ANDI(t0, t0, 0x7);
-    AS.SRLW(t0, Rs1, t0);
-    AS.OR(Rd, Rd, t0);
-    AS.ANDI(Rd, Rd, 0xFF);
-}
-
-void Emitter::EmitRol16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
-    AS.ANDI(t0, Rs2, 0x1F);
-    AS.SLLW(Rd, Rs1, t0);
-    AS.NEG(t0, t0);
-    AS.ANDI(t0, t0, 0x1F);
-    AS.SRLW(t0, Rs1, t0);
-    AS.OR(Rd, Rd, t0);
-    AS.ZEXTH(Rd, Rd);
-}
-
 void Emitter::EmitRol32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
     AS.ROLW(Rd, Rs1, Rs2);
 }
 
 void Emitter::EmitRol64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
     AS.ROL(Rd, Rs1, Rs2);
-}
-
-void Emitter::EmitRor8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
-    UNIMPLEMENTED();
-}
-
-void Emitter::EmitRor16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
-    UNIMPLEMENTED();
 }
 
 void Emitter::EmitRor32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
@@ -1059,14 +1073,14 @@ void Emitter::EmitSelect(Backend& backend, biscuit::GPR Rd, biscuit::GPR Conditi
         AS.CZERO_EQZ(Rd, RsTrue, Condition);
         AS.OR(Rd, Rd, t0);
     } else {
-        if (Rd != RsFalse) {
+        if (Rd != RsFalse && Rd != Condition) {
             Label true_label;
             AS.MV(Rd, RsTrue);
             AS.BNEZ(Condition, &true_label);
             AS.MV(Rd, RsFalse);
             AS.Bind(&true_label);
         } else {
-            // If Rd == RsFalse we can't do this shorthand mode above.
+            // If Rd == RsFalse || Rd == Condition we can't do this shorthand mode above.
             Label true_label, end_label;
             AS.BNEZ(Condition, &true_label);
             AS.MV(Rd, RsFalse);

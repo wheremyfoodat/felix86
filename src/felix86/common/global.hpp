@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include "felix86/common/utility.hpp"
 
 #define SUPPORTED_VLEN 128
@@ -16,7 +17,15 @@ extern bool g_print_disassembly;
 extern bool g_cache_functions;
 extern bool g_coalesce;
 extern bool g_extensions_manually_specified;
+extern int g_output_fd;
 extern u32 g_spilled_count;
+extern std::filesystem::path g_rootfs_path;
+extern u64 g_interpreter_start, g_interpreter_end;
+extern u64 g_executable_start, g_executable_end;
+extern thread_local ThreadState* g_thread_state;
+extern u64 g_interpreter_base_hint;
+extern u64 g_executable_base_hint;
+extern const char* g_git_hash;
 
 bool parse_extensions(const char* ext);
 void initialize_globals();

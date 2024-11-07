@@ -69,8 +69,6 @@ struct IREmitter {
     SSAInstruction* Select(SSAInstruction* cond, SSAInstruction* true_value, SSAInstruction* false_value);
     SSAInstruction* Clz(SSAInstruction* value);
     SSAInstruction* Ctz(SSAInstruction* value);
-    SSAInstruction* Ctzh(SSAInstruction* value);
-    SSAInstruction* Ctzw(SSAInstruction* value);
     SSAInstruction* Parity(SSAInstruction* value);
     SSAInstruction* And(SSAInstruction* lhs, SSAInstruction* rhs);
     SSAInstruction* Andi(SSAInstruction* lhs, u64 rhs);
@@ -108,6 +106,8 @@ struct IREmitter {
     SSAInstruction* AmoSwap(SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size);
     // Compares [Address] with Expected and if equal, stores Source in [Address]. Also returns original value at [Address].
     SSAInstruction* AmoCAS(SSAInstruction* address, SSAInstruction* expected, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size);
+    SSAInstruction* CZeroEqz(SSAInstruction* value, SSAInstruction* cond);
+    SSAInstruction* CZeroNez(SSAInstruction* value, SSAInstruction* cond);
     SSAInstruction* VIota(SSAInstruction* mask, VectorState state);
     SSAInstruction* VId(VectorState state);
     SSAInstruction* VSplat(SSAInstruction* value, VectorState state);
@@ -152,10 +152,12 @@ struct IREmitter {
     SSAInstruction* IsCarryAdd(SSAInstruction* source, SSAInstruction* result, x86_size_e size);
     SSAInstruction* IsCarryAdc(SSAInstruction* lhs, SSAInstruction* rhs, SSAInstruction* carry, x86_size_e size_e);
     SSAInstruction* IsCarrySbb(SSAInstruction* lhs, SSAInstruction* rhs, SSAInstruction* carry, x86_size_e size_e);
+    SSAInstruction* IsOverflowSbb(SSAInstruction* lhs, SSAInstruction* rhs, SSAInstruction* carry, SSAInstruction* result, x86_size_e size_e);
     SSAInstruction* IsAuxAdd(SSAInstruction* source1, SSAInstruction* source2);
     SSAInstruction* IsOverflowAdd(SSAInstruction* source1, SSAInstruction* source2, SSAInstruction* result, x86_size_e size_e);
     SSAInstruction* IsCarrySub(SSAInstruction* source1, SSAInstruction* source2);
     SSAInstruction* IsAuxSub(SSAInstruction* source1, SSAInstruction* source2);
+    SSAInstruction* IsAuxSbb(SSAInstruction* source1, SSAInstruction* source2, SSAInstruction* carry);
     SSAInstruction* IsOverflowSub(SSAInstruction* source1, SSAInstruction* source2, SSAInstruction* result, x86_size_e size_e);
     SSAInstruction* GetThreadStatePointer();
     void Group1(x86_instruction_t* inst);
@@ -207,6 +209,12 @@ struct IREmitter {
     }
 
     void CallHostFunction(u64 function_address);
+
+    SSAInstruction* Set8Low(SSAInstruction* old, SSAInstruction* value);
+    SSAInstruction* Set8High(SSAInstruction* old, SSAInstruction* value);
+    SSAInstruction* Set16(SSAInstruction* old, SSAInstruction* value);
+    SSAInstruction* Set32(SSAInstruction* value);
+    SSAInstruction* Set(SSAInstruction* old, SSAInstruction* value, x86_size_e size, bool high);
 
 private:
     SSAInstruction* getGuest(x86_ref_e ref);

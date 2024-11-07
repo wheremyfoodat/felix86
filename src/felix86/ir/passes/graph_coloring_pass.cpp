@@ -6,12 +6,24 @@
 struct Node {
     u32 id;
     std::unordered_set<u32> edges;
+
+    Node(const Node&) = delete;
+    Node& operator=(const Node&) = delete;
 };
+
+struct InstructionMetadata {
+    BackendInstruction* inst = nullptr;
+    u32 spill_cost = 0; // sum of uses + defs (loads and stores that would have to be inserted)
+    u32 interferences = 0;
+    bool infinite_cost = false;
+};
+
+using InstructionMap = std::unordered_map<u32, InstructionMetadata>;
 
 struct InterferenceGraph {
     void AddEdge(u32 a, u32 b) {
-        graph[b].insert(a);
-        graph[a].insert(b);
+        graph[b].edges.insert(a);
+        graph[a].edges.insert(b);
     }
 
     void AddEmpty(u32 id) {
@@ -20,24 +32,38 @@ struct InterferenceGraph {
     }
 
     void RemoveEdge(u32 a, u32 b) {
-        graph[a].erase(b);
-        graph[b].erase(a);
+        graph[a].edges.erase(b);
+        graph[b].edges.erase(a);
     }
 
-    Node RemoveNode(u32 id) {
-        Node node = {id, graph[id]};
-        for (u32 edge : graph[id]) {
-            graph[edge].erase(id);
+    u32 RemoveNode(u32 id) {
+        auto& edges = graph[id].edges;
+        for (u32 edge : edges) {
+            graph[edge].edges.erase(id);
         }
 
-        graph.erase(id);
-        return node;
+        graph[id].removed = true;
+        return id;
     }
 
-    u32 Random() {
-        auto it = graph.begin();
-        std::advance(it, rand() % graph.size());
-        return it->first;
+    u32 Worst(const InstructionMap& instructions) {
+        u32 min = std::numeric_limits<u32>::max();
+        u32 chosen = 0;
+        for (const auto& [id, edges] : graph) {
+            if (!edges.removed) {
+                if (edges.edges.size() == 0)
+                    continue;
+                if (instructions.at(id).infinite_cost)
+                    continue;
+                float spill_cost = instructions.at(id).spill_cost;
+                float cost = spill_cost / edges.edges.size();
+                if (cost < min) {
+                    min = cost;
+                    chosen = id;
+                }
+            }
+        }
+        return chosen;
     }
 
     void AddNode(const Node& node) {
@@ -47,7 +73,7 @@ struct InterferenceGraph {
     }
 
     const std::unordered_set<u32>& GetInterferences(u32 inst) {
-        return graph[inst];
+        return graph[inst].edges;
     }
 
     auto begin() {
@@ -63,7 +89,12 @@ struct InterferenceGraph {
     }
 
     bool empty() {
-        return graph.empty();
+        for (const auto& [id, edges] : graph) {
+            if (!edges.removed) {
+                return false;
+            }
+        }
+        return true;
     }
 
     void clear() {
@@ -76,7 +107,7 @@ struct InterferenceGraph {
 
     bool HasLessThanK(u32 k) {
         for (const auto& [id, edges] : graph) {
-            if (edges.size() < k) {
+            if (edges.edges.size() < k && !edges.removed) {
                 return true;
             }
         }
@@ -88,21 +119,17 @@ struct InterferenceGraph {
     }
 
 private:
-    std::unordered_map<u32, std::unordered_set<u32>> graph;
-};
+    struct Edges {
+        bool removed;
+        std::unordered_set<u32> edges;
+    };
 
-struct InstructionMetadata {
-    BackendInstruction* inst = nullptr;
-    u32 spill_cost = 0; // sum of uses + defs (loads and stores that would have to be inserted)
-    u32 interferences = 0;
-    bool infinite_cost = false;
+    std::unordered_map<u32, Edges> graph;
 };
 
 using LivenessSet = std::unordered_set<u32>;
 
 using CoalescingHeuristic = bool (*)(BackendFunction& function, InterferenceGraph& graph, u32 k, u32 lhs, u32 rhs);
-
-using InstructionMap = std::unordered_map<u32, InstructionMetadata>;
 
 static bool reserved_gpr(const BackendInstruction& inst) {
     switch (inst.GetOpcode()) {
@@ -191,14 +218,100 @@ static void spill(BackendFunction& function, u32 node, u32 location, AllocationT
     }
 }
 
-static void build(BackendFunction& function, const InstructionMap& instructions, InterferenceGraph& graph,
-                  bool (*should_consider)(const InstructionMap&, u32)) {
-    std::vector<const BackendBlock*> blocks = function.GetBlocksPostorder();
+static void liveness_worklist(const BackendFunction& function, const std::vector<const BackendBlock*>& blocks, std::vector<LivenessSet>& in,
+                              std::vector<LivenessSet>& out, std::vector<LivenessSet>& use, std::vector<LivenessSet>& def) {
+    std::deque<size_t> worklist;
+    for (u32 i = 0; i < blocks.size(); i++) {
+        worklist.push_back(blocks[i]->GetIndex());
+    }
+    while (!worklist.empty()) {
+        const BackendBlock& block = function.GetBlock(worklist.front());
+        worklist.pop_front();
 
+        size_t i = block.GetIndex();
+
+        LivenessSet in_old = in[i];
+
+        out[i].clear();
+        // out[b] = U (in[s]) for all s in succ[b]
+        for (u8 k = 0; k < block.GetSuccessorCount(); k++) {
+            u32 succ_index = block.GetSuccessor(k);
+            out[i].insert(in[succ_index].begin(), in[succ_index].end());
+        }
+
+        LivenessSet out_minus_def = out[i];
+        for (u32 def_inst : def[i]) {
+            out_minus_def.erase(def_inst);
+        }
+
+        in[i].clear();
+        // in[b] = use[b] U (out[b] - def[b])
+        in[i].insert(use[i].begin(), use[i].end());
+        in[i].insert(out_minus_def.begin(), out_minus_def.end());
+
+        if (in[i] != in_old) {
+            for (u8 k = 0; k < block.GetPredecessorCount(); k++) {
+                u32 pred_index = block.GetPredecessor(k);
+                if (std::find(worklist.begin(), worklist.end(), pred_index) == worklist.end()) {
+                    worklist.push_back(pred_index);
+                }
+            }
+        }
+    }
+}
+
+static void liveness_iterative(const BackendFunction& function, const std::vector<const BackendBlock*>& blocks, std::vector<LivenessSet>& in,
+                               std::vector<LivenessSet>& out, std::vector<LivenessSet>& use, std::vector<LivenessSet>& def) {
+    bool changed;
+    do {
+        changed = false;
+        for (size_t j = 0; j < blocks.size(); j++) {
+            const BackendBlock* block = blocks[j];
+
+            // j is the index in the postorder list, but we need the index in the blocks list
+            size_t i = block->GetIndex();
+
+            LivenessSet in_old = in[i];
+            LivenessSet out_old = out[i];
+
+            out[i].clear();
+            // out[b] = U (in[s]) for all s in succ[b]
+            for (u8 k = 0; k < block->GetSuccessorCount(); k++) {
+                u32 succ_index = block->GetSuccessor(k);
+                out[i].insert(in[succ_index].begin(), in[succ_index].end());
+            }
+
+            LivenessSet out_minus_def = out[i];
+            for (u32 def_inst : def[i]) {
+                out_minus_def.erase(def_inst);
+            }
+
+            in[i].clear();
+            // in[b] = use[b] U (out[b] - def[b])
+            in[i].insert(use[i].begin(), use[i].end());
+            in[i].insert(out_minus_def.begin(), out_minus_def.end());
+
+            // check for changes
+            if (!changed) {
+                changed = in[i] != in_old || out[i] != out_old;
+            }
+        }
+    } while (changed);
+}
+
+static void build(BackendFunction& function, std::vector<const BackendBlock*> blocks, const InstructionMap& instructions, InterferenceGraph& graph,
+                  bool (*should_consider)(const InstructionMap&, u32)) {
     std::vector<LivenessSet> in(blocks.size());
     std::vector<LivenessSet> out(blocks.size());
     std::vector<LivenessSet> use(blocks.size());
     std::vector<LivenessSet> def(blocks.size());
+
+    for (size_t i = 0; i < blocks.size(); i++) {
+        in[i].reserve(blocks[i]->GetInstructions().size());
+        out[i].reserve(blocks[i]->GetInstructions().size());
+        use[i].reserve(blocks[i]->GetInstructions().size());
+        def[i].reserve(blocks[i]->GetInstructions().size());
+    }
 
     for (size_t counter = 0; counter < blocks.size(); counter++) {
         const BackendBlock* block = blocks[counter];
@@ -222,43 +335,7 @@ static void build(BackendFunction& function, const InstructionMap& instructions,
         }
     }
 
-    bool changed;
-    do {
-        changed = false;
-        for (size_t j = 0; j < blocks.size(); j++) {
-            const BackendBlock* block = blocks[j];
-
-            // j is the index in the postorder list, but we need the index in the blocks list
-            size_t i = block->GetIndex();
-
-            LivenessSet in_old = std::move(in[i]);
-            in[i] = {};
-
-            // in[b] = use[b] U (out[b] - def[b])
-            in[i].insert(use[i].begin(), use[i].end());
-
-            LivenessSet out_minus_def = out[i];
-            for (u32 def_inst : def[i]) {
-                out_minus_def.erase(def_inst);
-            }
-
-            in[i].insert(out_minus_def.begin(), out_minus_def.end());
-
-            LivenessSet out_old = std::move(out[i]);
-            out[i] = {};
-            // out[b] = U (in[s]) for all s in succ[b]
-            for (u8 k = 0; k < block->GetSuccessorCount(); k++) {
-                const BackendBlock* succ = &function.GetBlock(block->GetSuccessor(k));
-                u32 succ_index = succ->GetIndex();
-                out[i].insert(in[succ_index].begin(), in[succ_index].end());
-            }
-
-            // check for changes
-            if (!changed) {
-                changed = in[i] != in_old || out[i] != out_old;
-            }
-        }
-    } while (changed);
+    liveness_worklist(function, blocks, in, out, use, def);
 
     graph.Reserve(instructions.size());
 
@@ -324,11 +401,11 @@ static void build(BackendFunction& function, const InstructionMap& instructions,
     }
 }
 
-static u32 choose(const InstructionMap& instructions, const std::deque<Node>& nodes) {
+static u32 choose(const InstructionMap& instructions, const std::deque<u32>& nodes) {
     float min = std::numeric_limits<float>::max();
     u32 chosen = 0;
 
-    for (auto& [node, edges] : nodes) {
+    for (auto& node : nodes) {
         float spill_cost = instructions.at(node).spill_cost;
         float degree = instructions.at(node).interferences;
         if (degree == 0)
@@ -400,6 +477,7 @@ void coalesce(BackendFunction& function, u32 lhs, u32 rhs) {
 
 bool try_coalesce(BackendFunction& function, InstructionMap& map, InterferenceGraph& graph, bool (*should_consider)(const InstructionMap&, u32),
                   u32 k, CoalescingHeuristic heuristic) {
+    bool coalesced = false;
     for (auto& block : function.GetBlocks()) {
         auto it = block.GetInstructions().begin();
         auto end = block.GetInstructions().end();
@@ -414,7 +492,14 @@ bool try_coalesce(BackendFunction& function, InstructionMap& map, InterferenceGr
                         if (heuristic(function, graph, k, lhs, rhs)) {
                             coalesce(function, lhs, rhs);
                             it = block.GetInstructions().erase(it);
-                            return true;
+                            coalesced = true;
+                            // Merge interferences into rhs
+                            for (u32 neighbor : edges) {
+                                if (neighbor != rhs) {
+                                    graph.AddEdge(rhs, neighbor);
+                                }
+                            }
+                            continue;
                         }
                     }
                 }
@@ -422,16 +507,17 @@ bool try_coalesce(BackendFunction& function, InstructionMap& map, InterferenceGr
             ++it;
         }
     }
-    return false;
+    return coalesced;
 }
 
 static AllocationMap run(BackendFunction& function, AllocationType type, bool (*should_consider)(const InstructionMap&, u32),
                          const std::vector<u32>& available_colors, u32& spill_location) {
     g_spilled_count = 0;
     const u32 k = available_colors.size();
+    std::vector<const BackendBlock*> blocks = function.GetBlocksPostorder();
     while (true) {
         // Chaitin-Briggs algorithm
-        std::deque<Node> nodes;
+        std::deque<u32> nodes;
         InterferenceGraph graph;
         InstructionMap instructions;
         AllocationMap allocations;
@@ -441,7 +527,7 @@ static AllocationMap run(BackendFunction& function, AllocationType type, bool (*
             coalesced = false;
             graph = InterferenceGraph();
             instructions = create_instruction_map(function);
-            build(function, instructions, graph, should_consider);
+            build(function, blocks, instructions, graph, should_consider);
             if (g_coalesce) {
                 coalesced = try_coalesce(function, instructions, graph, should_consider, k, george_coalescing_heuristic);
             }
@@ -449,7 +535,7 @@ static AllocationMap run(BackendFunction& function, AllocationType type, bool (*
 
         for (auto& [name, edges] : graph) {
             ASSERT_MSG(instructions.find(name) != instructions.end(), "Instruction %s not found in map", GetNameString(name).c_str());
-            instructions.at(name).interferences = edges.size();
+            instructions.at(name).interferences = edges.edges.size();
         }
 
         while (true) {
@@ -458,7 +544,7 @@ static AllocationMap run(BackendFunction& function, AllocationType type, bool (*
                 // Pick any node with degree less than k and put it on the stack
                 std::stack<u32> to_remove;
                 for (auto& [id, edges] : graph) {
-                    if (edges.size() < k) {
+                    if (edges.edges.size() < k && !edges.removed) {
                         to_remove.push(id);
                     }
                 }
@@ -477,8 +563,7 @@ static AllocationMap run(BackendFunction& function, AllocationType type, bool (*
             while (!graph.empty()) {
                 // Pick some vertex using a heuristic and remove it.
                 // If it causes some node to have less than k neighbors, repeat at step 1, otherwise repeat step 2.
-                // TODO: pick heuristic that isn't random
-                nodes.push_back(graph.RemoveNode(graph.Random()));
+                nodes.push_back(graph.RemoveNode(graph.Worst(instructions)));
 
                 if (graph.HasLessThanK(k)) {
                     repeat_outer = true;
@@ -496,10 +581,11 @@ static AllocationMap run(BackendFunction& function, AllocationType type, bool (*
         bool colored = true;
 
         while (!nodes.empty()) {
-            Node node = nodes.back();
+            u32 id = nodes.back();
+            const auto& edges = graph.GetInterferences(id);
 
             std::vector<u32> colors = available_colors;
-            for (u32 neighbor : node.edges) {
+            for (u32 neighbor : edges) {
                 if (allocations.IsAllocated(neighbor)) {
                     u32 allocation = allocations.GetAllocationIndex(neighbor);
                     std::erase(colors, allocation);
@@ -511,7 +597,7 @@ static AllocationMap run(BackendFunction& function, AllocationType type, bool (*
                 break;
             }
 
-            allocations.Allocate(node.id, type, colors[0]);
+            allocations.Allocate(id, type, colors[0]);
             nodes.pop_back();
         }
 

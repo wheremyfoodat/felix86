@@ -1,10 +1,11 @@
 #include <algorithm>
 #include <cstring>
 #include <string>
-#include <vector>
 #include "biscuit/cpuinfo.hpp"
 #include "felix86/common/global.hpp"
 #include "felix86/common/log.hpp"
+#include "felix86/common/x86.hpp"
+#include "fmt/format.h"
 
 #ifdef __riscv
 #include <vector>
@@ -26,7 +27,17 @@ bool g_print_disassembly = false;
 bool g_cache_functions = false;
 bool g_coalesce = true;
 bool g_extensions_manually_specified = false;
+int g_output_fd = 1;
 u32 g_spilled_count = 0;
+std::filesystem::path g_rootfs_path{};
+thread_local ThreadState* g_thread_state;
+u64 g_executable_base_hint = 0;
+u64 g_interpreter_base_hint = 0;
+
+u64 g_interpreter_start = 0;
+u64 g_interpreter_end = 0;
+u64 g_executable_start = 0;
+u64 g_executable_end = 0;
 
 #define X(ext) bool Extensions::ext = false;
 FELIX86_EXTENSIONS_TOTAL
@@ -125,6 +136,27 @@ void initialize_globals() {
     if (print_start_of_block_env) {
         g_print_block_start = true;
         environment += "\nFELIX86_PRINT_BLOCK_START";
+    }
+
+    const char* rootfs_path = getenv("FELIX86_ROOTFS");
+    if (rootfs_path) {
+        if (!g_rootfs_path.empty()) {
+            WARN("Rootfs overwritten by environment variable FELIX86_ROOTFS");
+        }
+        g_rootfs_path = rootfs_path;
+        environment += "\nFELIX86_ROOTFS=" + std::string(rootfs_path);
+    }
+
+    const char* executable_base = getenv("FELIX86_EXECUTABLE_BASE");
+    if (executable_base) {
+        g_executable_base_hint = std::stoull(executable_base, nullptr, 16);
+        environment += "\nFELIX86_EXECUTABLE_BASE=" + fmt::format("{:016x}", g_executable_base_hint);
+    }
+
+    const char* interpreter_base = getenv("FELIX86_INTERPRETER_BASE");
+    if (interpreter_base) {
+        g_interpreter_base_hint = std::stoull(interpreter_base, nullptr, 16);
+        environment += "\nFELIX86_INTERPRETER_BASE=" + fmt::format("{:016x}", g_interpreter_base_hint);
     }
 
     if (!g_testing) {

@@ -202,6 +202,31 @@ IR_HANDLE(or_eax_imm) { // add ax/eax/rax, imm16/32/64 - 0x0D
     ir.SetCPAZSO(zero, p, nullptr, z, s, zero);
 }
 
+IR_HANDLE(sbb_rm_reg) { // sbb rm16/32/64, r16/32/64 - 0x19
+    x86_size_e size_e = inst->operand_reg.size;
+    SSAInstruction *rm, *result;
+    SSAInstruction* reg = ir.GetReg(inst->operand_reg);
+    SSAInstruction* carry_in = ir.GetFlag(X86_REF_CF);
+
+    if (IS_LOCK) {
+        ERROR("Why :(");
+        return;
+    } else {
+        rm = ir.GetRm(inst->operand_rm);
+        result = ir.Sub(ir.Sub(rm, reg), carry_in);
+        ir.SetRm(inst->operand_rm, result);
+    }
+
+    SSAInstruction* c = ir.IsCarrySbb(rm, reg, carry_in, size_e);
+    SSAInstruction* p = ir.Parity(result);
+    SSAInstruction* a = ir.IsAuxSbb(rm, reg, carry_in);
+    SSAInstruction* z = ir.IsZero(result, size_e);
+    SSAInstruction* s = ir.IsNegative(result, size_e);
+    SSAInstruction* o = ir.IsOverflowSub(rm, reg, result, size_e);
+
+    ir.SetCPAZSO(c, p, a, z, s, o);
+}
+
 IR_HANDLE(and_rm_reg) { // and rm16/32/64, r16/32/64 - 0x21
     x86_size_e size_e = inst->operand_reg.size;
     SSAInstruction *rm, *result;
@@ -441,6 +466,18 @@ IR_HANDLE(pop_r64) { // pop r16/64 - 0x58-0x5f
 IR_HANDLE(movsxd) { // movsxd r32/64, rm32/64 - 0x63
     SSAInstruction* rm = ir.GetRm(inst->operand_rm);
     SSAInstruction* serm = ir.Sext(rm, X86_SIZE_DWORD);
+    ir.SetReg(inst->operand_reg, serm);
+}
+
+IR_HANDLE(movsxb) { // movsx r16/32/64, rm8 - 0x0f be
+    SSAInstruction* rm = ir.GetRm(inst->operand_rm);
+    SSAInstruction* serm = ir.Sext(rm, X86_SIZE_BYTE);
+    ir.SetReg(inst->operand_reg, serm);
+}
+
+IR_HANDLE(movsxw) {
+    SSAInstruction* rm = ir.GetRm(inst->operand_rm);
+    SSAInstruction* serm = ir.Sext(rm, X86_SIZE_WORD);
     ir.SetReg(inst->operand_reg, serm);
 }
 
@@ -871,6 +908,15 @@ IR_HANDLE(group5) { // inc/dec/call/jmp/push rm32 - 0xff
         ir.Exit();
         break;
     }
+    case Group5::Push: {
+        SSAInstruction* rm = ir.GetRm(inst->operand_rm);
+        bool is_word = inst->operand_rm.size == X86_SIZE_WORD;
+        SSAInstruction* rsp = ir.GetReg(X86_REF_RSP);
+        SSAInstruction* rsp_sub = ir.Addi(rsp, is_word ? -2 : -8);
+        ir.WriteMemory(rsp_sub, rm, is_word ? X86_SIZE_WORD : X86_SIZE_QWORD);
+        ir.SetReg(rsp_sub, X86_REF_RSP);
+        break;
+    }
     default: {
         ERROR("Unimplemented group 5 opcode: %02x during %016lx", (int)opcode, ir.GetCurrentAddress());
         break;
@@ -921,30 +967,32 @@ IR_HANDLE(syscall) { // syscall - 0x0f 0x05
     ir.Syscall();
 }
 
-IR_HANDLE(movhps_xmm_xmm64) {
-    SSAInstruction* low = ir.GetReg(inst->operand_reg);
-    SSAInstruction* high;
-    if (inst->operand_rm.type == X86_OP_TYPE_MEMORY) {
-        high = ir.GetRm(inst->operand_rm, VectorState::Double);
-    } else {
-        high = ir.GetReg(inst->operand_rm);
-    }
-    SSAInstruction* shifted = ir.VSlideUpi(high, 1, VectorState::PackedQWord);
-    ir.SetVMask(ir.VSplati(0b10, VectorState::PackedQWord));
-    SSAInstruction* result = ir.VMerge(shifted, low, VectorState::PackedQWord);
-    ir.SetReg(inst->operand_reg, result);
+IR_HANDLE(mov_xmm128_xmm) { // movups/movaps xmm128, xmm - 0x0f 0x29
+    SSAInstruction* reg = ir.GetReg(inst->operand_reg);
+    ir.SetRm(inst->operand_rm, reg, VectorState::PackedDWord);
 }
 
-IR_HANDLE(movhps_m64_xmm) {
+IR_HANDLE(mov_xmm_m64) { // movlpd xmm, m64 - 0x0f 0x12
+    // Just load a double from memory directly into an xmm - thus using vector loads
+    // instead of gpr loads and then moving to vector
+    SSAInstruction* rm = ir.GetRm(inst->operand_rm, VectorState::Double);
+    ir.SetReg(inst->operand_reg, rm);
+}
+
+IR_HANDLE(movh_m64_xmm) {
     ASSERT(inst->operand_rm.type == X86_OP_TYPE_MEMORY);
     SSAInstruction* xmm = ir.GetReg(inst->operand_reg);
     SSAInstruction* slide = ir.VSlideDowni(xmm, 1, VectorState::PackedQWord);
     ir.SetRm(inst->operand_rm, slide, VectorState::Double);
 }
 
-IR_HANDLE(mov_xmm128_xmm) { // movups/movaps xmm128, xmm - 0x0f 0x29
+IR_HANDLE(movh_xmm_m64) { // movhpd xmm, m64 - 0x0f 0x16
+    SSAInstruction* rm = ir.GetRm(inst->operand_rm, VectorState::Double);
+    SSAInstruction* shifted = ir.VSlideUpi(rm, 1, VectorState::PackedQWord);
     SSAInstruction* reg = ir.GetReg(inst->operand_reg);
-    ir.SetRm(inst->operand_rm, reg, VectorState::PackedDWord);
+    ir.SetVMask(ir.VSplati(0b10, VectorState::PackedQWord));
+    SSAInstruction* result = ir.VMerge(shifted, reg, VectorState::PackedQWord);
+    ir.SetReg(inst->operand_reg, result);
 }
 
 IR_HANDLE(rdtsc) { // rdtsc - 0x0f 0x31
@@ -1037,16 +1085,15 @@ IR_HANDLE(cmpxchg) { // cmpxchg - 0x0f 0xb0-0xb1
         ir.SetReg(actual, X86_REF_RAX, size_e);
         ir.SetFlag(ir.Equal(actual, eax), X86_REF_ZF);
     } else {
-        UNREACHABLE();
-        // Think the following is wrong for w/e reason
-        // SSAInstruction* rm = ir.GetRm(inst->operand_rm);
-        // SSAInstruction* reg = ir.GetReg(inst->operand_reg);
-        // SSAInstruction* equal = ir.Equal(eax, rm);
-        // SSAInstruction* new_rm = ir.Select(equal, reg, rm);
-
-        // ir.SetReg(rm, X86_REF_RAX);
-        // ir.SetRm(inst->operand_rm, new_rm);
-        // ir.SetFlag(equal, X86_REF_ZF);
+        SSAInstruction* rm = ir.GetReg(inst->operand_rm.reg.ref, size_e);
+        SSAInstruction* equal = ir.Equal(eax, rm);
+        SSAInstruction* rm_full = ir.GetReg(inst->operand_rm.reg.ref, X86_SIZE_QWORD);
+        SSAInstruction* reg = ir.GetReg(inst->operand_reg);
+        SSAInstruction* is_true = ir.Set(rm_full, reg, size_e, inst->operand_rm.reg.high8);
+        SSAInstruction* is_false = rm_full;
+        ir.SetReg(ir.Select(equal, is_true, is_false), inst->operand_rm.reg.ref, X86_SIZE_QWORD);
+        ir.SetReg(rm, X86_REF_RAX, size_e);
+        ir.SetFlag(equal, X86_REF_ZF);
     }
 }
 
@@ -1061,9 +1108,10 @@ IR_HANDLE(bsr) { // bsr - 0x0f 0xbd
     SSAInstruction* zero = ir.IsZero(rm, size_e);
     SSAInstruction* clz = ir.Clz(rm);
     // CLZ always deals on 64-bit values, so we need to subtract the result from 63
-    // TODO: make clzw and clzh instead
     SSAInstruction* sub = ir.Sub(ir.Imm(63), clz);
-    ir.SetReg(inst->operand_reg, sub);
+    SSAInstruction* old = ir.GetGuest(inst->operand_reg.reg.ref);
+    SSAInstruction* result = ir.Set(old, sub, size_e, inst->operand_reg.reg.high8);
+    ir.SetGuest(inst->operand_reg.reg.ref, ir.Select(zero, old, result));
     ir.SetFlag(zero, X86_REF_ZF);
 }
 
@@ -1071,25 +1119,7 @@ IR_HANDLE(bsf) { // bsf - 0x0f 0xbc
     x86_size_e size_e = inst->operand_reg.size;
     SSAInstruction* rm = ir.GetRm(inst->operand_rm);
     SSAInstruction* z = ir.IsZero(rm, size_e);
-    SSAInstruction* ctz;
-    switch (size_e) {
-    case X86_SIZE_QWORD: {
-        ctz = ir.Ctz(rm);
-        break;
-    }
-    case X86_SIZE_DWORD: {
-        ctz = ir.Ctzw(rm);
-        break;
-    }
-    case X86_SIZE_WORD: {
-        ctz = ir.Ctzh(rm);
-        break;
-    }
-    default: {
-        ERROR("Unknown size for bsf: %d", size_e);
-        return;
-    }
-    }
+    SSAInstruction* ctz = ir.Ctz(rm); // in x86 result is undefined if it's zero so we don't care
     ir.SetReg(inst->operand_reg, ctz);
     ir.SetFlag(z, X86_REF_ZF);
 }
@@ -1150,6 +1180,31 @@ IR_HANDLE(pshufd) { // pshufd xmm, xmm/m128, imm8 - 0x66 0x0f 0x70
     SSAInstruction* fourth = ir.VSlide1Up(ir.Imm(el0), third, VectorState::PackedDWord);
     SSAInstruction* source = ir.GetRm(inst->operand_rm, VectorState::PackedDWord);
     SSAInstruction* result = ir.VGather(ir.VZero(VectorState::PackedDWord), source, fourth, VectorState::PackedDWord);
+    ir.SetReg(inst->operand_reg, result);
+}
+
+// These names lmao
+IR_HANDLE(shufpd) {
+    u8 imm = inst->operand_imm.immediate.data;
+    SSAInstruction *src1, *src2;
+
+    if ((imm & 0b01) == 0) {
+        src1 = ir.VToI(ir.GetReg(inst->operand_reg), VectorState::PackedQWord);
+    } else {
+        SSAInstruction* reg = ir.GetReg(inst->operand_reg);
+        SSAInstruction* slide = ir.VSlideDowni(reg, 1, VectorState::PackedQWord);
+        src1 = ir.VToI(slide, VectorState::PackedQWord);
+    }
+
+    if ((imm & 0b10) == 0) {
+        src2 = ir.GetRm(inst->operand_rm, VectorState::PackedQWord);
+    } else {
+        SSAInstruction* rm = ir.GetRm(inst->operand_rm, VectorState::PackedQWord);
+        src2 = ir.VSlideDowni(rm, 1, VectorState::PackedQWord);
+    }
+
+    // Slide it up and insert src1
+    SSAInstruction* result = ir.VSlide1Up(src1, src2, VectorState::PackedQWord);
     ir.SetReg(inst->operand_reg, result);
 }
 

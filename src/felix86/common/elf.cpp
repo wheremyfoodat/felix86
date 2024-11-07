@@ -138,7 +138,9 @@ void Elf::Load(const std::filesystem::path& path) {
                 ERROR("Failed to read interpreter from file %s", path.c_str());
             }
 
-            interpreter = std::filesystem::path(interpreter_str);
+            // C++ decided it's a good idea to let a absolute path rhs override the lhs
+            // so we convert to relative path
+            interpreter = g_rootfs_path / std::filesystem::path(interpreter_str).relative_path();
             break;
         }
         case PT_GNU_STACK: {
@@ -200,7 +202,11 @@ void Elf::Load(const std::filesystem::path& path) {
 
     u64 base_address = 0;
     if (ehdr.e_type == ET_DYN) {
-        program = (u8*)mmap(NULL, highest_vaddr, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        u64 base_hint = is_interpreter ? g_interpreter_base_hint : g_executable_base_hint;
+        if (base_hint) {
+            ASSERT(g_interpreter_base_hint != g_executable_base_hint);
+        }
+        program = (u8*)mmap((void*)base_hint, highest_vaddr, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
         base_address = (u64)program;
         if (program == MAP_FAILED) {
             ERROR("Failed to allocate memory for ELF file %s", path.c_str());
@@ -227,7 +233,8 @@ void Elf::Load(const std::filesystem::path& path) {
             if (addr == MAP_FAILED) {
                 ERROR("Failed to allocate memory for segment in file %s", path.c_str());
             } else {
-                VERBOSE("Mapping segment with vaddr %p to %p-%p (file offset: %08lx)", (void*)phdr.p_vaddr, addr, addr + segment_size, phdr.p_offset);
+                VERBOSE("Mapping segment with vaddr %p to %p - %p (%p - %p) (file offset: %08lx)", (void*)phdr.p_vaddr, addr, addr + segment_size,
+                        addr - base_address, addr + segment_size - base_address, phdr.p_offset);
                 if (addr != (void*)segment_base) {
                     ERROR("Failed to allocate memory at requested address for segment in file %s", path.c_str());
                 }
@@ -252,7 +259,6 @@ void Elf::Load(const std::filesystem::path& path) {
                 u64 size = phdr.p_filesz + PAGE_OFFSET(phdr.p_vaddr);
                 fseek(file, offset, SEEK_SET);
                 result = fread(addr, 1, size, file);
-                VERBOSE("Reading to range %p - %p from offset %08lx", addr, addr + size, offset);
                 if (result != size) {
                     ERROR("Failed to read segment from file %s", path.c_str());
                 }
@@ -299,6 +305,12 @@ void Elf::Load(const std::filesystem::path& path) {
             ERROR("Failed to allocate memory for brk in file %s", path.c_str());
         }
         VERBOSE("BRK base at %p", brk_base);
+
+        g_executable_start = base_address + lowest_vaddr;
+        g_executable_end = base_address + highest_vaddr;
+    } else {
+        g_interpreter_start = base_address + lowest_vaddr;
+        g_interpreter_end = base_address + highest_vaddr;
     }
 
     phdr = (u8*)(base_address + lowest_vaddr + ehdr.e_phoff);

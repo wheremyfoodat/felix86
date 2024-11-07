@@ -1,5 +1,23 @@
 #include "felix86/ir/emitter.hpp"
 
+namespace {
+SSAInstruction* SecondMSB(IREmitter& ir, SSAInstruction* value, x86_size_e size) {
+    switch (size) {
+    case X86_SIZE_BYTE:
+        return ir.Andi(ir.Shri(value, 6), 1);
+    case X86_SIZE_WORD:
+        return ir.Andi(ir.Shri(value, 14), 1);
+    case X86_SIZE_DWORD:
+        return ir.Andi(ir.Shri(value, 30), 1);
+    case X86_SIZE_QWORD:
+        return ir.Andi(ir.Shri(value, 62), 1);
+    default:
+        UNREACHABLE();
+        return nullptr;
+    }
+}
+} // namespace
+
 u64 IREmitter::ImmSext(u64 imm, x86_size_e size) {
     i64 value = imm;
     switch (size) {
@@ -168,10 +186,16 @@ SSAInstruction* IREmitter::Sari(SSAInstruction* lhs, i64 rhs) {
 
 SSAInstruction* IREmitter::Rol(SSAInstruction* lhs, SSAInstruction* rhs, x86_size_e size) {
     switch (size) {
-    case x86_size_e::X86_SIZE_BYTE:
-        return insertInstruction(IROpcode::Rol8, {lhs, rhs});
-    case x86_size_e::X86_SIZE_WORD:
-        return insertInstruction(IROpcode::Rol16, {lhs, rhs});
+    case x86_size_e::X86_SIZE_BYTE: {
+        SSAInstruction* left_shift = Shl(lhs, rhs);
+        SSAInstruction* right_shift = Shr(lhs, Andi(Neg(rhs), 7));
+        return Zext(Or(left_shift, right_shift), X86_SIZE_BYTE);
+    }
+    case x86_size_e::X86_SIZE_WORD: {
+        SSAInstruction* left_shift = Shl(lhs, Andi(rhs, 15));
+        SSAInstruction* right_shift = Shr(lhs, Andi(Neg(rhs), 15));
+        return Zext(Or(left_shift, right_shift), X86_SIZE_WORD);
+    }
     case x86_size_e::X86_SIZE_DWORD:
         return insertInstruction(IROpcode::Rol32, {lhs, rhs});
     case x86_size_e::X86_SIZE_QWORD:
@@ -184,10 +208,16 @@ SSAInstruction* IREmitter::Rol(SSAInstruction* lhs, SSAInstruction* rhs, x86_siz
 
 SSAInstruction* IREmitter::Ror(SSAInstruction* lhs, SSAInstruction* rhs, x86_size_e size) {
     switch (size) {
-    case x86_size_e::X86_SIZE_BYTE:
-        return insertInstruction(IROpcode::Ror8, {lhs, rhs});
-    case x86_size_e::X86_SIZE_WORD:
-        return insertInstruction(IROpcode::Ror16, {lhs, rhs});
+    case x86_size_e::X86_SIZE_BYTE: {
+        SSAInstruction* left_shift = Shl(lhs, Andi(Neg(rhs), 7));
+        SSAInstruction* right_shift = Shr(lhs, Andi(rhs, 7));
+        return Zext(Or(left_shift, right_shift), X86_SIZE_BYTE);
+    }
+    case x86_size_e::X86_SIZE_WORD: {
+        SSAInstruction* left_shift = Shl(lhs, Andi(Neg(rhs), 15));
+        SSAInstruction* right_shift = Shr(lhs, Andi(rhs, 15));
+        return Zext(Or(left_shift, right_shift), X86_SIZE_WORD);
+    }
     case x86_size_e::X86_SIZE_DWORD:
         return insertInstruction(IROpcode::Ror32, {lhs, rhs});
     case x86_size_e::X86_SIZE_QWORD:
@@ -208,14 +238,6 @@ SSAInstruction* IREmitter::Clz(SSAInstruction* value) {
 
 SSAInstruction* IREmitter::Ctz(SSAInstruction* value) {
     return insertInstruction(IROpcode::Ctz, {value});
-}
-
-SSAInstruction* IREmitter::Ctzh(SSAInstruction* value) {
-    return insertInstruction(IROpcode::Ctzh, {value});
-}
-
-SSAInstruction* IREmitter::Ctzw(SSAInstruction* value) {
-    return insertInstruction(IROpcode::Ctzw, {value});
 }
 
 SSAInstruction* IREmitter::Parity(SSAInstruction* value) {
@@ -474,6 +496,14 @@ SSAInstruction* IREmitter::AmoCAS(SSAInstruction* address, SSAInstruction* expec
         UNREACHABLE();
         return nullptr;
     }
+}
+
+SSAInstruction* IREmitter::CZeroEqz(SSAInstruction* value, SSAInstruction* cond) {
+    return insertInstruction(IROpcode::CZeroEqz, {value, cond});
+}
+
+SSAInstruction* IREmitter::CZeroNez(SSAInstruction* value, SSAInstruction* cond) {
+    return insertInstruction(IROpcode::CZeroNez, {value, cond});
 }
 
 void IREmitter::Punpckl(x86_instruction_t* inst, VectorState state) {
@@ -834,7 +864,6 @@ SSAInstruction* IREmitter::Lea(const x86_operand_t& operand) {
 
     SSAInstruction* base_final = base;
     if (operand.memory.fs_override) {
-        WARN("Accessing FS base register");
         SSAInstruction* fs = getGuest(X86_REF_FS);
         base_final = Add(base, fs);
     } else if (operand.memory.gs_override) {
@@ -911,7 +940,7 @@ SSAInstruction* IREmitter::IsNegative(SSAInstruction* value, x86_size_e size) {
     case X86_SIZE_DWORD:
         return Andi(Shri(value, 31), 1);
     case X86_SIZE_QWORD:
-        return Andi(Shri(value, 63), 1);
+        return Shri(value, 63);
     default:
         UNREACHABLE();
         return nullptr;
@@ -1133,9 +1162,7 @@ void IREmitter::setGpr8Low(x86_ref_e ref, SSAInstruction* value) {
     }
 
     SSAInstruction* old = getGpr64(ref);
-    SSAInstruction* masked_old = Andi(old, 0xFFFFFFFFFFFFFF00);
-    SSAInstruction* masked_value = Zext(value, X86_SIZE_BYTE);
-    SSAInstruction* new_value = Or(masked_old, masked_value);
+    SSAInstruction* new_value = Set8Low(old, value);
     setGuest(ref, new_value);
 }
 
@@ -1145,10 +1172,7 @@ void IREmitter::setGpr8High(x86_ref_e ref, SSAInstruction* value) {
     }
 
     SSAInstruction* old = getGpr64(ref);
-    SSAInstruction* masked_old = And(old, Imm(0xFFFFFFFFFFFF00FF));
-    SSAInstruction* masked_value = Zext(value, X86_SIZE_BYTE);
-    SSAInstruction* shifted_value = Shli(masked_value, 8);
-    SSAInstruction* new_value = Or(masked_old, shifted_value);
+    SSAInstruction* new_value = Set8High(old, value);
     setGuest(ref, new_value);
 }
 
@@ -1158,9 +1182,7 @@ void IREmitter::setGpr16(x86_ref_e ref, SSAInstruction* value) {
     }
 
     SSAInstruction* old = getGpr64(ref);
-    SSAInstruction* masked_old = And(old, Imm(0xFFFFFFFFFFFF0000));
-    SSAInstruction* masked_value = Zext(value, X86_SIZE_WORD);
-    SSAInstruction* new_value = Or(masked_old, masked_value);
+    SSAInstruction* new_value = Set16(old, value);
     setGuest(ref, new_value);
 }
 
@@ -1169,7 +1191,7 @@ void IREmitter::setGpr32(x86_ref_e ref, SSAInstruction* value) {
         ERROR("Invalid register reference");
     }
 
-    setGuest(ref, Zext(value, X86_SIZE_DWORD));
+    setGuest(ref, Set32(value));
 }
 
 void IREmitter::setGpr64(x86_ref_e ref, SSAInstruction* value) {
@@ -1299,6 +1321,13 @@ SSAInstruction* IREmitter::IsCarrySbb(SSAInstruction* lhs, SSAInstruction* rhs, 
     return Or(carry1, carry2);
 }
 
+SSAInstruction* IREmitter::IsOverflowSbb(SSAInstruction* lhs, SSAInstruction* rhs, SSAInstruction* carry, SSAInstruction* result, x86_size_e size_e) {
+    SSAInstruction* sum = Sub(lhs, rhs);
+    SSAInstruction* of1 = IsOverflowSub(lhs, rhs, sum, size_e);
+    SSAInstruction* of2 = IsOverflowSub(sum, carry, result, size_e);
+    return Or(of1, of2);
+}
+
 SSAInstruction* IREmitter::IsAuxAdd(SSAInstruction* lhs, SSAInstruction* rhs) {
     SSAInstruction* and1 = Andi(lhs, 0xF);
     SSAInstruction* and2 = Andi(rhs, 0xF);
@@ -1330,6 +1359,14 @@ SSAInstruction* IREmitter::IsAuxSub(SSAInstruction* lhs, SSAInstruction* rhs) {
     SSAInstruction* and2 = Andi(rhs, 0xF);
 
     return LessThanUnsigned(and1, and2);
+}
+
+SSAInstruction* IREmitter::IsAuxSbb(SSAInstruction* lhs, SSAInstruction* rhs, SSAInstruction* carry) {
+    SSAInstruction* sum = Sub(lhs, rhs);
+    SSAInstruction* and1 = IsAuxSub(lhs, rhs);
+    SSAInstruction* and2 = IsAuxSub(sum, carry);
+
+    return Or(and1, and2);
 }
 
 SSAInstruction* IREmitter::IsOverflowSub(SSAInstruction* lhs, SSAInstruction* rhs, SSAInstruction* result, x86_size_e size_e) {
@@ -1503,14 +1540,14 @@ void IREmitter::Group2(x86_instruction_t* inst, SSAInstruction* shift_amount) {
     case Group2::Rol: {
         result = Rol(rm, shift_value, size_e);
         SSAInstruction* msb = IsNegative(result, size_e);
-        c = Andi(result, 1);
-        o = Xor(c, msb);
+        c = Select(Seqz(shift_value), GetFlag(X86_REF_CF), Andi(result, 1));
+        o = Select(Seqz(shift_value), GetFlag(X86_REF_OF), Xor(c, msb));
         break;
     }
     case Group2::Ror: {
         result = Ror(rm, shift_value, size_e);
-        c = IsNegative(result, size_e);
-        WARN("ROR OF unimplemented");
+        c = Select(Seqz(shift_value), GetFlag(X86_REF_CF), IsNegative(result, size_e));
+        o = Select(Seqz(shift_value), GetFlag(X86_REF_OF), Xor(c, SecondMSB(*this, result, size_e)));
         break;
     }
     case Group2::Rcl: {
@@ -1897,4 +1934,46 @@ void IREmitter::TerminateJumpConditional(SSAInstruction* condition, IRBlock* tar
 void IREmitter::CallHostFunction(u64 function_address) {
     SSAInstruction* instruction = insertInstruction(IROpcode::CallHostFunction, {}, function_address);
     instruction->Lock();
+}
+
+SSAInstruction* IREmitter::Set8High(SSAInstruction* old, SSAInstruction* value) {
+    SSAInstruction* masked_old = And(old, Imm(0xFFFFFFFFFFFF00FF));
+    SSAInstruction* masked_value = Zext(value, X86_SIZE_BYTE);
+    SSAInstruction* shifted_value = Shli(masked_value, 8);
+    SSAInstruction* new_value = Or(masked_old, shifted_value);
+    return new_value;
+}
+
+SSAInstruction* IREmitter::Set8Low(SSAInstruction* old, SSAInstruction* value) {
+    SSAInstruction* masked_old = Andi(old, 0xFFFFFFFFFFFFFF00);
+    SSAInstruction* masked_value = Zext(value, X86_SIZE_BYTE);
+    SSAInstruction* new_value = Or(masked_old, masked_value);
+    return new_value;
+}
+
+SSAInstruction* IREmitter::Set16(SSAInstruction* old, SSAInstruction* value) {
+    SSAInstruction* masked_old = And(old, Imm(0xFFFFFFFFFFFF0000));
+    SSAInstruction* masked_value = Zext(value, X86_SIZE_WORD);
+    SSAInstruction* new_value = Or(masked_old, masked_value);
+    return new_value;
+}
+
+SSAInstruction* IREmitter::Set32(SSAInstruction* value) {
+    return Zext(value, X86_SIZE_DWORD);
+}
+
+SSAInstruction* IREmitter::Set(SSAInstruction* old, SSAInstruction* value, x86_size_e size_e, bool high) {
+    switch (size_e) {
+    case X86_SIZE_BYTE:
+        return high ? Set8High(old, value) : Set8Low(old, value);
+    case X86_SIZE_WORD:
+        return Set16(old, value);
+    case X86_SIZE_DWORD:
+        return Set32(value);
+    case X86_SIZE_QWORD:
+        return value;
+    default:
+        ERROR("Invalid size");
+        return nullptr;
+    }
 }

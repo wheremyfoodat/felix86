@@ -42,6 +42,14 @@ void Emulator::Run() {
         ERROR("Expected exactly one thread state during Emulator::Run, the main thread");
     }
 
+    VERBOSE("Executable: %016lx - %016lx", g_executable_start, g_executable_end);
+    if (g_interpreter_start) {
+        VERBOSE("Interpreter: %016lx - %016lx", g_interpreter_start, g_interpreter_end);
+    }
+
+    if (!g_testing) {
+        VERBOSE("Entrypoint: %016lx", (u64)fs.GetEntrypoint());
+    }
     VERBOSE("Entering main thread :)");
 
     ThreadState* state = &thread_states.back();
@@ -72,15 +80,12 @@ void Emulator::setupMainStack(ThreadState* state) {
 
     rsp = stack_push_string(rsp, path);
     const char* program_name = (const char*)rsp;
-    VERBOSE("Pushing: %s -> %s", path, program_name);
 
     rsp = stack_push_string(rsp, x86_64_string);
     const char* platform_name = (const char*)rsp;
-    VERBOSE("Pushing: %s -> %s", x86_64_string, platform_name);
 
     for (ssize_t i = 0; i < argc; i++) {
         rsp = stack_push_string(rsp, config.argv[i].c_str());
-        VERBOSE("Pushing: %s -> %p", config.argv[i].c_str(), (void*)rsp);
         argv_addresses[i] = rsp;
     }
 
@@ -235,9 +240,8 @@ void* Emulator::compileFunction(u64 rip) {
     auto [func, size] = backend.EmitFunction(backend_function, allocations);
 
     if (g_print_disassembly) {
-        fmt::print("Disassembly of function at 0x{:X}:\n", rip);
-        fmt::print("{}\n", Disassembler::Disassemble(func, size));
-        fflush(stdout);
+        PLAIN("Disassembly of function at 0x%lx:\n", rip);
+        PLAIN("%s", Disassembler::Disassemble(func, size).c_str());
     }
 
     return func;
@@ -246,9 +250,15 @@ void* Emulator::compileFunction(u64 rip) {
 void* Emulator::CompileNext(Emulator* emulator, ThreadState* thread_state) {
 
     // Mutex needs to be unlocked before the thread is dispatched
-    void* function = emulator->compileFunction(thread_state->GetRip());
+    void* volatile function = emulator->compileFunction(thread_state->GetRip());
 
-    VERBOSE("Jumping to function %p", function);
+    u64 address = thread_state->GetRip();
+    if (address >= g_interpreter_start && address < g_interpreter_end) {
+        address = address - g_interpreter_start;
+    } else if (address >= g_executable_start && address < g_executable_end) {
+        address = address - g_executable_start;
+    }
+    VERBOSE("Jumping to function %016lx, located at %p", address, function);
 
     return function;
 }

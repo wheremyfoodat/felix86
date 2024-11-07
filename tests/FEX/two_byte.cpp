@@ -1,7 +1,7 @@
 #include "FEX/fex_test_loader.hpp"
 
 #define TWOBYTE_TEST(opcode)                                                                                                                         \
-    CATCH_TEST_CASE("0F_" #opcode, "[FEX][TwoByte]") {                                                                                               \
+    CATCH_TEST_CASE("0F_" #opcode, "TwoByte") {                                                                                                      \
         FEXTestLoader::RunTest("ASM/TwoByte/0F_" #opcode ".asm");                                                                                    \
     }
 
@@ -100,3 +100,5 @@ TWOBYTE_TEST(B6)
 TWOBYTE_TEST(B7)
 TWOBYTE_TEST(BC)
 TWOBYTE_TEST(BD)
+TWOBYTE_TEST(BE)
+TWOBYTE_TEST(BF)

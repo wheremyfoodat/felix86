@@ -35,8 +35,6 @@ private:
     static void EmitZext16(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitZext32(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitClz(Backend&, biscuit::GPR, biscuit::GPR);
-    static void EmitCtzh(Backend&, biscuit::GPR, biscuit::GPR);
-    static void EmitCtzw(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitCtz(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitNot(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitNeg(Backend&, biscuit::GPR, biscuit::GPR);
@@ -90,6 +88,8 @@ private:
     static void EmitAmoCAS16(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
     static void EmitAmoCAS32(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
     static void EmitAmoCAS64(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::GPR, biscuit::Ordering);
+    static void EmitCZeroEqz(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
+    static void EmitCZeroNez(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitSub(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitAnd(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitAndi(Backend&, biscuit::GPR, biscuit::GPR, u64);
@@ -109,12 +109,8 @@ private:
     static void EmitShri(Backend&, biscuit::GPR, biscuit::GPR, i64);
     static void EmitSar(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitSari(Backend&, biscuit::GPR, biscuit::GPR, i64);
-    static void EmitRol8(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
-    static void EmitRol16(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitRol32(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitRol64(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
-    static void EmitRor8(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
-    static void EmitRor16(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitRor32(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitRor64(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitDiv(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);

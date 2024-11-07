@@ -1,14 +1,17 @@
 #include "fex_test_loader.hpp"
 
 #define OP_SIZE(opcode)                                                                                                                              \
-    CATCH_TEST_CASE("66_" #opcode, "[FEX][OpSize]") {                                                                                                \
+    CATCH_TEST_CASE("66_" #opcode, "OpSize") {                                                                                                       \
         FEXTestLoader::RunTest("ASM/OpSize/66_" #opcode ".asm");                                                                                     \
     }
 
-CATCH_TEST_CASE("15Byte", "[FEX][OpSize]") {
+CATCH_TEST_CASE("15Byte", "OpSize") {
     FEXTestLoader::RunTest("ASM/OpSize/15_BYTE.asm");
 }
 
+OP_SIZE(12)
+OP_SIZE(16)
+OP_SIZE(17)
 OP_SIZE(28)
 OP_SIZE(51)
 OP_SIZE(54)
@@ -35,8 +38,11 @@ OP_SIZE(73)
 OP_SIZE(74)
 OP_SIZE(75)
 OP_SIZE(76)
+OP_SIZE(C6)
+OP_SIZE(D4)
 OP_SIZE(D6)
 OP_SIZE(D7)
+OP_SIZE(DA)
 OP_SIZE(DB)
 OP_SIZE(DF)
 OP_SIZE(EB)
