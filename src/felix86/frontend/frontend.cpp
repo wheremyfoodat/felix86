@@ -184,7 +184,7 @@ u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, bool rex_
     return 0;
 }
 
-void frontend_compile_instruction(FrontendState* state, IREmitter& ir) {
+void frontend_compile_instruction(IREmitter& ir) {
     u8* data = (u8*)ir.GetCurrentAddress();
 
     x86_instruction_t inst = {};
@@ -656,10 +656,11 @@ void frontend_compile_instruction(FrontendState* state, IREmitter& ir) {
     bool is_rep = rep_type != NONE;
     IRBlock* loop_block = nullptr;
     IRBlock* exit_block = nullptr;
+    ir.SetInstruction(&inst);
 
     if (is_rep) {
-        loop_block = state->function->CreateBlock();
-        exit_block = state->function->CreateBlockAt(ir.GetCurrentAddress() + inst.length);
+        loop_block = ir.CreateBlock();
+        exit_block = ir.CreateBlockAt(ir.GetNextAddress());
         ir.RepStart(loop_block, exit_block);
 
         // Write the instruction in the loop body
@@ -667,30 +668,26 @@ void frontend_compile_instruction(FrontendState* state, IREmitter& ir) {
     }
 
     // Call actual decoding function
-    fn(state, ir, &inst);
+    fn(ir, &inst);
 
     if (is_rep) {
         ir.RepEnd(rep_type, loop_block, exit_block);
-        frontend_compile_block(state->function, exit_block);
+        frontend_compile_block(ir.GetFunction(), exit_block);
     }
 
     ir.IncrementAddress(inst.length);
 }
 
-void frontend_compile_block(IRFunction* function, IRBlock* block) {
+void frontend_compile_block(IRFunction& function, IRBlock* block) {
     if (block->IsCompiled()) {
         return;
     }
 
-    FrontendState state = {0};
-    state.function = function;
-
-    IREmitter ir(*block, block->GetStartAddress());
-
+    IREmitter ir(function, *block, block->GetStartAddress());
     block->SetCompiled();
 
     while (!ir.IsExit()) {
-        frontend_compile_instruction(&state, ir);
+        frontend_compile_instruction(ir);
     }
 
     if (g_print_state) {
@@ -702,8 +699,8 @@ void frontend_compile_block(IRFunction* function, IRBlock* block) {
     }
 }
 
-void frontend_compile_function(IRFunction* function) {
-    IRBlock* block = function->GetBlockAt(function->GetStartAddress());
+void frontend_compile_function(IRFunction& function) {
+    IRBlock* block = function.GetBlockAt(function.GetStartAddress());
     frontend_compile_block(function, block);
-    function->SetCompiled();
+    function.SetCompiled();
 }

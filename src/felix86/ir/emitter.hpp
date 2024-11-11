@@ -1,12 +1,14 @@
 #pragma once
 
 #include "felix86/common/utility.hpp"
+#include "felix86/frontend/instruction.hpp"
 #include "felix86/ir/block.hpp"
+#include "felix86/ir/function.hpp"
 
 struct IREmitter {
     using VectorFunc = SSAInstruction* (*)(IREmitter&, SSAInstruction*, SSAInstruction*, VectorState);
 
-    IREmitter(IRBlock& block, u64 address) : block(&block), current_address(address) {}
+    IREmitter(IRFunction& function, IRBlock& block, u64 address) : function(function), block(&block), current_address(address) {}
 
     void Exit() {
         exit = true;
@@ -99,13 +101,17 @@ struct IREmitter {
     SSAInstruction* GreaterThanUnsigned(SSAInstruction* lhs, SSAInstruction* rhs);
     SSAInstruction* Sext(SSAInstruction* value, x86_size_e size);
     SSAInstruction* Zext(SSAInstruction* value, x86_size_e size);
-    SSAInstruction* AmoAdd(SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size);
-    SSAInstruction* AmoAnd(SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size);
-    SSAInstruction* AmoOr(SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size);
-    SSAInstruction* AmoXor(SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size);
-    SSAInstruction* AmoSwap(SSAInstruction* address, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size);
+    SSAInstruction* LoadReserved32(SSAInstruction* address, biscuit::Ordering ordering);
+    SSAInstruction* LoadReserved64(SSAInstruction* address, biscuit::Ordering ordering);
+    SSAInstruction* StoreConditional32(SSAInstruction* address, SSAInstruction* value, biscuit::Ordering ordering);
+    SSAInstruction* StoreConditional64(SSAInstruction* address, SSAInstruction* value, biscuit::Ordering ordering);
+    SSAInstruction* AmoAdd(SSAInstruction* address, SSAInstruction* source, x86_size_e size);
+    SSAInstruction* AmoAnd(SSAInstruction* address, SSAInstruction* source, x86_size_e size);
+    SSAInstruction* AmoOr(SSAInstruction* address, SSAInstruction* source, x86_size_e size);
+    SSAInstruction* AmoXor(SSAInstruction* address, SSAInstruction* source, x86_size_e size);
+    SSAInstruction* AmoSwap(SSAInstruction* address, SSAInstruction* source, x86_size_e size);
     // Compares [Address] with Expected and if equal, stores Source in [Address]. Also returns original value at [Address].
-    SSAInstruction* AmoCAS(SSAInstruction* address, SSAInstruction* expected, SSAInstruction* source, MemoryOrdering ordering, x86_size_e size);
+    SSAInstruction* AmoCAS(SSAInstruction* address, SSAInstruction* expected, SSAInstruction* source, x86_size_e size);
     SSAInstruction* CZeroEqz(SSAInstruction* value, SSAInstruction* cond);
     SSAInstruction* CZeroNez(SSAInstruction* value, SSAInstruction* cond);
     SSAInstruction* VIota(SSAInstruction* mask, VectorState state);
@@ -148,6 +154,7 @@ struct IREmitter {
     SSAInstruction* Lea(const x86_operand_t& operand);
     SSAInstruction* GetFlags();
     SSAInstruction* IsZero(SSAInstruction* value, x86_size_e size);
+    SSAInstruction* IsNotZero(SSAInstruction* value, x86_size_e size);
     SSAInstruction* IsNegative(SSAInstruction* value, x86_size_e size);
     SSAInstruction* IsCarryAdd(SSAInstruction* source, SSAInstruction* result, x86_size_e size);
     SSAInstruction* IsCarryAdc(SSAInstruction* lhs, SSAInstruction* rhs, SSAInstruction* carry, x86_size_e size_e);
@@ -190,12 +197,36 @@ struct IREmitter {
     u64 ImmSext(u64 imm, x86_size_e size);
 
     u64 GetCurrentAddress() {
+        ASSERT(current_address != IR_NO_ADDRESS);
         return current_address;
+    }
+
+    u64 GetNextAddress() {
+        ASSERT(current_address != IR_NO_ADDRESS);
+        return current_address + instruction->length;
     }
 
     void SetBlock(IRBlock* block) {
         ASSERT(block);
         this->block = block;
+        current_address = block->GetStartAddress();
+    }
+
+    void SetInstruction(x86_instruction_t* instruction) {
+        ASSERT(instruction);
+        this->instruction = instruction;
+    }
+
+    IRBlock* CreateBlock() {
+        return function.CreateBlock();
+    }
+
+    IRBlock* CreateBlockAt(u64 address) {
+        return function.CreateBlockAt(address);
+    }
+
+    IRBlock* GetExit() {
+        return function.GetExit();
     }
 
     u16 GetBitSize(x86_size_e size);
@@ -209,6 +240,10 @@ struct IREmitter {
     }
 
     void CallHostFunction(u64 function_address);
+
+    IRFunction& GetFunction() {
+        return function;
+    }
 
     SSAInstruction* Set8Low(SSAInstruction* old, SSAInstruction* value);
     SSAInstruction* Set8High(SSAInstruction* old, SSAInstruction* value);
@@ -246,11 +281,16 @@ private:
     SSAInstruction* insertInstruction(IROpcode opcode, std::initializer_list<SSAInstruction*> operands, u64 immediate);
     SSAInstruction* insertInstruction(IROpcode opcode, VectorState state, std::initializer_list<SSAInstruction*> operands);
     SSAInstruction* insertInstruction(IROpcode opcode, VectorState state, std::initializer_list<SSAInstruction*> operands, u64 imm);
+    SSAInstruction* atomic8(SSAInstruction* address, SSAInstruction* source, IROpcode opcode);
+    SSAInstruction* softwareAtomic16(SSAInstruction* address, SSAInstruction* source, IROpcode opcode);
+    SSAInstruction* cas64(SSAInstruction* address, SSAInstruction* expected, SSAInstruction* source);
 
     void loadPartialState(std::span<const x86_ref_e> refs);
     void storePartialState(std::span<const x86_ref_e> refs);
 
+    IRFunction& function;
     IRBlock* block = nullptr;
+    x86_instruction_t* instruction = nullptr;
 
     u64 current_address = 0;
     bool exit = false;

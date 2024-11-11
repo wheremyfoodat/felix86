@@ -199,7 +199,7 @@ void* Emulator::compileFunction(u64 rip) {
 
     VERBOSE("Now compiling: %016lx", rip);
     IRFunction function{rip};
-    frontend_compile_function(&function);
+    frontend_compile_function(function);
 
     PassManager::SSAPass(&function);
     PassManager::DeadCodeEliminationPass(&function);
@@ -232,6 +232,8 @@ void* Emulator::compileFunction(u64 rip) {
 
     // Remove unnecessary vector state instructions and add ones needed before stores
     PassManager::VectorStatePass(&backend_function);
+
+    PassManager::BlockShenanigansPass(&backend_function);
 
     if (g_print_blocks) {
         fmt::print("Backend function IR:\n{}\n", backend_function.Print());

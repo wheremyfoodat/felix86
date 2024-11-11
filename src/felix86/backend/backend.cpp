@@ -1,13 +1,22 @@
 #include <sys/mman.h>
-#include "biscuit/cpuinfo.hpp"
 #include "felix86/backend/backend.hpp"
 #include "felix86/common/log.hpp"
-#include "felix86/common/print.hpp"
 #include "felix86/emulator.hpp"
 
 using namespace biscuit;
 
 constexpr static u64 code_cache_size = 32 * 1024 * 1024;
+
+// If you don't flush the cache the code will randomly SIGILL
+static inline void flush_icache() {
+#if defined(__riscv)
+    asm volatile("fence.i" ::: "memory");
+#elif defined(__aarch64__)
+#pragma message("Don't forget to implement me")
+#elif defined(__x86_64__)
+    // No need to flush the cache on x86
+#endif
+}
 
 namespace {
 std::string ExitReasonToString(ExitReason reason) {
@@ -194,9 +203,13 @@ std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, con
         }
 
         switch (block->GetTermination()) {
+        case Termination::Null: {
+            UNREACHABLE();
+            break;
+        }
         case Termination::Jump: {
             ptrdiff_t offset = as.GetCodeBuffer().GetCursorOffset();
-            const BackendBlock* target = &function.GetBlock(block->GetSuccessor(0));
+            const BackendBlock* target = block->GetSuccessor(0);
             direct_jumps.push_back({offset, target});
             // Some space for the backpatched jump
             as.NOP();
@@ -205,8 +218,8 @@ std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, con
         case Termination::JumpConditional: {
             ptrdiff_t offset = as.GetCodeBuffer().GetCursorOffset();
             Allocation condition = allocations.GetAllocation(block->GetCondition()->GetName());
-            const BackendBlock* target_true = &function.GetBlock(block->GetSuccessor(0));
-            const BackendBlock* target_false = &function.GetBlock(block->GetSuccessor(1));
+            const BackendBlock* target_true = block->GetSuccessor(0);
+            const BackendBlock* target_false = block->GetSuccessor(1);
             conditional_jumps.push_back({offset, condition, target_true, target_false});
             // Some space for the backpatched jump, it can be up to 3 instructions
             as.NOP();
@@ -217,9 +230,6 @@ std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, con
         case Termination::BackToDispatcher: {
             Emitter::EmitJumpFar(*this, (void*)compile_next);
             break;
-        }
-        default: {
-            UNREACHABLE();
         }
         }
     }
@@ -241,7 +251,7 @@ std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, con
 
         ptrdiff_t cursor = as.GetCodeBuffer().GetCursorOffset();
         as.RewindBuffer(jump.location);
-        Emitter::EmitJumpConditional(*this, jump.allocation.AsGPR(), &block_map[jump.target_true], &block_map[jump.target_false]);
+        Emitter::EmitJumpConditional(*this, jump.allocation, &block_map[jump.target_true], &block_map[jump.target_false]);
         as.AdvanceBuffer(cursor);
     }
 
@@ -249,6 +259,9 @@ std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, con
     u64 size = (u64)end - (u64)start;
 
     map[function.GetStartAddress()] = {start, size};
+
+    // Make code visible to instruction fetches.
+    flush_icache();
 
     return {start, size};
 }
