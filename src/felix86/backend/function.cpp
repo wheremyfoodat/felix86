@@ -166,6 +166,29 @@ BackendFunction BackendFunction::FromIRFunction(const IRFunction* function) {
         BreakupPhis(&backend_function, blocks[i], phis[i]);
     }
 
+    for (size_t i = 0; i < blocks.size(); i++) {
+        IRBlock* block = blocks[i];
+        BackendBlock& backend_block = *backend_function.blocks[i];
+        BackendInstruction termination_instruction;
+        switch (block->GetTermination()) {
+        case Termination::Jump:
+            termination_instruction.opcode = IROpcode::Jump;
+            break;
+        case Termination::JumpConditional:
+            termination_instruction.opcode = IROpcode::JumpConditional;
+            termination_instruction.operand_count = 1;
+            termination_instruction.operand_names[0] = block->GetCondition()->GetName();
+            break;
+        case Termination::BackToDispatcher:
+            termination_instruction.opcode = IROpcode::BackToDispatcher;
+            break;
+        case Termination::Null:
+            UNREACHABLE();
+            break;
+        }
+        backend_block.instructions.push_back(termination_instruction);
+    }
+
     backend_function.start_address = function->GetStartAddress();
 
     return backend_function;
