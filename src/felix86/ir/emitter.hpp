@@ -8,17 +8,10 @@
 struct IREmitter {
     using VectorFunc = SSAInstruction* (*)(IREmitter&, SSAInstruction*, SSAInstruction*, VectorState);
 
-    IREmitter(IRFunction& function, IRBlock& block, u64 address) : function(function), block(&block), current_address(address) {}
-
-    void Exit() {
-        exit = true;
-    }
-
-    bool IsExit() const {
-        return exit;
-    }
+    IREmitter(IRFunction& function) : function(function) {}
 
     void IncrementAddress(u64 increment) {
+        ASSERT(current_address != IR_NO_ADDRESS);
         current_address += increment;
     }
 
@@ -129,6 +122,7 @@ struct IREmitter {
     SSAInstruction* VSrli(SSAInstruction* value, u8 shift, VectorState state);
     SSAInstruction* VSrai(SSAInstruction* value, u8 shift, VectorState state);
     SSAInstruction* VMSeqi(SSAInstruction* value, VectorState state, u64 imm);
+    SSAInstruction* VMSlt(SSAInstruction* value, SSAInstruction* reg, VectorState state);
     SSAInstruction* VSlideUpi(SSAInstruction* value, u8 shift, VectorState state);
     SSAInstruction* VSlideUpZeroesi(SSAInstruction* value, u8 shift, VectorState state);
     SSAInstruction* VSlideDowni(SSAInstruction* value, u8 shift, VectorState state);
@@ -206,10 +200,19 @@ struct IREmitter {
         return current_address + instruction->length;
     }
 
+    void SetAddress(u64 address) {
+        current_address = address;
+    }
+
     void SetBlock(IRBlock* block) {
         ASSERT(block);
+        ASSERT(this->block != block);
         this->block = block;
-        current_address = block->GetStartAddress();
+    }
+
+    IRBlock* GetCurrentBlock() {
+        ASSERT(block);
+        return block;
     }
 
     void SetInstruction(x86_instruction_t* instruction) {
@@ -227,6 +230,15 @@ struct IREmitter {
 
     IRBlock* GetExit() {
         return function.GetExit();
+    }
+
+    IRBlock* PopQueue() {
+        if (compile_queue.empty())
+            return nullptr;
+
+        IRBlock* block = compile_queue.back();
+        compile_queue.pop_back();
+        return block;
     }
 
     u16 GetBitSize(x86_size_e size);
@@ -282,7 +294,8 @@ private:
     SSAInstruction* insertInstruction(IROpcode opcode, VectorState state, std::initializer_list<SSAInstruction*> operands);
     SSAInstruction* insertInstruction(IROpcode opcode, VectorState state, std::initializer_list<SSAInstruction*> operands, u64 imm);
     SSAInstruction* atomic8(SSAInstruction* address, SSAInstruction* source, IROpcode opcode);
-    SSAInstruction* softwareAtomic16(SSAInstruction* address, SSAInstruction* source, IROpcode opcode);
+    SSAInstruction* atomic16(SSAInstruction* address, SSAInstruction* source, IROpcode opcode);
+    SSAInstruction* cas32(SSAInstruction* address, SSAInstruction* expected, SSAInstruction* source);
     SSAInstruction* cas64(SSAInstruction* address, SSAInstruction* expected, SSAInstruction* source);
 
     void loadPartialState(std::span<const x86_ref_e> refs);
@@ -293,5 +306,5 @@ private:
     x86_instruction_t* instruction = nullptr;
 
     u64 current_address = 0;
-    bool exit = false;
+    std::vector<IRBlock*> compile_queue;
 };

@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/utsname.h>
 #include <unistd.h>
 #include "felix86/common/log.hpp"
 #include "felix86/common/x86.hpp"
@@ -69,7 +70,7 @@ void felix86_syscall(Emulator* emulator, ThreadState* state) {
     u64 r10 = state->GetGpr(X86_REF_R10);
     u64 r8 = state->GetGpr(X86_REF_R8);
     u64 r9 = state->GetGpr(X86_REF_R9);
-    ssize_t result = 0;
+    ssize_t result = -1;
 
     Filesystem& fs = emulator->GetFilesystem();
 
@@ -88,10 +89,12 @@ void felix86_syscall(Emulator* emulator, ThreadState* state) {
         switch (rdi) {
         case felix86_x86_64_ARCH_SET_GS: {
             state->gsbase = rsi;
+            result = 0;
             break;
         }
         case felix86_x86_64_ARCH_SET_FS: {
             state->fsbase = rsi;
+            result = 0;
             break;
         }
         case felix86_x86_64_ARCH_GET_FS: {
@@ -124,12 +127,13 @@ void felix86_syscall(Emulator* emulator, ThreadState* state) {
         break;
     }
     case felix86_x86_64_set_robust_list: {
-        state->robust_futex_list = rdi;
-        if (rsi != sizeof(u64) * 3) {
-            WARN("Struct size is wrong during set_robust_list");
-            result = -EINVAL;
-        }
-        STRACE("set_robust_list(%016lx, %016lx) = %016lx", rdi, rsi, result);
+        // state->robust_futex_list = rdi;
+        // if (rsi != sizeof(u64) * 3) {
+        //     WARN("Struct size is wrong during set_robust_list");
+        //     result = -EINVAL;
+        // }
+        // STRACE("set_robust_list(%016lx, %016lx) = %016lx", rdi, rsi, result);
+        result = -ENOSYS;
         break;
     }
     case felix86_x86_64_rseq: {
@@ -237,6 +241,24 @@ void felix86_syscall(Emulator* emulator, ThreadState* state) {
     case felix86_x86_64_munmap: {
         result = HOST_SYSCALL(munmap, rdi, rsi);
         STRACE("munmap(%p, %016lx) = %016lx", (void*)rdi, rsi, result);
+        break;
+    }
+    case felix86_x86_64_uname: {
+        struct utsname host_uname;
+        struct utsname* guest_uname = (struct utsname*)rdi;
+        if (uname(&host_uname) == 0) {
+            memcpy(guest_uname->nodename, host_uname.nodename, sizeof(host_uname.nodename));
+            memcpy(guest_uname->domainname, host_uname.domainname, sizeof(host_uname.domainname));
+        } else {
+            strcpy(guest_uname->nodename, "felix86");
+            WARN("Failed to determine host node name");
+        }
+        strcpy(guest_uname->sysname, "Linux");
+        strcpy(guest_uname->release, "5.0.0");
+        std::string version = "#1 SMP " __DATE__ " " __TIME__;
+        strcpy(guest_uname->version, version.c_str());
+        strcpy(guest_uname->machine, "x86_64");
+        result = 0;
         break;
     }
     default: {

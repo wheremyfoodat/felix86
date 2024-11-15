@@ -508,10 +508,6 @@ IR_HANDLE(jcc_rel) { // jcc rel8 - 0x70-0x7f
     IRBlock* block_true = ir.CreateBlockAt(jump_address_true);
     IRBlock* block_false = ir.CreateBlockAt(jump_address_false);
     ir.TerminateJumpConditional(condition_mov, block_true, block_false);
-    ir.Exit();
-
-    frontend_compile_block(ir.GetFunction(), block_false);
-    frontend_compile_block(ir.GetFunction(), block_true);
 }
 
 IR_HANDLE(group1) { // add/or/adc/sbb/and/sub/xor/cmp
@@ -534,12 +530,11 @@ IR_HANDLE(test_rm_reg) { // test rm8, r8 - 0x84
 
 IR_HANDLE(xchg_rm_reg) { // xchg rm8, r8 - 0x86
     SSAInstruction* reg = ir.GetReg(inst->operand_reg);
-    if (inst->operand_rm.type == X86_OP_TYPE_MEMORY && false) {
+    if (inst->operand_rm.type == X86_OP_TYPE_MEMORY) {
         SSAInstruction* address = ir.Lea(inst->operand_rm);
         SSAInstruction* swapped_reg = ir.AmoSwap(address, reg, inst->operand_reg.size);
         ir.SetReg(inst->operand_reg, swapped_reg);
     } else {
-        WARN("Hardcoded non-atomic path for xchg, fix this");
         SSAInstruction* rm = ir.GetRm(inst->operand_rm);
         ir.SetRm(inst->operand_rm, reg);
         ir.SetReg(inst->operand_reg, rm);
@@ -639,8 +634,8 @@ IR_HANDLE(movs) { // movsb - 0xa4
     SSAInstruction* rsi_val = ir.ReadMemory(rsi, size_e);
     ir.WriteMemory(rdi, rsi_val, size_e);
 
-    u8 immediate = ir.GetBitSize(size_e) / 8;
-    SSAInstruction* imm = ir.Select(ir.GetFlag(X86_REF_DF), ir.Imm(-immediate), ir.Imm(immediate));
+    int bit_size = ir.GetBitSize(size_e) / 8;
+    SSAInstruction* imm = ir.Select(ir.GetFlag(X86_REF_DF), ir.Imm(-bit_size), ir.Imm(bit_size));
     SSAInstruction* rsi_add = ir.Add(rsi, imm);
     SSAInstruction* rdi_add = ir.Add(rdi, imm);
     ir.SetReg(rsi_add, X86_REF_RSI);
@@ -669,8 +664,9 @@ IR_HANDLE(stosd) { // stosd - 0xab
     SSAInstruction* rax = ir.GetReg(X86_REF_RAX, size_e);
     ir.WriteMemory(rdi, rax, size_e);
 
-    // Assume DF is 0 for now
-    SSAInstruction* rdi_add = ir.Addi(rdi, ir.GetBitSize(size_e) / 8);
+    int bit_size = ir.GetBitSize(size_e) / 8;
+    SSAInstruction* imm = ir.Select(ir.GetFlag(X86_REF_DF), ir.Imm(-bit_size), ir.Imm(bit_size));
+    SSAInstruction* rdi_add = ir.Add(rdi, imm);
     ir.SetReg(rdi_add, X86_REF_RDI, address_size);
 }
 
@@ -705,7 +701,6 @@ IR_HANDLE(ret_imm) {
     ir.SetReg(rsp_add, X86_REF_RSP);
     ir.SetReg(rip, X86_REF_RIP);
     ir.TerminateJump(ir.GetExit());
-    ir.Exit();
 }
 
 IR_HANDLE(ret) { // ret - 0xc3
@@ -715,7 +710,6 @@ IR_HANDLE(ret) { // ret - 0xc3
     ir.SetReg(rsp_add, X86_REF_RSP);
     ir.SetReg(rip, X86_REF_RIP);
     ir.TerminateJump(ir.GetExit());
-    ir.Exit();
 }
 
 IR_HANDLE(mov_rm_imm) { // mov rm16/32/64, imm16/32/64 - 0xc7
@@ -757,7 +751,6 @@ IR_HANDLE(call_rel32) { // call rel32 - 0xe8
     ir.SetReg(rsp_sub, X86_REF_RSP);
     ir.SetReg(rip, X86_REF_RIP);
     ir.TerminateJump(ir.GetExit());
-    ir.Exit();
 }
 
 IR_HANDLE(jmp_rel32) { // jmp rel32 - 0xe9
@@ -766,9 +759,6 @@ IR_HANDLE(jmp_rel32) { // jmp rel32 - 0xe9
 
     IRBlock* target = ir.CreateBlockAt(jump_address);
     ir.TerminateJump(target);
-    ir.Exit();
-
-    frontend_compile_block(ir.GetFunction(), target);
 }
 
 IR_HANDLE(jmp_rel8) { // jmp rel8 - 0xeb
@@ -777,21 +767,16 @@ IR_HANDLE(jmp_rel8) { // jmp rel8 - 0xeb
 
     IRBlock* target = ir.CreateBlockAt(jump_address);
     ir.TerminateJump(target);
-    ir.Exit();
-
-    frontend_compile_block(ir.GetFunction(), target);
 }
 
 IR_HANDLE(hlt) { // hlt - 0xf4
     ir.SetExitReason(EXIT_REASON_HLT);
     ir.TerminateJump(ir.GetExit());
-    ir.Exit();
 }
 
 IR_HANDLE(ud2) { // ud2 - 0x0f 0x0b
     ir.SetExitReason(EXIT_REASON_UD2);
     ir.TerminateJump(ir.GetExit());
-    ir.Exit();
 }
 
 IR_HANDLE(group3) { // test/not/neg/mul/imul/div/idiv rm - 0xf6/0xf7
@@ -816,13 +801,12 @@ IR_HANDLE(std) { // std - 0xfd
 }
 
 IR_HANDLE(group4) { // inc/dec rm8 - 0xfe
-    x86_size_e size_e = inst->operand_reg.size;
+    x86_size_e size_e = inst->operand_rm.size;
     Group4 opcode = (Group4)(inst->operand_reg.reg.ref - X86_REF_RAX);
 
     SSAInstruction* rm = ir.GetRm(inst->operand_rm);
     SSAInstruction* one = ir.Imm(1);
     SSAInstruction* result = nullptr;
-    SSAInstruction* c = nullptr;
     SSAInstruction* o = nullptr;
     SSAInstruction* a = nullptr;
 
@@ -849,7 +833,7 @@ IR_HANDLE(group4) { // inc/dec rm8 - 0xfe
     SSAInstruction* z = ir.IsZero(result, size_e);
     SSAInstruction* s = ir.IsNegative(result, size_e);
 
-    ir.SetCPAZSO(c, p, a, z, s, o);
+    ir.SetCPAZSO(nullptr, p, a, z, s, o);
     ir.SetRm(inst->operand_rm, result);
 }
 
@@ -896,7 +880,6 @@ IR_HANDLE(group5) { // inc/dec/call/jmp/push rm32 - 0xff
         ir.SetReg(rsp_sub, X86_REF_RSP);
         ir.SetReg(rip, X86_REF_RIP);
         ir.TerminateJump(ir.GetExit());
-        ir.Exit();
         break;
     }
     case Group5::Jmp: {
@@ -905,7 +888,6 @@ IR_HANDLE(group5) { // inc/dec/call/jmp/push rm32 - 0xff
         SSAInstruction* rm = ir.GetRm(rm_op);
         ir.SetReg(rm, X86_REF_RIP);
         ir.TerminateJump(ir.GetExit());
-        ir.Exit();
         break;
     }
     case Group5::Push: {
@@ -942,11 +924,8 @@ IR_HANDLE(group7) { // group 7 - 0x0f 0x01
     case 2: {
         if (opcode == 0xD0) { // xgetbv
             // That's probably fine for now
-            xcr0_reg_t xcr0 = {};
-            xcr0.x87 = 1;
-            xcr0.sse = 1;
-            u32 rax = xcr0.raw;
-            u32 rdx = xcr0.raw >> 32;
+            u32 rax = 0b11;
+            u32 rdx = 0;
             ir.SetReg(ir.Imm(rax), X86_REF_RAX);
             ir.SetReg(ir.Imm(rdx), X86_REF_RDX);
             WARN("XGETBV");
@@ -1025,13 +1004,18 @@ IR_HANDLE(cpuid) { // cpuid - 0x0f 0xa2
 }
 
 IR_HANDLE(bt) { // bt - 0x0f 0xa3
-    SSAInstruction* rm = ir.GetRm(inst->operand_rm);
-    SSAInstruction* reg = ir.GetReg(inst->operand_reg);
-    SSAInstruction* mask = ir.Imm(ir.GetBitSize(inst->operand_reg.size) - 1);
-    SSAInstruction* shift = ir.And(reg, mask);
-    SSAInstruction* bit = ir.Shl(ir.Imm(1), shift);
-    SSAInstruction* result = ir.And(rm, bit);
-    ir.SetFlag(ir.Equal(result, mask), X86_REF_CF);
+    // TODO: use B extension bit test whenever possible
+    if (inst->operand_rm.type == X86_OP_TYPE_REGISTER) {
+        WARN("BT");
+        SSAInstruction* rm = ir.GetRm(inst->operand_rm);
+        SSAInstruction* reg = ir.GetReg(inst->operand_reg);
+        SSAInstruction* shift = ir.Andi(reg, ir.GetBitSize(inst->operand_reg.size) - 1);
+        SSAInstruction* bit = ir.Shr(rm, shift);
+        SSAInstruction* result = ir.Andi(bit, 1);
+        ir.SetFlag(result, X86_REF_CF);
+    } else {
+        UNREACHABLE();
+    }
 }
 
 IR_HANDLE(imul_r32_rm32) { // imul r32/64, rm32/64 - 0x0f 0xaf
@@ -1080,27 +1064,45 @@ IR_HANDLE(imul_r32_rm32) { // imul r32/64, rm32/64 - 0x0f 0xaf
 
 IR_HANDLE(cmpxchg) { // cmpxchg - 0x0f 0xb0-0xb1
     x86_size_e size_e = inst->operand_reg.size;
-    SSAInstruction* eax = ir.GetReg(X86_REF_RAX, size_e);
 
     if (inst->operand_rm.type == X86_OP_TYPE_MEMORY) {
+        IRBlock* next_instruction_target = ir.CreateBlockAt(ir.GetNextAddress());
+        IRBlock* equal_block = ir.CreateBlock();
+
+        SSAInstruction* eax = ir.GetReg(X86_REF_RAX, size_e);
         SSAInstruction* address = ir.Lea(inst->operand_rm);
         SSAInstruction* reg = ir.GetReg(inst->operand_reg);
         SSAInstruction* actual = ir.AmoCAS(address, eax, reg, size_e);
 
-        ir.SetReg(actual, X86_REF_RAX, size_e);
-        ir.SetFlag(ir.Equal(actual, eax), X86_REF_ZF);
-    } else {
-        WARN("FIXME cmpxchg");
-        SSAInstruction* rm = ir.GetReg(inst->operand_rm.reg.ref, size_e);
-        SSAInstruction* equal = ir.Equal(eax, rm);
-        SSAInstruction* rm_full = ir.GetReg(inst->operand_rm.reg.ref, X86_SIZE_QWORD);
-        SSAInstruction* reg = ir.GetReg(inst->operand_reg);
-        SSAInstruction* is_true = ir.Set(rm_full, reg, size_e, inst->operand_rm.reg.high8);
-        SSAInstruction* is_false = rm_full;
-        // TODO: use actual new blocks instead of select bs
-        ir.SetReg(ir.Select(equal, is_true, is_false), inst->operand_rm.reg.ref, X86_SIZE_QWORD);
-        ir.SetReg(rm, X86_REF_RAX, size_e);
+        SSAInstruction* equal = ir.Equal(actual, eax);
         ir.SetFlag(equal, X86_REF_ZF);
+
+        ir.TerminateJumpConditional(equal, next_instruction_target, equal_block);
+        ir.SetBlock(equal_block);
+
+        ir.SetReg(actual, X86_REF_RAX, size_e);
+        ir.TerminateJump(next_instruction_target);
+    } else {
+        IRBlock* equal_block = ir.CreateBlock();
+        IRBlock* not_equal_block = ir.CreateBlock();
+        IRBlock* next_instruction_target = ir.CreateBlockAt(ir.GetNextAddress());
+
+        SSAInstruction* eax = ir.GetReg(X86_REF_RAX, size_e);
+        SSAInstruction* rm = ir.GetRm(inst->operand_rm);
+        SSAInstruction* equal = ir.Equal(eax, rm);
+        ir.SetFlag(equal, X86_REF_ZF);
+
+        ir.TerminateJumpConditional(equal, equal_block, not_equal_block);
+        ir.SetBlock(equal_block);
+
+        SSAInstruction* reg = ir.GetReg(inst->operand_reg);
+        ir.SetRm(inst->operand_rm, reg);
+
+        ir.TerminateJump(next_instruction_target);
+        ir.SetBlock(not_equal_block);
+
+        ir.SetReg(rm, X86_REF_RAX, size_e);
+        ir.TerminateJump(next_instruction_target);
     }
 }
 
@@ -1128,9 +1130,6 @@ IR_HANDLE(bsr) { // bsr - 0x0f 0xbd
     ir.SetReg(inst->operand_reg, sub);
 
     ir.TerminateJump(next_instruction_target);
-    ir.Exit();
-
-    frontend_compile_block(ir.GetFunction(), next_instruction_target);
 }
 
 IR_HANDLE(bsf) { // bsf - 0x0f 0xbc
@@ -1151,9 +1150,6 @@ IR_HANDLE(bsf) { // bsf - 0x0f 0xbc
     ir.SetReg(inst->operand_reg, ctz);
 
     ir.TerminateJump(next_instruction_target);
-    ir.Exit();
-
-    frontend_compile_block(ir.GetFunction(), next_instruction_target);
 }
 
 // ███████ ███████  ██████  ██████  ███    ██ ██████   █████  ██████  ██    ██      ██████   ██████
@@ -1246,10 +1242,9 @@ IR_HANDLE(group14) {
 
 IR_HANDLE(pmovmskb) {
     SSAInstruction* rm = ir.GetRm(inst->operand_rm, VectorState::PackedByte);
-    SSAInstruction* shifted = ir.VSrli(rm, 7, VectorState::PackedByte);
-    SSAInstruction* mask = ir.VMSeqi(shifted, VectorState::PackedByte, 1);
+    SSAInstruction* mask = ir.VMSlt(rm, ir.Imm(0), VectorState::PackedByte);
     static_assert(SUPPORTED_VLEN == 128); // if vlen changes, change the zext below
-    ir.SetReg(inst->operand_reg, ir.Zext(ir.VToI(mask, VectorState::PackedByte), X86_SIZE_WORD));
+    ir.SetReg(inst->operand_reg, ir.Zext(ir.VToI(mask, VectorState::PackedWord), X86_SIZE_WORD));
 }
 
 IR_HANDLE(movq_xmm_rm32) { // movq xmm, rm32 - 0x66 0x0f 0x6e
@@ -1557,21 +1552,6 @@ IR_HANDLE(movq_xmm_xmm64) { // movq xmm, xmm64 - 0xf3 0x0f 0x7e
 //    ██    █████   ██████     ██    ██ ███████ ██████    ████       ███████  ███████       █████  ███████
 //    ██    ██      ██   ██    ██    ██ ██   ██ ██   ██    ██        ██    ██ ██    ██          ██ ██   ██
 //    ██    ███████ ██   ██    ██    ██ ██   ██ ██   ██    ██         ██████   ██████      ██████  ██   ██
-
-IR_HANDLE(pcmpistri_xmm_xmm128_cb) { // pcmpistri xmm, xmm/m128, imm8 - 0x66 0x0f 0x3a 0x63
-    ERROR("Impl me, output xmm + rcx + flags reg?");
-    // SSAInstruction* rm = ir.GetRm(inst->operand_rm);
-    // SSAInstruction* imm = ir.Imm(inst->operand_imm.immediate.data);
-    // SSAInstruction* result = ir_emit_vector_packed_compare_implicit_string_index(BLOCK, rm, imm);
-    // ir.SetReg(inst->operand_reg, result);
-
-    // x86_ref_e outputs[] = {X86_REF_RCX, X86_REF_CF, X86_REF_ZF, X86_REF_SF, X86_REF_OF};
-    // ir_emit_hint_outputs(BLOCK, outputs, 5);
-
-    // SSAInstruction* zero = ir.Imm(0);
-    // ir.SetFlag(X86_REF_PF, zero);
-    // ir.SetFlag(X86_REF_AF, zero);
-}
 
 // ████████ ███████ ██████  ████████ ██  █████  ██████  ██    ██     ███████ ██████      ██████   █████
 //    ██    ██      ██   ██    ██    ██ ██   ██ ██   ██  ██  ██      ██           ██          ██ ██   ██

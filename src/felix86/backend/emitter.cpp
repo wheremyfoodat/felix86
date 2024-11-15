@@ -39,6 +39,7 @@ void EmitCrash(Backend& backend, ExitReason reason) {
     Emitter::EmitJumpFar(backend, backend.GetCrashTarget());
 }
 
+// TODO: pull out to ir emitter
 void SoftwareCtz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u32 size) {
     if (Rd == Rs) {
         AS.MV(t0, Rs);
@@ -67,6 +68,7 @@ void SoftwareCtz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u32 size) {
     Pop(backend, mask);
 }
 
+// TODO: pull out to ir emitter
 void SoftwareClz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, u32 size) {
     if (Rd == Rs) {
         AS.MV(t0, Rs);
@@ -271,21 +273,13 @@ void Emitter::EmitCpuid(Backend& backend) {
 }
 
 void Emitter::EmitSext8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    if (Extensions::B) {
-        AS.SEXTB(Rd, Rs);
-    } else {
-        AS.SLLI(Rd, Rs, 56);
-        AS.SRAI(Rd, Rd, 56);
-    }
+    ASSERT(Extensions::B);
+    AS.SEXTB(Rd, Rs);
 }
 
 void Emitter::EmitSext16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    if (Extensions::B) {
-        AS.SEXTH(Rd, Rs);
-    } else {
-        AS.SLLI(Rd, Rs, 48);
-        AS.SRAI(Rd, Rd, 48);
-    }
+    ASSERT(Extensions::B);
+    AS.SEXTH(Rd, Rs);
 }
 
 void Emitter::EmitSext32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
@@ -297,21 +291,13 @@ void Emitter::EmitZext8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
 }
 
 void Emitter::EmitZext16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    if (Extensions::B) {
-        AS.ZEXTH(Rd, Rs);
-    } else {
-        AS.SLLI(Rd, Rs, 48);
-        AS.SRLI(Rd, Rd, 48);
-    }
+    ASSERT(Extensions::B);
+    AS.ZEXTH(Rd, Rs);
 }
 
 void Emitter::EmitZext32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    if (Extensions::B) {
-        AS.ZEXTW(Rd, Rs);
-    } else {
-        AS.SLLI(Rd, Rs, 32);
-        AS.SRLI(Rd, Rd, 32);
-    }
+    ASSERT(Extensions::B);
+    AS.ZEXTW(Rd, Rs);
 }
 
 void Emitter::EmitClz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
@@ -339,6 +325,7 @@ void Emitter::EmitNeg(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
 }
 
 void Emitter::EmitParity(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    // TODO: pull both of these out to ir emitter
     if (Extensions::B) {
         AS.ANDI(Rd, Rs, 0xFF);
         AS.CPOPW(Rd, Rd);
@@ -783,13 +770,7 @@ void Emitter::EmitAmoCAS32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Addre
         AS.AMOCAS_W(ordering, Rd, Rs, Address);
         EmitZext32(backend, Rd, Rd);
     } else {
-        WARN("Non-atomic CAS32 fallback");
-        Label not_same;
-        AS.LW(t0, 0, Address);
-        AS.BNE(t0, Expected, &not_same);
-        AS.SW(Rs, 0, Address);
-        AS.Bind(&not_same);
-        AS.MV(Rd, t0);
+        UNREACHABLE();
     }
 }
 
@@ -1212,6 +1193,10 @@ void Emitter::EmitVSrai(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, u64 
 
 void Emitter::EmitVMSeqi(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, u64 immediate, VecMask masked) {
     AS.VMSEQ(Vd, Vs, immediate, masked);
+}
+
+void Emitter::EmitVMSlt(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, biscuit::GPR Rs, VecMask masked) {
+    AS.VMSLT(Vd, Vs, Rs, masked);
 }
 
 void Emitter::EmitVMerge(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {

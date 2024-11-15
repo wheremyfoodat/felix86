@@ -1,17 +1,17 @@
 #include "FEX/fex_test_loader.hpp"
 
 #define PRIMARY_TEST(opcode)                                                                                                                         \
-    CATCH_TEST_CASE(#opcode, "Primary") {                                                                                                            \
+    CATCH_TEST_CASE(#opcode, "[Primary]") {                                                                                                          \
         FEXTestLoader::RunTest("ASM/Primary/Primary_" #opcode ".asm");                                                                               \
     }
 
 #define PRIMARY_TEST_NO_PREFIX(opcode)                                                                                                               \
-    CATCH_TEST_CASE(#opcode, "Primary") {                                                                                                            \
+    CATCH_TEST_CASE(#opcode, "[Primary]") {                                                                                                          \
         FEXTestLoader::RunTest("ASM/Primary/" #opcode ".asm");                                                                                       \
     }
 
 #define PRIMARY_TEST_BASE(name)                                                                                                                      \
-    CATCH_TEST_CASE(#name, "[FEX]") {                                                                                                                \
+    CATCH_TEST_CASE(#name, "[Primary]") {                                                                                                            \
         FEXTestLoader::RunTest("ASM/" #name ".asm");                                                                                                 \
     }
 
@@ -79,6 +79,27 @@ PRIMARY_TEST(AB_qword_REP)
 PRIMARY_TEST(AB_word_REPNE)
 PRIMARY_TEST(AB_dword_REPNE)
 PRIMARY_TEST(AB_qword_REPNE)
+PRIMARY_TEST(AB_word_REP_down)
+PRIMARY_TEST(AB_dword_REP_down)
+PRIMARY_TEST(AB_qword_REP_down)
+PRIMARY_TEST(AB_word_REPNE_down)
+PRIMARY_TEST(AB_dword_REPNE_down)
+PRIMARY_TEST(AB_qword_REPNE_down)
+// PRIMARY_TEST(AD_word)
+// PRIMARY_TEST(AD_dword)
+// PRIMARY_TEST(AD_qword)
+// PRIMARY_TEST(AD_REP_word)
+// PRIMARY_TEST(AD_REP_dword)
+// PRIMARY_TEST(AD_REP_qword)
+// PRIMARY_TEST(AD_REPNE_word)
+// PRIMARY_TEST(AD_REPNE_dword)
+// PRIMARY_TEST(AD_REPNE_qword)
+// PRIMARY_TEST(AD_REP_word_down)
+// PRIMARY_TEST(AD_REP_dword_down)
+// PRIMARY_TEST(AD_REP_qword_down)
+// PRIMARY_TEST(AD_REPNE_word_down)
+// PRIMARY_TEST(AD_REPNE_dword_down)
+// PRIMARY_TEST(AD_REPNE_qword_down)
 PRIMARY_TEST(B0)
 PRIMARY_TEST(B8)
 PRIMARY_TEST(B8_2)
@@ -91,6 +112,7 @@ PRIMARY_TEST(E9)
 PRIMARY_TEST(EB)
 
 PRIMARY_TEST_BASE(lea)
+PRIMARY_TEST_BASE(movups)
 
 PRIMARY_TEST_NO_PREFIX(SHL)
 PRIMARY_TEST_NO_PREFIX(SHR)
@@ -100,7 +122,7 @@ PRIMARY_TEST_NO_PREFIX(ROR_Flags)
 PRIMARY_TEST_NO_PREFIX(ROR_OF)
 
 // Need unaligned atomics
-PRIMARY_TEST_KNOWN_FAILURE(01_Atomic16)
+PRIMARY_TEST(01_Atomic16)
 PRIMARY_TEST_KNOWN_FAILURE(01_Atomic32)
 PRIMARY_TEST_KNOWN_FAILURE(01_Atomic64)
 PRIMARY_TEST_KNOWN_FAILURE(09_Atomic16)

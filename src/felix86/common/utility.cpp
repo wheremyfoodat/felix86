@@ -26,8 +26,8 @@ std::string GetNameString(u32 name) {
 void felix86_div128(ThreadState* state, u64 divisor) {
     ASSERT(divisor != 0);
     __int128_t dividend = ((__int128_t)state->gprs[X86_REF_RDX - X86_REF_RAX] << 64) | state->gprs[X86_REF_RAX - X86_REF_RAX];
-    u64 quotient = dividend / divisor;
-    u64 remainder = dividend % divisor;
+    u64 quotient = dividend / (i64)divisor;
+    u64 remainder = dividend % (i64)divisor;
     state->gprs[X86_REF_RAX - X86_REF_RAX] = quotient;
     state->gprs[X86_REF_RDX - X86_REF_RAX] = remainder;
 }
