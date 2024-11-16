@@ -21,36 +21,6 @@ SSAInstruction* felix86_rcp(IREmitter& ir, SSAInstruction* reg, SSAInstruction* 
     return ir.VFDiv(one, rm, state);
 }
 
-u64 sext_if_64(u64 value, x86_size_e size_e) {
-    switch (size_e) {
-    case X86_SIZE_BYTE:
-    case X86_SIZE_WORD:
-    case X86_SIZE_DWORD:
-        return value;
-    case X86_SIZE_QWORD:
-        return (i64)(i32)value;
-    default:
-        ERROR("Invalid immediate size");
-        return 0;
-    }
-}
-
-u64 sext(u64 value, x86_size_e size_e) {
-    switch (size_e) {
-    case X86_SIZE_BYTE:
-        return (i64)(i8)value;
-    case X86_SIZE_WORD:
-        return (i64)(i16)value;
-    case X86_SIZE_DWORD:
-        return (i64)(i32)value;
-    case X86_SIZE_QWORD:
-        return value;
-    default:
-        ERROR("Invalid immediate size");
-        return 0;
-    }
-}
-
 x86_size_e sizedown(x86_size_e size_e) {
     switch (size_e) {
     case X86_SIZE_WORD:
@@ -483,7 +453,7 @@ IR_HANDLE(movsxw) {
 
 IR_HANDLE(push_imm) {
     bool is_word = inst->operand_reg.size == X86_SIZE_WORD;
-    SSAInstruction* imm = ir.Imm(ir.ImmSext(inst->operand_imm.immediate.data, inst->operand_imm.size));
+    SSAInstruction* imm = ir.Imm(sext(inst->operand_imm.immediate.data, inst->operand_imm.size));
     SSAInstruction* rsp = ir.GetReg(X86_REF_RSP);
     SSAInstruction* rsp_sub = ir.Addi(rsp, is_word ? -2 : -8);
     ir.WriteMemory(rsp_sub, imm, is_word ? X86_SIZE_WORD : X86_SIZE_QWORD);
@@ -492,7 +462,7 @@ IR_HANDLE(push_imm) {
 
 IR_HANDLE(imul_r_rm_imm) {
     SSAInstruction* rm = ir.GetRm(inst->operand_rm);
-    SSAInstruction* imm = ir.Imm(ir.ImmSext(inst->operand_imm.immediate.data, inst->operand_imm.size));
+    SSAInstruction* imm = ir.Imm(sext(inst->operand_imm.immediate.data, inst->operand_imm.size));
     SSAInstruction* result = ir.Mul(rm, imm);
     ir.SetReg(inst->operand_reg, result);
 }
@@ -561,16 +531,16 @@ IR_HANDLE(nop) {} // nop - 0x90
 IR_HANDLE(xchg_reg_eax) { // xchg reg, eax - 0x91-0x97
     x86_size_e size_e = inst->operand_reg.size;
     SSAInstruction* reg = ir.GetReg(inst->operand_reg);
-    SSAInstruction* eax = ir.GetReg(X86_REF_RAX, size_e);
+    SSAInstruction* eax = ir.GetReg(X86_REF_RAX, size_e, false);
     ir.SetReg(inst->operand_reg, eax);
-    ir.SetReg(reg, X86_REF_RAX, size_e);
+    ir.SetReg(reg, X86_REF_RAX, size_e, false);
 }
 
 IR_HANDLE(cwde) { // cbw/cwde/cdqe - 0x98
     x86_size_e size_e = inst->operand_reg.size;
     SSAInstruction* reg = ir.GetReg(inst->operand_reg);
     SSAInstruction* sexted = ir.Sext(reg, sizedown(size_e));
-    ir.SetReg(sexted, inst->operand_reg.reg.ref, size_e);
+    ir.SetReg(sexted, inst->operand_reg.reg.ref, size_e, false);
 }
 
 IR_HANDLE(cdq) { // cwd/cdq/cqo - 0x99
@@ -581,7 +551,7 @@ IR_HANDLE(cdq) { // cwd/cdq/cqo - 0x99
 
     // if condition bit is 1, set rdx to all ones, else 0
     SSAInstruction* mask = ir.Sub(ir.Imm(0), condition);
-    ir.SetReg(mask, X86_REF_RDX, size_e);
+    ir.SetReg(mask, X86_REF_RDX, size_e, false);
 }
 
 IR_HANDLE(pushfq) { // pushfq - 0x9c
@@ -590,7 +560,7 @@ IR_HANDLE(pushfq) { // pushfq - 0x9c
     SSAInstruction* rsp = ir.GetReg(X86_REF_RSP);
     SSAInstruction* rsp_sub = ir.Addi(rsp, is_word ? -2 : -8);
     ir.WriteMemory(rsp_sub, flags, is_word ? X86_SIZE_WORD : X86_SIZE_QWORD);
-    ir.SetReg(rsp_sub, X86_REF_RSP, X86_SIZE_QWORD);
+    ir.SetReg(rsp_sub, X86_REF_RSP, X86_SIZE_QWORD, false);
 }
 
 IR_HANDLE(popfq) { // popfq - 0x9d
@@ -660,14 +630,14 @@ IR_HANDLE(stosd) { // stosd - 0xab
     x86_size_e size_e = inst->operand_reg.size;
     x86_size_e address_size = inst->operand_rm.memory.address_override ? X86_SIZE_DWORD : X86_SIZE_QWORD;
 
-    SSAInstruction* rdi = ir.GetReg(X86_REF_RDI, address_size);
-    SSAInstruction* rax = ir.GetReg(X86_REF_RAX, size_e);
+    SSAInstruction* rdi = ir.GetReg(X86_REF_RDI, address_size, false);
+    SSAInstruction* rax = ir.GetReg(X86_REF_RAX, size_e, false);
     ir.WriteMemory(rdi, rax, size_e);
 
     int bit_size = ir.GetBitSize(size_e) / 8;
     SSAInstruction* imm = ir.Select(ir.GetFlag(X86_REF_DF), ir.Imm(-bit_size), ir.Imm(bit_size));
     SSAInstruction* rdi_add = ir.Add(rdi, imm);
-    ir.SetReg(rdi_add, X86_REF_RDI, address_size);
+    ir.SetReg(rdi_add, X86_REF_RDI, address_size, false);
 }
 
 IR_HANDLE(mov_r8_imm8) { // mov r8, imm8 - 0xb0-0xb7
@@ -689,7 +659,7 @@ IR_HANDLE(group2_rm_1) { // rol/ror/rcl/rcr/shl/shr/sal/sar rm16/32/64, 1 - 0xc1
 }
 
 IR_HANDLE(group2_rm_cl) { // rol/ror/rcl/rcr/shl/shr/sal/sar rm16/32/64, cl - 0xc1
-    SSAInstruction* cl = ir.GetReg(X86_REF_RCX, X86_SIZE_BYTE);
+    SSAInstruction* cl = ir.GetReg(X86_REF_RCX, X86_SIZE_BYTE, false);
     ir.Group2(inst, cl);
 }
 
@@ -713,13 +683,14 @@ IR_HANDLE(ret) { // ret - 0xc3
 }
 
 IR_HANDLE(mov_rm_imm) { // mov rm16/32/64, imm16/32/64 - 0xc7
-    SSAInstruction* imm = ir.Imm(ir.ImmSext(inst->operand_imm.immediate.data, inst->operand_imm.size));
+    SSAInstruction* imm = ir.Imm(sext(inst->operand_imm.immediate.data, inst->operand_imm.size));
     ir.SetRm(inst->operand_rm, imm);
 }
 
 IR_HANDLE(leave) { // leave - 0xc9
     x86_size_e size_e = inst->operand_reg.size;
-    SSAInstruction* rbp = ir.GetReg(X86_REF_RBP, size_e);
+    ASSERT(size_e != X86_SIZE_DWORD); // todo: can this happen? fixme
+    SSAInstruction* rbp = ir.GetReg(X86_REF_RBP, size_e, false);
     SSAInstruction* popped_value = ir.ReadMemory(rbp, size_e);
     SSAInstruction* rbp_add = ir.Addi(rbp, size_e == X86_SIZE_WORD ? 2 : 8);
     ir.SetReg(popped_value, X86_REF_RBP);
@@ -735,7 +706,7 @@ IR_HANDLE(group2_rm32_1) { // rol/ror/rcl/rcr/shl/shr/sal/sar rm16/32/64, 1 - 0x
 }
 
 IR_HANDLE(group2_rm32_cl) { // rol/ror/rcl/rcr/shl/shr/sal/sar rm16/32/64, cl - 0xd3
-    SSAInstruction* cl = ir.GetReg(X86_REF_RCX, X86_SIZE_BYTE);
+    SSAInstruction* cl = ir.GetReg(X86_REF_RCX, X86_SIZE_BYTE, false);
     ir.Group2(inst, cl);
 }
 
@@ -924,10 +895,8 @@ IR_HANDLE(group7) { // group 7 - 0x0f 0x01
     case 2: {
         if (opcode == 0xD0) { // xgetbv
             // That's probably fine for now
-            u32 rax = 0b11;
-            u32 rdx = 0;
-            ir.SetReg(ir.Imm(rax), X86_REF_RAX);
-            ir.SetReg(ir.Imm(rdx), X86_REF_RDX);
+            ir.SetReg(ir.Imm(0b11), X86_REF_RAX);
+            ir.SetReg(ir.Imm(0), X86_REF_RDX);
             WARN("XGETBV");
         } else if (opcode == 0xD1) { // xsetbv
             ERROR("XSETBV instruction not implemented");
@@ -1006,7 +975,6 @@ IR_HANDLE(cpuid) { // cpuid - 0x0f 0xa2
 IR_HANDLE(bt) { // bt - 0x0f 0xa3
     // TODO: use B extension bit test whenever possible
     if (inst->operand_rm.type == X86_OP_TYPE_REGISTER) {
-        WARN("BT");
         SSAInstruction* rm = ir.GetRm(inst->operand_rm);
         SSAInstruction* reg = ir.GetReg(inst->operand_reg);
         SSAInstruction* shift = ir.Andi(reg, ir.GetBitSize(inst->operand_reg.size) - 1);
@@ -1069,7 +1037,7 @@ IR_HANDLE(cmpxchg) { // cmpxchg - 0x0f 0xb0-0xb1
         IRBlock* next_instruction_target = ir.CreateBlockAt(ir.GetNextAddress());
         IRBlock* equal_block = ir.CreateBlock();
 
-        SSAInstruction* eax = ir.GetReg(X86_REF_RAX, size_e);
+        SSAInstruction* eax = ir.GetReg(X86_REF_RAX, size_e, false);
         SSAInstruction* address = ir.Lea(inst->operand_rm);
         SSAInstruction* reg = ir.GetReg(inst->operand_reg);
         SSAInstruction* actual = ir.AmoCAS(address, eax, reg, size_e);
@@ -1080,14 +1048,14 @@ IR_HANDLE(cmpxchg) { // cmpxchg - 0x0f 0xb0-0xb1
         ir.TerminateJumpConditional(equal, next_instruction_target, equal_block);
         ir.SetBlock(equal_block);
 
-        ir.SetReg(actual, X86_REF_RAX, size_e);
+        ir.SetReg(actual, X86_REF_RAX, size_e, false);
         ir.TerminateJump(next_instruction_target);
     } else {
         IRBlock* equal_block = ir.CreateBlock();
         IRBlock* not_equal_block = ir.CreateBlock();
         IRBlock* next_instruction_target = ir.CreateBlockAt(ir.GetNextAddress());
 
-        SSAInstruction* eax = ir.GetReg(X86_REF_RAX, size_e);
+        SSAInstruction* eax = ir.GetReg(X86_REF_RAX, size_e, false);
         SSAInstruction* rm = ir.GetRm(inst->operand_rm);
         SSAInstruction* equal = ir.Equal(eax, rm);
         ir.SetFlag(equal, X86_REF_ZF);
@@ -1101,7 +1069,7 @@ IR_HANDLE(cmpxchg) { // cmpxchg - 0x0f 0xb0-0xb1
         ir.TerminateJump(next_instruction_target);
         ir.SetBlock(not_equal_block);
 
-        ir.SetReg(rm, X86_REF_RAX, size_e);
+        ir.SetReg(rm, X86_REF_RAX, size_e, false);
         ir.TerminateJump(next_instruction_target);
     }
 }
@@ -1238,6 +1206,10 @@ IR_HANDLE(shufpd) {
 
 IR_HANDLE(group14) {
     ir.Group14(inst);
+}
+
+IR_HANDLE(group15) {
+    ir.Group15(inst);
 }
 
 IR_HANDLE(pmovmskb) {

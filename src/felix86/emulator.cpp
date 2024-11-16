@@ -1,3 +1,4 @@
+#include <csignal>
 #include <elf.h>
 #include <fmt/base.h>
 #include <fmt/format.h>
@@ -262,6 +263,14 @@ void* Emulator::CompileNext(Emulator* emulator, ThreadState* thread_state) {
     } else if (address >= g_executable_start && address < g_executable_end) {
         address = address - g_executable_start;
     }
+
+#if 0
+    // Hack to break on a specific address
+    u64 addy = thread_state->GetRip();
+    if (addy == 0x1'0000'ed69) {
+        raise(SIGTRAP);
+    }
+#endif
 
     VERBOSE("Jumping to function %016lx (%016lx), located at %p", thread_state->GetRip(), address, function);
 

@@ -147,11 +147,9 @@ void Emitter::EmitPopAllCallerSaved(Backend& backend) {
 }
 
 void Emitter::EmitJumpFar(Backend& backend, void* target) {
-    auto my_abs = [](u64 x) -> u64 { return x < 0 ? -x : x; };
-
     // Check if target is in one MB range
     void* cursor = AS.GetCursorPointer();
-    if (my_abs((u64)cursor - (u64)target) > 0x100000) {
+    if (!IsValidJTypeImm((u64)cursor - (u64)target)) {
         AS.LI(t0, (u64)target);
         AS.JR(t0);
     } else {
@@ -170,6 +168,16 @@ void Emitter::EmitJumpConditional(Backend& backend, biscuit::GPR condition, Labe
     AS.J(target_true);
     AS.Bind(&false_label);
     AS.J(target_false);
+}
+
+void Emitter::EmitJumpConditionalFar(Backend& backend, biscuit::GPR condition, void* target_true, void* target_false) {
+    Label false_label;
+    AS.BEQZ(condition, &false_label);
+    AS.LI(t0, (u64)target_true);
+    AS.JR(t0);
+    AS.Bind(&false_label);
+    AS.LI(t0, (u64)target_false);
+    AS.JR(t0);
 }
 
 void Emitter::EmitCallHostFunction(Backend& backend, u64 function) {
@@ -795,6 +803,7 @@ void Emitter::EmitCZeroEqz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, b
     if (Extensions::Zicond) {
         AS.CZERO_EQZ(Rd, Rs, Cond);
     } else {
+        ASSERT(Rd != Cond);
         Label eqz;
         if (Rd != Rs)
             AS.MV(Rd, Rs);
@@ -808,6 +817,7 @@ void Emitter::EmitCZeroNez(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs, b
     if (Extensions::Zicond) {
         AS.CZERO_NEZ(Rd, Rs, Cond);
     } else {
+        ASSERT(Rd != Cond);
         Label nez;
         if (Rd != Rs)
             AS.MV(Rd, Rs);
@@ -1229,4 +1239,8 @@ void Emitter::EmitVSlide1Up(Backend& backend, biscuit::Vec Vd, biscuit::GPR Rs, 
 
 void Emitter::EmitVSlide1Down(Backend& backend, biscuit::Vec Vd, biscuit::GPR Rs, biscuit::Vec Vs, VecMask masked) {
     AS.VSLIDE1DOWN(Vd, Vs, Rs, masked);
+}
+
+void Emitter::EmitFence(Backend& backend, biscuit::FenceOrder pred, biscuit::FenceOrder succ) {
+    AS.FENCE(pred, succ);
 }

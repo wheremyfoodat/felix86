@@ -15,19 +15,19 @@ struct IREmitter {
         current_address += increment;
     }
 
-    SSAInstruction* GetReg(x86_ref_e reg, x86_size_e size, bool high = false);
+    SSAInstruction* GetReg(x86_ref_e reg, x86_size_e size, bool high);
     SSAInstruction* GetReg(const x86_operand_t& operand) {
         ASSERT(operand.type == X86_OP_TYPE_REGISTER);
-        return GetReg(operand.reg.ref, operand.size);
+        return GetReg(operand.reg.ref, operand.size, operand.reg.high8);
     }
     SSAInstruction* GetReg(x86_ref_e reg) {
         return getGuest(reg);
     }
 
-    void SetReg(SSAInstruction* value, x86_ref_e reg, x86_size_e size, bool high = false);
+    void SetReg(SSAInstruction* value, x86_ref_e reg, x86_size_e size, bool high);
     void SetReg(const x86_operand_t& operand, SSAInstruction* value) {
         ASSERT(operand.type == X86_OP_TYPE_REGISTER);
-        SetReg(value, operand.reg.ref, operand.size);
+        SetReg(value, operand.reg.ref, operand.size, operand.reg.high8);
     }
     void SetReg(SSAInstruction* value, x86_ref_e reg) {
         setGuest(reg, value);
@@ -165,9 +165,12 @@ struct IREmitter {
     void Group2(x86_instruction_t* inst, SSAInstruction* shift_amount);
     void Group3(x86_instruction_t* inst);
     void Group14(x86_instruction_t* inst);
+    void Group15(x86_instruction_t* inst);
     void Syscall();
     void Cpuid();
     void Rdtsc();
+    void Fence(FenceOrder pred, FenceOrder succ);
+    void SFence();
     SSAInstruction* GetCC(u8 opcode);
     void SetCC(x86_instruction_t* inst);
     void SetCPAZSO(SSAInstruction* c, SSAInstruction* p, SSAInstruction* a, SSAInstruction* z, SSAInstruction* s, SSAInstruction* o);
@@ -187,8 +190,6 @@ struct IREmitter {
 
     void TerminateJump(IRBlock* target);
     void TerminateJumpConditional(SSAInstruction* cond, IRBlock* target_true, IRBlock* target_false);
-
-    u64 ImmSext(u64 imm, x86_size_e size);
 
     u64 GetCurrentAddress() {
         ASSERT(current_address != IR_NO_ADDRESS);
