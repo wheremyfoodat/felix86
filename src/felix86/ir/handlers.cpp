@@ -712,10 +712,11 @@ IR_HANDLE(group2_rm32_cl) { // rol/ror/rcl/rcr/shl/shr/sal/sar rm16/32/64, cl - 
 
 IR_HANDLE(call_rel32) { // call rel32 - 0xe8
     u64 displacement = (i64)(i32)inst->operand_imm.immediate.data;
-    u64 jump_address = ir.GetCurrentAddress() + inst->length + displacement;
-    u64 return_address = ir.GetCurrentAddress() + inst->length;
-    SSAInstruction* rip = ir.Imm(jump_address);
-    SSAInstruction* return_rip = ir.Imm(return_address);
+    u64 offset = ir.GetCurrentAddress() - ir.GetFunction().GetStartAddress();
+    u64 jump_address = offset + inst->length + displacement;
+    u64 return_address = offset + inst->length;
+    SSAInstruction* rip = ir.Add(ir.GetReg(X86_REF_RIP), ir.Imm(jump_address));
+    SSAInstruction* return_rip = ir.Add(ir.GetReg(X86_REF_RIP), ir.Imm(return_address));
     SSAInstruction* rsp = ir.GetReg(X86_REF_RSP);
     SSAInstruction* rsp_sub = ir.Addi(rsp, -8);
     ir.WriteMemory(rsp_sub, return_rip, X86_SIZE_QWORD);
@@ -842,10 +843,11 @@ IR_HANDLE(group5) { // inc/dec/call/jmp/push rm32 - 0xff
     case Group5::Call: {
         x86_operand_t rm_op = inst->operand_rm;
         rm_op.size = X86_SIZE_QWORD;
-        u64 return_address = ir.GetCurrentAddress() + inst->length;
+        u64 offset = ir.GetCurrentAddress() - ir.GetFunction().GetStartAddress();
+        u64 return_address = offset + inst->length;
         SSAInstruction* rip = ir.GetRm(rm_op);
         SSAInstruction* rsp = ir.GetReg(X86_REF_RSP);
-        SSAInstruction* return_rip = ir.Imm(return_address);
+        SSAInstruction* return_rip = ir.Add(ir.GetReg(X86_REF_RIP), ir.Imm(return_address));
         SSAInstruction* rsp_sub = ir.Addi(rsp, -8);
         ir.WriteMemory(rsp_sub, return_rip, X86_SIZE_QWORD);
         ir.SetReg(rsp_sub, X86_REF_RSP);
@@ -885,11 +887,9 @@ IR_HANDLE(group5) { // inc/dec/call/jmp/push rm32 - 0xff
 // ███████ ███████  ██████  ██████  ██   ████ ██████  ██   ██ ██   ██    ██
 
 IR_HANDLE(group7) { // group 7 - 0x0f 0x01
-    // TODO: this is a mess
-    // maybe needs its own table ...
     u8 opcode = inst->operand_imm.immediate.data;
     modrm_t modrm; // we take it in as an immediate instead of as a modrm because
-                   // we don't want to potentially get a SIB too
+                   // it's easier to parse it this way since we have the opcode byte in whole
     modrm.raw = opcode;
     switch (modrm.reg) {
     case 2: {
@@ -900,8 +900,11 @@ IR_HANDLE(group7) { // group 7 - 0x0f 0x01
             WARN("XGETBV");
         } else if (opcode == 0xD1) { // xsetbv
             ERROR("XSETBV instruction not implemented");
+        } else if (opcode == 0xD5) {
+            ir.SetExitReason(EXIT_REASON_TSX);
+            ir.TerminateJump(ir.GetExit());
         } else {
-            ERROR("LGDT instruction not implemented");
+            ERROR("Unimplemented group 7 opcode: %02x during %016lx", opcode, ir.GetCurrentAddress());
         }
         break;
     }
@@ -918,10 +921,10 @@ IR_HANDLE(syscall) { // syscall - 0x0f 0x05
 
 IR_HANDLE(mov_xmm128_xmm) { // movups/movaps xmm128, xmm - 0x0f 0x29
     SSAInstruction* reg = ir.GetReg(inst->operand_reg);
-    ir.SetRm(inst->operand_rm, reg, VectorState::PackedDWord);
+    ir.SetRm(inst->operand_rm, reg, VectorState::PackedByte);
 }
 
-IR_HANDLE(mov_xmm_m64) { // movlpd xmm, m64 - 0x0f 0x12
+IR_HANDLE(mov_xmm_m64) { // movlpd xmm, m64 - 0x66 0x0f 0x12
     // Just load a double from memory directly into an xmm - thus using vector loads
     // instead of gpr loads and then moving to vector
     SSAInstruction* old = ir.GetReg(inst->operand_reg);
@@ -930,6 +933,20 @@ IR_HANDLE(mov_xmm_m64) { // movlpd xmm, m64 - 0x0f 0x12
     ir.SetVMask(mask);
     SSAInstruction* result = ir.VMerge(old, rm, VectorState::PackedQWord);
     ir.SetReg(inst->operand_reg, result);
+}
+
+IR_HANDLE(movhlps_movlps) {
+    if (inst->operand_rm.type == X86_OP_TYPE_MEMORY) {
+        // It's a movlps, same as movlpd for all we care
+        return ir_handle_mov_xmm_m64(ir, inst);
+    } else {
+        SSAInstruction* rm = ir.GetRm(inst->operand_rm, VectorState::PackedByte);
+        SSAInstruction* xmm = ir.GetReg(inst->operand_reg);
+        SSAInstruction* slide = ir.VSlideDowni(rm, 1, VectorState::PackedQWord);
+        ir.SetVMask(ir.VSplati(0b10, VectorState::PackedQWord));
+        SSAInstruction* result = ir.VMerge(xmm, slide, VectorState::PackedQWord);
+        ir.SetReg(inst->operand_reg, result);
+    }
 }
 
 IR_HANDLE(movh_m64_xmm) {
@@ -1174,7 +1191,7 @@ IR_HANDLE(pshufd) { // pshufd xmm, xmm/m128, imm8 - 0x66 0x0f 0x70
     SSAInstruction* second = ir.VSlide1Up(ir.Imm(el2), first, VectorState::PackedDWord);
     SSAInstruction* third = ir.VSlide1Up(ir.Imm(el1), second, VectorState::PackedDWord);
     SSAInstruction* fourth = ir.VSlide1Up(ir.Imm(el0), third, VectorState::PackedDWord);
-    SSAInstruction* source = ir.GetRm(inst->operand_rm, VectorState::PackedDWord);
+    SSAInstruction* source = ir.GetRm(inst->operand_rm, VectorState::PackedByte);
     SSAInstruction* result = ir.VGather(ir.VZero(VectorState::PackedDWord), source, fourth, VectorState::PackedDWord);
     ir.SetReg(inst->operand_reg, result);
 }
@@ -1193,9 +1210,9 @@ IR_HANDLE(shufpd) {
     }
 
     if ((imm & 0b10) == 0) {
-        src2 = ir.GetRm(inst->operand_rm, VectorState::PackedQWord);
+        src2 = ir.GetRm(inst->operand_rm, VectorState::PackedByte);
     } else {
-        SSAInstruction* rm = ir.GetRm(inst->operand_rm, VectorState::PackedQWord);
+        SSAInstruction* rm = ir.GetRm(inst->operand_rm, VectorState::PackedByte);
         src2 = ir.VSlideDowni(rm, 1, VectorState::PackedQWord);
     }
 
@@ -1236,7 +1253,7 @@ IR_HANDLE(movq_xmm_rm32) { // movq xmm, rm32 - 0x66 0x0f 0x6e
         break;
     }
     }
-    SSAInstruction* rm = ir.GetRm(inst->operand_rm, vector_state);
+    SSAInstruction* rm = ir.GetRm(inst->operand_rm, VectorState::PackedByte);
     SSAInstruction* vector = ir.VZext(ir.IToV(rm, vector_state), size_e);
     ir.SetReg(inst->operand_reg, vector);
 }
@@ -1272,7 +1289,7 @@ IR_HANDLE(movq_rm32_xmm) { // movq rm32, xmm - 0x66 0x0f 0x7e
     }
     SSAInstruction* xmm = ir.GetReg(inst->operand_reg);
     SSAInstruction* rm = ir.VToI(xmm, vector_state);
-    ir.SetRm(inst->operand_rm, rm, vector_state);
+    ir.SetRm(inst->operand_rm, rm, VectorState::PackedByte);
 }
 
 IR_HANDLE(movq_xmm64_xmm) { // movq xmm64, xmm - 0x66 0x0f 0xd6
@@ -1288,6 +1305,10 @@ IR_HANDLE(movq_xmm64_xmm) { // movq xmm64, xmm - 0x66 0x0f 0xd6
 
 IR_HANDLE(pminub) { // pminub xmm, xmm/m128 - 0x66 0x0f 0xda
     ir.PackedRegRm(inst, IROpcode::VMinu, VectorState::PackedByte);
+}
+
+IR_HANDLE(pmaxub) { // pmaxub xmm, xmm/m128 - 0x66 0x0f 0xde
+    ir.PackedRegRm(inst, IROpcode::VMaxu, VectorState::PackedByte);
 }
 
 IR_HANDLE(pand) { // pand xmm, xmm/m128 - 0x66 0x0f 0xdb
@@ -1311,7 +1332,7 @@ IR_HANDLE(paddq) { // paddq xmm, xmm/m128 - 0x66 0x0f 0xd4
 }
 
 IR_HANDLE(pandn) {
-    SSAInstruction* rm = ir.GetRm(inst->operand_rm, VectorState::AnyPacked);
+    SSAInstruction* rm = ir.GetRm(inst->operand_rm, VectorState::PackedByte);
     SSAInstruction* reg = ir.GetReg(inst->operand_reg);
     SSAInstruction* reg_not = ir.VXori(reg, -1, VectorState::AnyPacked);
     SSAInstruction* result = ir.VAnd(reg_not, rm, VectorState::AnyPacked);
@@ -1487,7 +1508,7 @@ IR_HANDLE(movq_xmm_xmm64) { // movq xmm, xmm64 - 0xf3 0x0f 0x7e
     SSAInstruction* result;
     if (rm_op.type == X86_OP_TYPE_MEMORY) {
         rm_op.size = X86_SIZE_QWORD;
-        result = ir.VZext(ir.IToV(ir.GetRm(rm_op, VectorState::PackedQWord), VectorState::PackedQWord), X86_SIZE_QWORD);
+        result = ir.VZext(ir.IToV(ir.GetRm(rm_op, VectorState::PackedByte), VectorState::PackedQWord), X86_SIZE_QWORD);
     } else {
         result = ir.VZext(ir.GetReg(rm_op), X86_SIZE_QWORD);
     }

@@ -135,6 +135,8 @@ private:
     static void EmitVToI(Backend&, biscuit::GPR, biscuit::Vec);
     static void EmitSetVectorStateFloat(Backend&);
     static void EmitSetVectorStateDouble(Backend&);
+    static void EmitSetVectorStateFloatBytes(Backend&);
+    static void EmitSetVectorStateDoubleBytes(Backend&);
     static void EmitSetVectorStatePackedByte(Backend&);
     static void EmitSetVectorStatePackedWord(Backend&);
     static void EmitSetVectorStatePackedDWord(Backend&);
@@ -145,7 +147,10 @@ private:
     static void EmitVAnd(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
     static void EmitVOr(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
     static void EmitVXor(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
+    static void EmitVMin(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
     static void EmitVMinu(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
+    static void EmitVMax(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
+    static void EmitVMaxu(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
     static void EmitVXori(Backend&, biscuit::Vec, biscuit::Vec, u64);
     static void EmitVSub(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
     static void EmitVAdd(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);

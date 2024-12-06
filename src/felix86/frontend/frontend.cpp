@@ -1,10 +1,11 @@
 #include <Zydis/Zydis.h>
 #include <fmt/format.h>
+#include <openssl/md5.h>
 #include "felix86/common/global.hpp"
+#include "felix86/common/hash.hpp"
 #include "felix86/common/log.hpp"
 #include "felix86/common/print.hpp"
 #include "felix86/common/x86.hpp"
-#include "felix86/emulator.hpp"
 #include "felix86/frontend/frontend.hpp"
 #include "felix86/frontend/instruction.hpp"
 #include "felix86/ir/handlers.hpp"
@@ -184,8 +185,8 @@ u8 decode_modrm(x86_operand_t* operand_rm, x86_operand_t* operand_reg, bool rex_
     return 0;
 }
 
-void frontend_compile_instruction(IREmitter& ir) {
-    u8* data = (u8*)ir.GetCurrentAddress();
+void frontend_compile_instruction(IREmitter& ir, MD5_CTX& ctx) {
+    const u8* const data = (u8*)ir.GetCurrentAddress();
 
     x86_instruction_t inst = {};
     int index = 0;
@@ -633,14 +634,23 @@ void frontend_compile_instruction(IREmitter& ir) {
         inst.operand_rm.memory.gs_override = gs_override;
         inst.operand_rm.memory.lock = lock;
         if (inst.operand_rm.memory.base == X86_REF_RIP) {
-            inst.operand_rm.memory.displacement += ir.GetCurrentAddress() + index;
-            inst.operand_rm.memory.base = X86_REF_COUNT;
+            // The RIP during the block is at the start of the function, so we need to add the offset
+            // of the current instruction.
+            // This is to be able to use the disk cache since compiled functions will be relocated
+            // on different runs.
+            u64 offset = ir.GetCurrentAddress() - ir.GetFunction().GetStartAddress();
+            inst.operand_rm.memory.displacement += offset; // offset of current block
+            inst.operand_rm.memory.displacement += index;  // offset of current instruction
         }
     } else if (inst.operand_rm.type != X86_OP_TYPE_NONE) {
         ERROR("Invalid operand type");
     }
 
     inst.length = index;
+
+    // Hash every instruction that comprises the function to be able to lookup
+    // the function cache
+    MD5_Update(&ctx, data, inst.length);
 
     ZydisDisassembledInstruction zydis_inst;
     if (ZYAN_SUCCESS(ZydisDisassembleIntel(
@@ -678,14 +688,14 @@ void frontend_compile_instruction(IREmitter& ir) {
     ir.IncrementAddress(inst.length);
 }
 
-void frontend_compile_block(IREmitter& ir, IRFunction& function, IRBlock* block) {
+void frontend_compile_block(IREmitter& ir, IRFunction& function, IRBlock* block, MD5_CTX& ctx) {
     ASSERT(!block->IsCompiled());
     block->SetCompiled();
 
     // Since compiling instructions might change the current block (due to some instruction that needs multiple blocks, for example)
     // we check that the *current* block has no termination, rather than the original block
     while (ir.GetCurrentBlock()->GetTermination() == Termination::Null) {
-        frontend_compile_instruction(ir);
+        frontend_compile_instruction(ir, ctx);
     }
 
     if (g_print_state) {
@@ -700,20 +710,27 @@ void frontend_compile_block(IREmitter& ir, IRFunction& function, IRBlock* block)
 void frontend_compile_function(IRFunction& function) {
     IREmitter ir(function);
 
+    MD5_CTX ctx;
+    MD5_Init(&ctx);
+
     IRBlock* block = function.GetBlockAt(function.GetStartAddress());
     ir.SetBlock(block);
     ir.SetAddress(block->GetStartAddress());
-    frontend_compile_block(ir, function, block);
+    frontend_compile_block(ir, function, block, ctx);
 
     IRBlock* queued_block = ir.PopQueue();
     while (queued_block) {
         if (!queued_block->IsCompiled()) {
             ir.SetBlock(queued_block);
             ir.SetAddress(queued_block->GetStartAddress());
-            frontend_compile_block(ir, function, queued_block);
+            frontend_compile_block(ir, function, queued_block, ctx);
         }
         queued_block = ir.PopQueue();
     }
+
+    Hash function_hash;
+    MD5_Final((u8*)&function_hash, &ctx);
+    function.GetHashRef() = function_hash; // TODO: change to SetHash, remove GetHashRef
 
     function.SetCompiled();
 }

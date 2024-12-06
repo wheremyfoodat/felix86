@@ -5,6 +5,7 @@
 #include "felix86/common/log.hpp"
 #include "felix86/common/x86.hpp"
 #include "felix86/hle/filesystem.hpp"
+#include "felix86/hle/signals.hpp"
 
 struct Config {
     std::filesystem::path rootfs_path;
@@ -19,6 +20,7 @@ struct TestConfig {
 
 struct Emulator {
     Emulator(const Config& config) : config(config), backend(*this) {
+        g_emulator = this;
         fs.LoadRootFS(config.rootfs_path);
         fs.LoadExecutable(config.executable_path);
         ThreadState* main_state = createThreadState();
@@ -33,6 +35,7 @@ struct Emulator {
     }
 
     Emulator(const TestConfig& config) : backend(*this) {
+        g_emulator = this;
         ThreadState* main_state = createThreadState();
         main_state->SetRip((u64)config.entrypoint);
         testing = true;
@@ -42,6 +45,10 @@ struct Emulator {
 
     Filesystem& GetFilesystem() {
         return fs;
+    }
+
+    SignalHandler& GetSignalHandler() {
+        return signal_handler;
     }
 
     Config& GetConfig() {
@@ -71,16 +78,13 @@ private:
 
     void* compileFunction(u64 rip);
 
-    ThreadState* createThreadState() {
-        thread_states.push_back(ThreadState{});
-        ThreadState* thread_state = &thread_states.back();
-        return thread_state;
-    }
+    ThreadState* createThreadState();
 
     std::mutex compilation_mutex; // to synchronize compilation and function lookup
     std::list<ThreadState> thread_states;
     Config config;
     Backend backend;
     Filesystem fs;
+    SignalHandler signal_handler;
     bool testing = false;
 };

@@ -5,8 +5,12 @@
 #include <stdlib.h>
 #include <sys/random.h>
 #include "felix86/backend/disassembler.hpp"
+#include "felix86/common/disk_cache.hpp"
 #include "felix86/emulator.hpp"
 #include "felix86/frontend/frontend.hpp"
+#include "felix86/hle/cpuid.hpp"
+#include "felix86/hle/rdtsc.hpp"
+#include "felix86/hle/syscall.hpp"
 #include "felix86/ir/passes/passes.hpp"
 
 extern char** environ;
@@ -203,6 +207,21 @@ void* Emulator::compileFunction(u64 rip) {
     IRFunction function{rip};
     frontend_compile_function(function);
 
+    VERBOSE("Hash: %016lx-%016lx", function.GetHash().values[1], function.GetHash().values[0]);
+
+    // Check disk cache if enabled
+    if (g_cache_functions) {
+        ASSERT(!g_testing);
+        std::string hex_hash = fmt::format("{:016x}{:016x}", function.GetHash().values[1], function.GetHash().values[0]);
+        if (DiskCache::Has(hex_hash)) {
+            std::vector<u8> function = DiskCache::Read(hex_hash);
+            compilation_mutex.lock();
+            void* start = backend.AddCodeAt(rip, function.data(), function.size());
+            compilation_mutex.unlock();
+            return start;
+        }
+    }
+
     PassManager::SSAPass(&function);
     PassManager::DeadCodeEliminationPass(&function);
 
@@ -232,21 +251,28 @@ void* Emulator::compileFunction(u64 rip) {
 
     AllocationMap allocations = ir_graph_coloring_pass(backend_function);
 
-    // Remove unnecessary vector state instructions and add ones needed before stores
+    // Add vector state instructions where necessary
     PassManager::VectorStatePass(&backend_function);
 
-    PassManager::BlockShenanigansPass(&backend_function);
+    // PassManager::BlockShenanigansPass(&backend_function);
 
     if (g_print_blocks) {
         fmt::print("Backend function IR:\n{}\n", backend_function.Print());
     }
 
-    std::lock_guard<std::mutex> lock(compilation_mutex);
+    compilation_mutex.lock();
     auto [func, size] = backend.EmitFunction(backend_function, allocations);
+    compilation_mutex.unlock();
 
     if (g_print_disassembly) {
         PLAIN("Disassembly of function at 0x%lx:\n", rip);
         PLAIN("%s", Disassembler::Disassemble(func, size).c_str());
+    }
+
+    if (g_cache_functions) {
+        ASSERT(!g_testing);
+        std::string hex_hash = fmt::format("{:016x}{:016x}", function.GetHash().values[1], function.GetHash().values[0]);
+        DiskCache::Write(hex_hash, func, size);
     }
 
     return func;
@@ -275,4 +301,18 @@ void* Emulator::CompileNext(Emulator* emulator, ThreadState* thread_state) {
     VERBOSE("Jumping to function %016lx (%016lx), located at %p", thread_state->GetRip(), address, function);
 
     return function;
+}
+
+ThreadState* Emulator::createThreadState() {
+    thread_states.push_back(ThreadState{});
+
+    ThreadState* thread_state = &thread_states.back();
+    thread_state->syscall_handler = (u64)felix86_syscall;
+    thread_state->cpuid_handler = (u64)felix86_cpuid;
+    thread_state->rdtsc_handler = (u64)felix86_rdtsc;
+    thread_state->compile_next = (u64)backend.GetCompileNext();
+    thread_state->crash_handler = (u64)backend.GetCrashHandler();
+    thread_state->div128_handler = (u64)felix86_div128;
+    thread_state->divu128_handler = (u64)felix86_divu128;
+    return thread_state;
 }

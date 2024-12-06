@@ -1,3 +1,4 @@
+#include <csignal>
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -62,7 +63,7 @@ const char* print_syscall_name(u64 syscall_number) {
     }
 }
 
-void felix86_syscall(Emulator* emulator, ThreadState* state) {
+void felix86_syscall(ThreadState* state) {
     u64 syscall_number = state->GetGpr(X86_REF_RAX);
     u64 rdi = state->GetGpr(X86_REF_RDI);
     u64 rsi = state->GetGpr(X86_REF_RSI);
@@ -72,7 +73,8 @@ void felix86_syscall(Emulator* emulator, ThreadState* state) {
     u64 r9 = state->GetGpr(X86_REF_R9);
     ssize_t result = -1;
 
-    Filesystem& fs = emulator->GetFilesystem();
+    Filesystem& fs = g_emulator->GetFilesystem();
+    SignalHandler& signals = g_emulator->GetSignalHandler();
 
     switch (syscall_number) {
     case felix86_x86_64_brk: {
@@ -152,6 +154,11 @@ void felix86_syscall(Emulator* emulator, ThreadState* state) {
         STRACE("prlimit64(%016lx, %016lx, %016lx, %016lx) = %016lx", rdi, rsi, rdx, r10, result);
         break;
     }
+    case felix86_x86_64_readlink: {
+        result = fs.ReadLink((const char*)rdi, (char*)rsi, rdx);
+        STRACE("readlink(%s, %s, %d) = %d", (const char*)rdi, (char*)rsi, (int)rdx, (int)result);
+        break;
+    }
     case felix86_x86_64_readlinkat: {
         result = fs.ReadLinkAt(rdi, (const char*)rsi, (char*)rdx, r10);
         STRACE("readlinkat(%d, %s, %s, %d) = %d", (int)rdi, (const char*)rsi, (char*)rdx, (int)r10, (int)result);
@@ -192,18 +199,35 @@ void felix86_syscall(Emulator* emulator, ThreadState* state) {
         }
         break;
     }
+    case felix86_x86_64_newfstatat: {
+        std::optional<std::filesystem::path> path = fs.AtPath(rdi, (const char*)rsi);
+
+        if (!path) {
+            result = -EACCES;
+            break;
+        }
+
+        x64Stat* guest_stat = (x64Stat*)rdx;
+        struct stat host_stat;
+        result = HOST_SYSCALL(newfstatat, rdi, path->c_str(), &host_stat, r10);
+        STRACE("newfstatat(%d, %s, %p, %d) = %d", (int)rdi, path->c_str(), (void*)rdx, (int)r10, (int)result);
+        if (result != -1) {
+            *guest_stat = host_stat;
+        }
+        break;
+    }
     case felix86_x86_64_ioctl: {
         result = HOST_SYSCALL(ioctl, rdi, rsi, rdx);
         STRACE("ioctl(%d, %016lx, %016lx) = %016lx", (int)rdi, rsi, rdx, result);
         break;
     }
     case felix86_x86_64_write: {
-        result = HOST_SYSCALL(write, rdi, (const void*)rsi, rdx);
+        result = HOST_SYSCALL(write, rdi, rsi, rdx);
         STRACE("write(%d, %s, %d) = %d", (int)rdi, (const char*)rsi, (int)rdx, (int)result);
         break;
     }
     case felix86_x86_64_writev: {
-        result = HOST_SYSCALL(writev, rdi, (const struct iovec*)rsi, rdx);
+        result = HOST_SYSCALL(writev, rdi, rsi, rdx);
         STRACE("writev(%d, %p, %d) = %d", (int)rdi, (void*)rsi, (int)rdx, (int)result);
         break;
     }
@@ -218,8 +242,13 @@ void felix86_syscall(Emulator* emulator, ThreadState* state) {
         break;
     }
     case felix86_x86_64_read: {
-        result = HOST_SYSCALL(read, rdi, (void*)rsi, rdx);
+        result = HOST_SYSCALL(read, rdi, rsi, rdx);
         STRACE("read(%d, %p, %d) = %d", (int)rdi, (void*)rsi, (int)rdx, (int)result);
+        break;
+    }
+    case felix86_x86_64_getdents64: {
+        result = HOST_SYSCALL(getdents64, rdi, rsi, rdx);
+        STRACE("getdents64(%d, %p, %d) = %d", (int)rdi, (void*)rsi, (int)rdx, (int)result);
         break;
     }
     case felix86_x86_64_openat: {
@@ -228,7 +257,7 @@ void felix86_syscall(Emulator* emulator, ThreadState* state) {
         break;
     }
     case felix86_x86_64_pread64: {
-        result = HOST_SYSCALL(pread64, rdi, (void*)rsi, rdx, r10);
+        result = HOST_SYSCALL(pread64, rdi, rsi, rdx, r10);
         STRACE("pread64(%d, %p, %d, %d) = %d", (int)rdi, (void*)rsi, (int)rdx, (int)r10, (int)result);
         break;
     }
@@ -240,6 +269,41 @@ void felix86_syscall(Emulator* emulator, ThreadState* state) {
     case felix86_x86_64_munmap: {
         result = HOST_SYSCALL(munmap, rdi, rsi);
         STRACE("munmap(%p, %016lx) = %016lx", (void*)rdi, rsi, result);
+        break;
+    }
+    case felix86_x86_64_getuid: {
+        result = HOST_SYSCALL(getuid);
+        STRACE("getuid() = %d", (int)result);
+        break;
+    }
+    case felix86_x86_64_geteuid: {
+        result = HOST_SYSCALL(geteuid);
+        STRACE("geteuid() = %d", (int)result);
+        break;
+    }
+    case felix86_x86_64_getgid: {
+        result = HOST_SYSCALL(getgid);
+        STRACE("getgid() = %d", (int)result);
+        break;
+    }
+    case felix86_x86_64_setfsgid: {
+        result = HOST_SYSCALL(setfsgid, rdi);
+        STRACE("setfsgid(%d) = %d", (int)rdi, (int)result);
+        break;
+    }
+    case felix86_x86_64_setfsuid: {
+        result = HOST_SYSCALL(setfsuid, rdi);
+        STRACE("setfsuid(%d) = %d", (int)rdi, (int)result);
+        break;
+    }
+    case felix86_x86_64_getppid: {
+        result = HOST_SYSCALL(getppid);
+        STRACE("getppid() = %d", (int)result);
+        break;
+    }
+    case felix86_x86_64_getpid: {
+        result = HOST_SYSCALL(getpid);
+        STRACE("getpid() = %d", (int)result);
         break;
     }
     case felix86_x86_64_uname: {
@@ -258,6 +322,44 @@ void felix86_syscall(Emulator* emulator, ThreadState* state) {
         strcpy(guest_uname->version, version.c_str());
         strcpy(guest_uname->machine, "x86_64");
         result = 0;
+        break;
+    }
+    case felix86_x86_64_statfs: {
+        std::optional<std::filesystem::path> path = fs.AtPath(AT_FDCWD, (const char*)rdi);
+
+        if (!path) {
+            result = -EACCES;
+            break;
+        }
+
+        result = HOST_SYSCALL(statfs, path->c_str(), (struct statfs*)rsi);
+        STRACE("statfs(%s, %p) = %d", path->c_str(), (void*)rsi, (int)result);
+        break;
+    }
+    case felix86_x86_64_rt_sigaction: {
+        struct sigaction* act = (struct sigaction*)rsi;
+        if (act) {
+            bool sigaction = act->sa_flags & SA_SIGINFO;
+            void* handler = sigaction ? (void*)act->sa_sigaction : (void*)act->sa_handler;
+            signals.RegisterSignalHandler(rdi, handler, act->sa_mask, act->sa_flags);
+        }
+
+        struct sigaction* old_act = (struct sigaction*)rdx;
+        if (old_act) {
+            RegisteredSignal old = signals.GetSignalHandler(rdi);
+            bool was_sigaction = old.flags & SA_SIGINFO;
+            if (was_sigaction) {
+                old_act->sa_sigaction = (decltype(old_act->sa_sigaction))old.handler;
+            } else {
+                old_act->sa_handler = (decltype(old_act->sa_handler))old.handler;
+            }
+            old_act->sa_flags = old.flags;
+            old_act->sa_mask = old.mask;
+        }
+
+        result = 0;
+        WARN("rt_sigaction(%d, %p, %p) = %d", (int)rdi, (void*)rsi, (void*)r10, (int)result);
+        STRACE("rt_sigaction(%d, %p, %p) = %d", (int)rdi, (void*)rsi, (void*)r10, (int)result);
         break;
     }
     default: {

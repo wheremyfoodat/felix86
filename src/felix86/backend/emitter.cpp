@@ -1,17 +1,9 @@
 #include "felix86/backend/backend.hpp"
 #include "felix86/backend/emitter.hpp"
-#include "felix86/hle/cpuid.hpp"
-#include "felix86/hle/syscall.hpp"
 
 #define AS (backend.GetAssembler())
 
 namespace {
-
-void felix86_rdtsc(ThreadState* state) {
-    WARN("Rdtsc called, ignoring...");
-    state->SetGpr(X86_REF_RAX, 0);
-    state->SetGpr(X86_REF_RDX, 0);
-}
 
 biscuit::GPR Push(Backend& backend, biscuit::GPR Rs) {
     AS.ADDI(Registers::StackPointer(), Registers::StackPointer(), -8);
@@ -36,7 +28,8 @@ biscuit::GPR PickNot(const auto& gprs, std::initializer_list<biscuit::GPR> exclu
 
 void EmitCrash(Backend& backend, ExitReason reason) {
     Emitter::EmitSetExitReason(backend, static_cast<u64>(reason));
-    Emitter::EmitJumpFar(backend, backend.GetCrashTarget());
+    AS.LD(t0, offsetof(ThreadState, crash_handler), Registers::ThreadStatePointer());
+    AS.JR(t0);
 }
 
 // TODO: pull out to ir emitter
@@ -148,9 +141,13 @@ void Emitter::EmitPopAllCallerSaved(Backend& backend) {
 
 void Emitter::EmitJumpFar(Backend& backend, void* target) {
     // Check if target is in one MB range
-    void* cursor = AS.GetCursorPointer();
-    if (!IsValidJTypeImm((u64)cursor - (u64)target)) {
-        AS.LI(t0, (u64)target);
+    u8* cursor = AS.GetCursorPointer();
+    if (!IsValidJTypeImm((u64)target - (u64)cursor)) {
+        u64 offset = (u64)target - (u64)cursor;
+        const auto hi20 = static_cast<int32_t>((static_cast<uint32_t>(offset) + 0x800) >> 12 & 0xFFFFF);
+        const auto lo12 = static_cast<int32_t>(offset << 20) >> 20;
+        AS.AUIPC(t0, hi20);
+        AS.ADDI(t0, t0, lo12);
         AS.JR(t0);
     } else {
         AS.J((u64)target - (u64)cursor);
@@ -173,11 +170,25 @@ void Emitter::EmitJumpConditional(Backend& backend, biscuit::GPR condition, Labe
 void Emitter::EmitJumpConditionalFar(Backend& backend, biscuit::GPR condition, void* target_true, void* target_false) {
     Label false_label;
     AS.BEQZ(condition, &false_label);
-    AS.LI(t0, (u64)target_true);
-    AS.JR(t0);
-    AS.Bind(&false_label);
-    AS.LI(t0, (u64)target_false);
-    AS.JR(t0);
+
+    {
+        u64 offset = (u64)target_true - (u64)AS.GetCursorPointer();
+        const auto hi20 = static_cast<int32_t>((static_cast<uint32_t>(offset) + 0x800) >> 12 & 0xFFFFF);
+        const auto lo12 = static_cast<int32_t>(offset << 20) >> 20;
+        AS.AUIPC(t0, hi20);
+        AS.ADDI(t0, t0, lo12);
+        AS.JR(t0);
+    }
+
+    {
+        AS.Bind(&false_label);
+        u64 offset = (u64)target_false - (u64)AS.GetCursorPointer();
+        const auto hi20 = static_cast<int32_t>((static_cast<uint32_t>(offset) + 0x800) >> 12 & 0xFFFFF);
+        const auto lo12 = static_cast<int32_t>(offset << 20) >> 20;
+        AS.AUIPC(t0, hi20);
+        AS.ADDI(t0, t0, lo12);
+        AS.JR(t0);
+    }
 }
 
 void Emitter::EmitCallHostFunction(Backend& backend, u64 function) {
@@ -252,9 +263,9 @@ void Emitter::EmitImmediate(Backend& backend, biscuit::GPR Rd, u64 immediate) {
 void Emitter::EmitRdtsc(Backend& backend) {
     EmitPushAllCallerSaved(backend);
 
+    AS.LD(t0, offsetof(ThreadState, rdtsc_handler), Registers::ThreadStatePointer());
     AS.MV(a0, Registers::ThreadStatePointer());
-    AS.LI(a1, (u64)felix86_rdtsc);
-    AS.JALR(a1);
+    AS.JALR(t0);
 
     EmitPopAllCallerSaved(backend);
 }
@@ -262,10 +273,9 @@ void Emitter::EmitRdtsc(Backend& backend) {
 void Emitter::EmitSyscall(Backend& backend) {
     EmitPushAllCallerSaved(backend);
 
-    AS.LI(a0, (u64)&backend.GetEmulator()); // TODO: maybe make Emulator class global...
-    AS.MV(a1, Registers::ThreadStatePointer());
-    AS.LI(a2, (u64)felix86_syscall); // TODO: remove when moving code buffer close to text?
-    AS.JALR(a2);
+    AS.LD(t0, offsetof(ThreadState, syscall_handler), Registers::ThreadStatePointer());
+    AS.MV(a0, Registers::ThreadStatePointer());
+    AS.JALR(t0);
 
     EmitPopAllCallerSaved(backend);
 }
@@ -273,21 +283,29 @@ void Emitter::EmitSyscall(Backend& backend) {
 void Emitter::EmitCpuid(Backend& backend) {
     EmitPushAllCallerSaved(backend);
 
+    AS.LD(t0, offsetof(ThreadState, cpuid_handler), Registers::ThreadStatePointer());
     AS.MV(a0, Registers::ThreadStatePointer());
-    AS.LI(a1, (u64)felix86_cpuid);
-    AS.JALR(a1);
+    AS.JALR(t0);
 
     EmitPopAllCallerSaved(backend);
 }
 
 void Emitter::EmitSext8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    ASSERT(Extensions::B);
-    AS.SEXTB(Rd, Rs);
+    if (Extensions::B) {
+        AS.SEXTB(Rd, Rs);
+    } else {
+        AS.SLLI(Rd, Rs, 56);
+        AS.SRAI(Rd, Rd, 56);
+    }
 }
 
 void Emitter::EmitSext16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    ASSERT(Extensions::B);
-    AS.SEXTH(Rd, Rs);
+    if (Extensions::B) {
+        AS.SEXTH(Rd, Rs);
+    } else {
+        AS.SLLI(Rd, Rs, 48);
+        AS.SRAI(Rd, Rd, 48);
+    }
 }
 
 void Emitter::EmitSext32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
@@ -299,13 +317,21 @@ void Emitter::EmitZext8(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
 }
 
 void Emitter::EmitZext16(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    ASSERT(Extensions::B);
-    AS.ZEXTH(Rd, Rs);
+    if (Extensions::B) {
+        AS.ZEXTH(Rd, Rs);
+    } else {
+        AS.SLLI(Rd, Rs, 48);
+        AS.SRLI(Rd, Rd, 48);
+    }
 }
 
 void Emitter::EmitZext32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
-    ASSERT(Extensions::B);
-    AS.ZEXTW(Rd, Rs);
+    if (Extensions::B) {
+        AS.ZEXTW(Rd, Rs);
+    } else {
+        AS.SLLI(Rd, Rs, 32);
+        AS.SRLI(Rd, Rd, 32);
+    }
 }
 
 void Emitter::EmitClz(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
@@ -340,6 +366,7 @@ void Emitter::EmitParity(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
         AS.ANDI(Rd, Rd, 1);
         AS.XORI(Rd, Rd, 1);
     } else {
+        ASSERT_MSG(!g_cache_functions, "TODO: function caching doesn't work here");
         // clang-format off
         static bool bitcount[] = {
             1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
@@ -370,17 +397,25 @@ void Emitter::EmitParity(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
 }
 
 void Emitter::EmitDiv128(Backend& backend, biscuit::GPR Rs) {
-    Push(backend, a1);
-    AS.MV(a1, Rs);
-    EmitCallHostFunction(backend, (u64)felix86_div128);
-    Pop(backend, a1);
+    EmitPushAllCallerSaved(backend);
+
+    AS.LD(t0, offsetof(ThreadState, div128_handler), Registers::ThreadStatePointer());
+    AS.MV(a1, Rs); // a1 must be set first because Rs may be a0
+    AS.MV(a0, Registers::ThreadStatePointer());
+    AS.JALR(t0);
+
+    EmitPopAllCallerSaved(backend);
 }
 
 void Emitter::EmitDivu128(Backend& backend, biscuit::GPR Rs) {
-    Push(backend, a1);
-    AS.MV(a1, Rs);
-    EmitCallHostFunction(backend, (u64)felix86_divu128);
-    Pop(backend, a1);
+    EmitPushAllCallerSaved(backend);
+
+    AS.LD(t0, offsetof(ThreadState, divu128_handler), Registers::ThreadStatePointer());
+    AS.MV(a1, Rs); // a1 must be set first because Rs may be a0
+    AS.MV(a0, Registers::ThreadStatePointer());
+    AS.JALR(t0);
+
+    EmitPopAllCallerSaved(backend);
 }
 
 void Emitter::EmitReadByte(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
@@ -402,6 +437,8 @@ void Emitter::EmitReadQWord(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) 
 void Emitter::EmitReadXmmWord(Backend& backend, biscuit::Vec Vd, biscuit::GPR Address, VectorState state) {
     switch (state) {
     case VectorState::PackedByte:
+    case VectorState::FloatBytes:
+    case VectorState::DoubleBytes:
         AS.VLE8(Vd, Address);
         break;
     case VectorState::PackedWord:
@@ -474,6 +511,8 @@ void Emitter::EmitWriteQWord(Backend& backend, biscuit::GPR Address, biscuit::GP
 void Emitter::EmitWriteXmmWord(Backend& backend, biscuit::GPR Address, biscuit::Vec Vs, VectorState state) {
     switch (state) {
     case VectorState::PackedByte:
+    case VectorState::FloatBytes:
+    case VectorState::DoubleBytes:
         AS.VSE8(Vs, Address);
         break;
     case VectorState::PackedWord:
@@ -1085,6 +1124,18 @@ void Emitter::EmitSetVectorStateDouble(Backend& backend) {
     AS.VSETIVLI(x0, 1, SEW::E64);
 }
 
+void Emitter::EmitSetVectorStateFloatBytes(Backend& backend) {
+    // Operate on 4 8-bit elements, 32-bits
+    // So that loads can be misaligned
+    AS.VSETIVLI(x0, 4, SEW::E8);
+}
+
+void Emitter::EmitSetVectorStateDoubleBytes(Backend& backend) {
+    // Operate on 8 8-bit elements, 64-bits
+    // So that loads can be misaligned
+    AS.VSETIVLI(x0, 8, SEW::E8);
+}
+
 void Emitter::EmitSetVectorStatePackedByte(Backend& backend) {
     // Operate on VLEN/8 elements, 8-bits
     static_assert(SUPPORTED_VLEN / 8 < 31); // for when we upgrade to 256-bit vectors
@@ -1130,8 +1181,20 @@ void Emitter::EmitVXori(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, u64 
     AS.VXOR(Vd, Vs, immediate);
 }
 
+void Emitter::EmitVMin(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {
+    AS.VMIN(Vd, Vs2, Vs1);
+}
+
 void Emitter::EmitVMinu(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {
     AS.VMINU(Vd, Vs2, Vs1);
+}
+
+void Emitter::EmitVMax(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {
+    AS.VMAX(Vd, Vs2, Vs1);
+}
+
+void Emitter::EmitVMaxu(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {
+    AS.VMAXU(Vd, Vs2, Vs1);
 }
 
 void Emitter::EmitVSub(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1) {

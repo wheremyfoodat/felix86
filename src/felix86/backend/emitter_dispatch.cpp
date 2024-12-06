@@ -55,6 +55,16 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         break;
     }
 
+    case IROpcode::SetVectorStateFloatBytes: {
+        EmitSetVectorStateFloatBytes(backend);
+        break;
+    }
+
+    case IROpcode::SetVectorStateDoubleBytes: {
+        EmitSetVectorStateDoubleBytes(backend);
+        break;
+    }
+
     case IROpcode::SetVectorStatePackedByte: {
         EmitSetVectorStatePackedByte(backend);
         break;
@@ -141,7 +151,9 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
     }
 
     case IROpcode::BackToDispatcher: {
-        EmitJumpFar(backend, backend.GetCompileNext());
+        Assembler& as = backend.GetAssembler();
+        as.LD(t0, offsetof(ThreadState, compile_next), Registers::ThreadStatePointer());
+        as.JR(t0);
         break;
     }
 
@@ -780,8 +792,23 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         break;
     }
 
+    case IROpcode::VMin: {
+        EmitVMin(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
     case IROpcode::VMinu: {
         EmitVMinu(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::VMax: {
+        EmitVMax(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
+        break;
+    }
+
+    case IROpcode::VMaxu: {
+        EmitVMaxu(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
         break;
     }
 

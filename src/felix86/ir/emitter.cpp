@@ -379,17 +379,9 @@ SSAInstruction* IREmitter::GreaterThanUnsigned(SSAInstruction* lhs, SSAInstructi
 SSAInstruction* IREmitter::Sext(SSAInstruction* value, x86_size_e size) {
     switch (size) {
     case x86_size_e::X86_SIZE_BYTE:
-        if (Extensions::B) {
-            return insertInstruction(IROpcode::Sext8, {value});
-        } else {
-            return Sari(Shli(value, 56), 56);
-        }
+        return insertInstruction(IROpcode::Sext8, {value});
     case x86_size_e::X86_SIZE_WORD:
-        if (Extensions::B) {
-            return insertInstruction(IROpcode::Sext16, {value});
-        } else {
-            return Sari(Shli(value, 48), 48);
-        }
+        return insertInstruction(IROpcode::Sext16, {value});
     case x86_size_e::X86_SIZE_DWORD:
         return insertInstruction(IROpcode::Sext32, {value});
     case x86_size_e::X86_SIZE_QWORD:
@@ -404,17 +396,9 @@ SSAInstruction* IREmitter::Zext(SSAInstruction* value, x86_size_e size) {
     case x86_size_e::X86_SIZE_BYTE:
         return insertInstruction(IROpcode::Zext8, {value});
     case x86_size_e::X86_SIZE_WORD:
-        if (Extensions::B) {
-            return insertInstruction(IROpcode::Zext16, {value});
-        } else {
-            return Shri(Shli(value, 48), 48);
-        }
+        return insertInstruction(IROpcode::Zext16, {value});
     case x86_size_e::X86_SIZE_DWORD:
-        if (Extensions::B) {
-            return insertInstruction(IROpcode::Zext32, {value});
-        } else {
-            return Shri(Shli(value, 32), 32);
-        }
+        return insertInstruction(IROpcode::Zext32, {value});
     case x86_size_e::X86_SIZE_QWORD:
         return value;
     default:
@@ -1484,7 +1468,7 @@ SSAInstruction* IREmitter::getGpr32(x86_ref_e ref) {
 }
 
 SSAInstruction* IREmitter::getGpr64(x86_ref_e ref) {
-    if (ref < X86_REF_RAX || ref > X86_REF_R15) {
+    if ((ref < X86_REF_RAX || ref > X86_REF_R15) && ref != X86_REF_RIP) {
         ERROR("Invalid register reference");
     }
 
@@ -1572,6 +1556,13 @@ SSAInstruction* IREmitter::readQWord(SSAInstruction* address) {
 SSAInstruction* IREmitter::readXmmWord(SSAInstruction* address, VectorState state) {
     if (state == VectorState::AnyPacked) {
         state = VectorState::PackedDWord;
+    }
+
+    // Misaligned vector load/stores can be slow or unsupported on some CPUs
+    if (state == VectorState::Float) {
+        state = VectorState::FloatBytes;
+    } else if (state == VectorState::Double) {
+        state = VectorState::DoubleBytes;
     }
 
     // If our vlen and supported (target) vlen match, we can just do full load/stores
@@ -2373,6 +2364,7 @@ void IREmitter::TerminateJumpConditional(SSAInstruction* condition, IRBlock* tar
 }
 
 void IREmitter::CallHostFunction(u64 function_address) {
+    ASSERT_MSG(!g_cache_functions, "CallHostFunction is not supported when caching functions");
     SSAInstruction* instruction = insertInstruction(IROpcode::CallHostFunction, {}, function_address);
     instruction->Lock();
 }
