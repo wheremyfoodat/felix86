@@ -63,6 +63,8 @@ private:
     static void EmitWriteDWordRelative(Backend&, biscuit::GPR, biscuit::GPR, u64);
     static void EmitWriteQWordRelative(Backend&, biscuit::GPR, biscuit::GPR, u64);
     static void EmitWriteXmmWordRelative(Backend&, biscuit::GPR, biscuit::Vec, u64, VectorState);
+    static void EmitBSwap32(Backend&, biscuit::GPR, biscuit::GPR);
+    static void EmitBSwap64(Backend&, biscuit::GPR, biscuit::GPR);
     static void EmitAdd(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR);
     static void EmitAddShifted(Backend&, biscuit::GPR, biscuit::GPR, biscuit::GPR, u8);
     static void EmitAddi(Backend&, biscuit::GPR, biscuit::GPR, u64);
@@ -156,6 +158,10 @@ private:
     static void EmitVAdd(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
     static void EmitVAddi(Backend&, biscuit::Vec, biscuit::Vec, u64);
     static void EmitVEqual(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec, VecMask);
+    static void EmitVLessThanSigned(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec, VecMask);
+    static void EmitVLessThanUnsigned(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec, VecMask);
+    static void EmitVGreaterThanSigned(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec, VecMask);
+    static void EmitVGreaterThanUnsigned(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec, VecMask);
     static void EmitVIota(Backend&, biscuit::Vec, biscuit::Vec, VecMask);
     static void EmitVId(Backend&, biscuit::Vec);
     static void EmitVGather(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec, biscuit::Vec, VecMask);
@@ -175,6 +181,15 @@ private:
     static void EmitVSlideDowni(Backend&, biscuit::Vec, biscuit::Vec, u64, VecMask);
     static void EmitVSlide1Up(Backend&, biscuit::Vec, biscuit::GPR, biscuit::Vec, VecMask);
     static void EmitVSlide1Down(Backend&, biscuit::Vec, biscuit::GPR, biscuit::Vec, VecMask);
+    static void EmitVCvtSToF(Backend&, biscuit::Vec, biscuit::Vec, VecMask);
+    static void EmitVWCvtSToF(Backend&, biscuit::Vec, biscuit::Vec, VecMask);
+    static void EmitVNCvtSToF(Backend&, biscuit::Vec, biscuit::Vec, VecMask);
+    static void EmitVCvtFToS(Backend&, biscuit::Vec, biscuit::Vec, VecMask);
+    static void EmitVCvtFToSRtz(Backend&, biscuit::Vec, biscuit::Vec, VecMask);
+    static void EmitVNCvtFToS(Backend&, biscuit::Vec, biscuit::Vec, VecMask);
+    static void EmitVNCvtFToSRtz(Backend&, biscuit::Vec, biscuit::Vec, VecMask);
+    static void EmitVWCvtFToS(Backend&, biscuit::Vec, biscuit::Vec, VecMask);
+    static void EmitVWCvtFToSRtz(Backend&, biscuit::Vec, biscuit::Vec, VecMask);
     static void EmitVFAdd(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
     static void EmitVFSub(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
     static void EmitVFMul(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
@@ -182,6 +197,8 @@ private:
     static void EmitVFSqrt(Backend&, biscuit::Vec, biscuit::Vec);
     static void EmitVFRcp(Backend&, biscuit::Vec, biscuit::Vec);
     static void EmitVFRcpSqrt(Backend&, biscuit::Vec, biscuit::Vec);
+    static void EmitVFNotEqual(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec, VecMask);
+    static void EmitVFLessThan(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec, VecMask);
     static void EmitVFMin(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
     static void EmitVFMax(Backend&, biscuit::Vec, biscuit::Vec, biscuit::Vec);
     static void EmitFence(Backend&, biscuit::FenceOrder, biscuit::FenceOrder);

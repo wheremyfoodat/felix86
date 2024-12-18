@@ -566,6 +566,17 @@ void Emitter::EmitWriteXmmWordRelative(Backend& backend, biscuit::GPR Address, b
     }
 }
 
+void Emitter::EmitBSwap32(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    ASSERT(Extensions::B);
+    AS.REV8(Rd, Rs);
+    AS.SRLI(Rd, Rd, 32);
+}
+
+void Emitter::EmitBSwap64(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs) {
+    ASSERT(Extensions::B);
+    AS.REV8(Rd, Rs);
+}
+
 void Emitter::EmitAdd(Backend& backend, biscuit::GPR Rd, biscuit::GPR Rs1, biscuit::GPR Rs2) {
     AS.ADD(Rd, Rs1, Rs2);
 }
@@ -1213,6 +1224,22 @@ void Emitter::EmitVEqual(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, bi
     AS.VMSEQ(Vd, Vs2, Vs1, masked);
 }
 
+void Emitter::EmitVLessThanSigned(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1, VecMask masked) {
+    AS.VMSLT(Vd, Vs2, Vs1, masked);
+}
+
+void Emitter::EmitVLessThanUnsigned(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1, VecMask masked) {
+    AS.VMSLTU(Vd, Vs2, Vs1, masked);
+}
+
+void Emitter::EmitVGreaterThanSigned(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1, VecMask masked) {
+    AS.VMSLT(Vd, Vs1, Vs2, masked);
+}
+
+void Emitter::EmitVGreaterThanUnsigned(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1, VecMask masked) {
+    AS.VMSLTU(Vd, Vs1, Vs2, masked);
+}
+
 void Emitter::EmitSetVMask(Backend& backend, biscuit::Vec Vs) {
     AS.VMV(v0, Vs);
 }
@@ -1302,6 +1329,50 @@ void Emitter::EmitVSlide1Up(Backend& backend, biscuit::Vec Vd, biscuit::GPR Rs, 
 
 void Emitter::EmitVSlide1Down(Backend& backend, biscuit::Vec Vd, biscuit::GPR Rs, biscuit::Vec Vs, VecMask masked) {
     AS.VSLIDE1DOWN(Vd, Vs, Rs, masked);
+}
+
+void Emitter::EmitVCvtSToF(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, VecMask masked) {
+    AS.VFCVT_F_X(Vd, Vs, masked);
+}
+
+void Emitter::EmitVWCvtSToF(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, VecMask masked) {
+    AS.VFWCVT_F_X(Vd, Vs, masked);
+}
+
+void Emitter::EmitVNCvtSToF(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, VecMask masked) {
+    AS.VFNCVT_F_X(Vd, Vs, masked);
+}
+
+void Emitter::EmitVCvtFToS(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, VecMask masked) {
+    AS.VFCVT_X_F(Vd, Vs, masked);
+}
+
+void Emitter::EmitVCvtFToSRtz(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, VecMask masked) {
+    AS.VFCVT_RTZ_X_F(Vd, Vs, masked);
+}
+
+void Emitter::EmitVNCvtFToS(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, VecMask masked) {
+    AS.VFNCVT_X_F(Vd, Vs, masked);
+}
+
+void Emitter::EmitVNCvtFToSRtz(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, VecMask masked) {
+    AS.VFNCVT_RTZ_X_F(Vd, Vs, masked);
+}
+
+void Emitter::EmitVWCvtFToS(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, VecMask masked) {
+    AS.VFWCVT_X_F(Vd, Vs, masked);
+}
+
+void Emitter::EmitVWCvtFToSRtz(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, VecMask masked) {
+    AS.VFWCVT_RTZ_X_F(Vd, Vs, masked);
+}
+
+void Emitter::EmitVFNotEqual(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1, VecMask masked) {
+    AS.VMFNE(Vd, Vs2, Vs1, masked);
+}
+
+void Emitter::EmitVFLessThan(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs2, biscuit::Vec Vs1, VecMask masked) {
+    AS.VMFLT(Vd, Vs2, Vs1, masked);
 }
 
 void Emitter::EmitFence(Backend& backend, biscuit::FenceOrder pred, biscuit::FenceOrder succ) {

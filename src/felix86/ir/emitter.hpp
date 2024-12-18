@@ -49,6 +49,8 @@ struct IREmitter {
     void StoreGuestToMemory(SSAInstruction* value, x86_ref_e ref);
 
     SSAInstruction* Imm(u64 value);
+    SSAInstruction* BSwap32(SSAInstruction* value);
+    SSAInstruction* BSwap64(SSAInstruction* value);
     SSAInstruction* Add(SSAInstruction* lhs, SSAInstruction* rhs);
     SSAInstruction* AddShifted(SSAInstruction* lhs, SSAInstruction* rhs, u8 shift);
     SSAInstruction* Addi(SSAInstruction* lhs, i64 rhs);
@@ -116,6 +118,10 @@ struct IREmitter {
     SSAInstruction* VZero(VectorState state);
     SSAInstruction* VGather(SSAInstruction* dest, SSAInstruction* source, SSAInstruction* iota, VectorState state, VecMask masked = VecMask::No);
     SSAInstruction* VEqual(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
+    SSAInstruction* VLessThanSigned(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
+    SSAInstruction* VLessThanUnsigned(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
+    SSAInstruction* VGreaterThanSigned(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
+    SSAInstruction* VGreaterThanUnsigned(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
     SSAInstruction* VSll(SSAInstruction* value, SSAInstruction* shift, VectorState state);
     SSAInstruction* VSlli(SSAInstruction* value, u8 shift, VectorState state);
     SSAInstruction* VSrl(SSAInstruction* value, SSAInstruction* shift, VectorState state);
@@ -138,6 +144,17 @@ struct IREmitter {
     SSAInstruction* VXori(SSAInstruction* lhs, i64 imm, VectorState state);
     SSAInstruction* VFSqrt(SSAInstruction* value, VectorState state);
     SSAInstruction* VFRcpSqrt(SSAInstruction* value, VectorState state);
+    SSAInstruction* VFNotEqual(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
+    SSAInstruction* VFLessThan(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
+    SSAInstruction* VCvtSToF(SSAInstruction* value, VectorState state, VecMask mask = VecMask::No);
+    SSAInstruction* VWCvtSToF(SSAInstruction* value, VectorState state, VecMask mask = VecMask::No);
+    SSAInstruction* VNCvtSToF(SSAInstruction* value, VectorState state, VecMask mask = VecMask::No);
+    SSAInstruction* VCvtFToS(SSAInstruction* value, VectorState state, VecMask mask = VecMask::No);
+    SSAInstruction* VCvtFToSRtz(SSAInstruction* value, VectorState state, VecMask mask = VecMask::No);
+    SSAInstruction* VNCvtFToS(SSAInstruction* value, VectorState state, VecMask mask = VecMask::No);
+    SSAInstruction* VNCvtFToSRtz(SSAInstruction* value, VectorState state, VecMask mask = VecMask::No);
+    SSAInstruction* VWCvtFToS(SSAInstruction* value, VectorState state, VecMask mask = VecMask::No);
+    SSAInstruction* VWCvtFToSRtz(SSAInstruction* value, VectorState state, VecMask mask = VecMask::No);
     SSAInstruction* VFRcp(SSAInstruction* value, VectorState state);
     SSAInstruction* VFMul(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
     SSAInstruction* VFDiv(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state);
@@ -178,6 +195,7 @@ struct IREmitter {
     void SetFlags(SSAInstruction* flags);
     void SetVMask(SSAInstruction* mask);
     void Pcmpeq(x86_instruction_t* inst, VectorState state);
+    void Pcmpgt(x86_instruction_t* inst, VectorState state);
     void Punpckl(x86_instruction_t* inst, VectorState state);
     void Punpckh(x86_instruction_t* inst, VectorState state);
     void ScalarRegRm(x86_instruction_t* inst, IROpcode opcode, VectorState state);

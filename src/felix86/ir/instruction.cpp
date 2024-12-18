@@ -380,6 +380,14 @@ std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands,
         ret += fmt::format("back_to_dispatcher");
         break;
     }
+    case IROpcode::BSwap32: {
+        ret += fmt::format("{} <- bswap32 {}", GetNameString(name), GetNameString(operands[0]));
+        break;
+    }
+    case IROpcode::BSwap64: {
+        ret += fmt::format("{} <- bswap64 {}", GetNameString(name), GetNameString(operands[0]));
+        break;
+    }
     case IROpcode::Add: {
         ret += fmt::format("{} <- {} {} {}", GetNameString(name), GetNameString(operands[0]), "+", GetNameString(operands[1]));
         break;
@@ -391,7 +399,6 @@ std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands,
     }
     case IROpcode::Addi: {
         ret += fmt::format("{} <- {} {} 0x{:x}", GetNameString(name), GetNameString(operands[0]), "+", (i64)immediate_data);
-        ;
         break;
     }
     case IROpcode::Sub: {
@@ -976,6 +983,26 @@ std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands,
                            GetNameString(operands[1]));
         break;
     }
+    case IROpcode::VLessThanSigned: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vltsigned", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::VLessThanUnsigned: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vltunsigned", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::VGreaterThanSigned: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vgtsigned", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::VGreaterThanUnsigned: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vgtunsigned", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
+        break;
+    }
     case IROpcode::VSub: {
         ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vsub", "src1", GetNameString(operands[0]), "src2",
                            GetNameString(operands[1]));
@@ -1015,6 +1042,52 @@ std::string Print(IROpcode opcode, x86_ref_e ref, u32 name, const u32* operands,
     }
     case IROpcode::VFRcpSqrt: {
         ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vfrcpsqrt", "src", GetNameString(operands[0]));
+        break;
+    }
+    case IROpcode::VFNotEqual: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vfneq", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::VFLessThan: {
+        ret += fmt::format("{} <- {}({}: {}, {}: {})", GetNameString(name), "vflt", "src1", GetNameString(operands[0]), "src2",
+                           GetNameString(operands[1]));
+        break;
+    }
+    case IROpcode::VCvtSToF: {
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vcvtstof", "src", GetNameString(operands[0]));
+        break;
+    }
+    case IROpcode::VWCvtSToF: {
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vwcvtstof", "src", GetNameString(operands[0]));
+        break;
+    }
+    case IROpcode::VNCvtSToF: {
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vncvtstof", "src", GetNameString(operands[0]));
+        break;
+    }
+    case IROpcode::VCvtFToS: {
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vcvtfstos", "src", GetNameString(operands[0]));
+        break;
+    }
+    case IROpcode::VCvtFToSRtz: {
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vcvtfstos.rtz", "src", GetNameString(operands[0]));
+        break;
+    }
+    case IROpcode::VNCvtFToS: {
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vncvtfstos", "src", GetNameString(operands[0]));
+        break;
+    }
+    case IROpcode::VNCvtFToSRtz: {
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vncvtfstos.rtz", "src", GetNameString(operands[0]));
+        break;
+    }
+    case IROpcode::VWCvtFToS: {
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vwcvtftos", "src", GetNameString(operands[0]));
+        break;
+    }
+    case IROpcode::VWCvtFToSRtz: {
+        ret += fmt::format("{} <- {}({}: {})", GetNameString(name), "vwcvtftos.rtz", "src", GetNameString(operands[0]));
         break;
     }
     case IROpcode::VFDiv: {

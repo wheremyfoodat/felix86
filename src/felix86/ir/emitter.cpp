@@ -124,6 +124,14 @@ SSAInstruction* IREmitter::Imm(u64 value) {
     return block->InsertAtEnd(std::move(instruction));
 }
 
+SSAInstruction* IREmitter::BSwap32(SSAInstruction* value) {
+    return insertInstruction(IROpcode::BSwap32, {value});
+}
+
+SSAInstruction* IREmitter::BSwap64(SSAInstruction* value) {
+    return insertInstruction(IROpcode::BSwap64, {value});
+}
+
 SSAInstruction* IREmitter::Add(SSAInstruction* lhs, SSAInstruction* rhs) {
     return insertInstruction(IROpcode::Add, {lhs, rhs});
 }
@@ -913,6 +921,16 @@ void IREmitter::Pcmpeq(x86_instruction_t* inst, VectorState state) {
     SetReg(inst->operand_reg, result);
 }
 
+void IREmitter::Pcmpgt(x86_instruction_t* inst, VectorState state) {
+    SSAInstruction* rm = GetRm(inst->operand_rm, state);
+    SSAInstruction* reg = GetReg(inst->operand_reg);
+    SSAInstruction* mask = VGreaterThanSigned(reg, rm, state);
+    // Splat 0xFF or 0 based on the mask
+    SetVMask(mask);
+    SSAInstruction* result = VMergei(-1ull, VZero(state), state);
+    SetReg(inst->operand_reg, result);
+}
+
 void IREmitter::ScalarRegRm(x86_instruction_t* inst, IROpcode opcode, VectorState state) {
     SSAInstruction *rm, *reg;
     if (inst->operand_rm.type == X86_OP_TYPE_MEMORY) {
@@ -1078,6 +1096,86 @@ SSAInstruction* IREmitter::VFRcpSqrt(SSAInstruction* value, VectorState state) {
     return insertInstruction(IROpcode::VFRcpSqrt, state, {value});
 }
 
+SSAInstruction* IREmitter::VFNotEqual(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state) {
+    return insertInstruction(IROpcode::VFNotEqual, state, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VFLessThan(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state) {
+    return insertInstruction(IROpcode::VFLessThan, state, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VCvtSToF(SSAInstruction* value, VectorState state, VecMask masked) {
+    SSAInstruction* instruction = insertInstruction(IROpcode::VCvtSToF, state, {value});
+    if (masked == VecMask::Yes) {
+        instruction->SetMasked();
+    }
+    return instruction;
+}
+
+SSAInstruction* IREmitter::VWCvtSToF(SSAInstruction* value, VectorState state, VecMask masked) {
+    SSAInstruction* instruction = insertInstruction(IROpcode::VWCvtSToF, state, {value});
+    if (masked == VecMask::Yes) {
+        instruction->SetMasked();
+    }
+    return instruction;
+}
+
+SSAInstruction* IREmitter::VNCvtSToF(SSAInstruction* value, VectorState state, VecMask masked) {
+    SSAInstruction* instruction = insertInstruction(IROpcode::VNCvtSToF, state, {value});
+    if (masked == VecMask::Yes) {
+        instruction->SetMasked();
+    }
+    return instruction;
+}
+
+SSAInstruction* IREmitter::VCvtFToS(SSAInstruction* value, VectorState state, VecMask masked) {
+    SSAInstruction* instruction = insertInstruction(IROpcode::VCvtFToS, state, {value});
+    if (masked == VecMask::Yes) {
+        instruction->SetMasked();
+    }
+    return instruction;
+}
+
+SSAInstruction* IREmitter::VCvtFToSRtz(SSAInstruction* value, VectorState state, VecMask masked) {
+    SSAInstruction* instruction = insertInstruction(IROpcode::VCvtFToSRtz, state, {value});
+    if (masked == VecMask::Yes) {
+        instruction->SetMasked();
+    }
+    return instruction;
+}
+
+SSAInstruction* IREmitter::VNCvtFToS(SSAInstruction* value, VectorState state, VecMask masked) {
+    SSAInstruction* instruction = insertInstruction(IROpcode::VNCvtFToS, state, {value});
+    if (masked == VecMask::Yes) {
+        instruction->SetMasked();
+    }
+    return instruction;
+}
+
+SSAInstruction* IREmitter::VNCvtFToSRtz(SSAInstruction* value, VectorState state, VecMask masked) {
+    SSAInstruction* instruction = insertInstruction(IROpcode::VNCvtFToSRtz, state, {value});
+    if (masked == VecMask::Yes) {
+        instruction->SetMasked();
+    }
+    return instruction;
+}
+
+SSAInstruction* IREmitter::VWCvtFToS(SSAInstruction* value, VectorState state, VecMask masked) {
+    SSAInstruction* instruction = insertInstruction(IROpcode::VWCvtFToS, state, {value});
+    if (masked == VecMask::Yes) {
+        instruction->SetMasked();
+    }
+    return instruction;
+}
+
+SSAInstruction* IREmitter::VWCvtFToSRtz(SSAInstruction* value, VectorState state, VecMask masked) {
+    SSAInstruction* instruction = insertInstruction(IROpcode::VWCvtFToSRtz, state, {value});
+    if (masked == VecMask::Yes) {
+        instruction->SetMasked();
+    }
+    return instruction;
+}
+
 SSAInstruction* IREmitter::VFMul(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state) {
     return insertInstruction(IROpcode::VFMul, state, {lhs, rhs});
 }
@@ -1112,6 +1210,22 @@ SSAInstruction* IREmitter::VZext(SSAInstruction* value, x86_size_e size) {
 
 SSAInstruction* IREmitter::VEqual(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state) {
     return insertInstruction(IROpcode::VEqual, state, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VLessThanSigned(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state) {
+    return insertInstruction(IROpcode::VLessThanSigned, state, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VLessThanUnsigned(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state) {
+    return insertInstruction(IROpcode::VLessThanUnsigned, state, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VGreaterThanSigned(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state) {
+    return insertInstruction(IROpcode::VGreaterThanSigned, state, {lhs, rhs});
+}
+
+SSAInstruction* IREmitter::VGreaterThanUnsigned(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state) {
+    return insertInstruction(IROpcode::VGreaterThanUnsigned, state, {lhs, rhs});
 }
 
 SSAInstruction* IREmitter::VAdd(SSAInstruction* lhs, SSAInstruction* rhs, VectorState state) {
@@ -1791,7 +1905,7 @@ SSAInstruction* IREmitter::VInsertInteger(SSAInstruction* integer, SSAInstructio
 }
 
 void IREmitter::Group1(x86_instruction_t* inst) {
-    ::Group1 opcode = (::Group1)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
+    ::Group1 opcode = (::Group1)(inst->operand_reg.reg.ref & 0x7);
 
     x86_size_e size_e = inst->operand_rm.size;
     SSAInstruction* imm = Imm(sext(inst->operand_imm.immediate.data, inst->operand_imm.size));
@@ -1926,7 +2040,7 @@ void IREmitter::Group1(x86_instruction_t* inst) {
 }
 
 void IREmitter::Group2(x86_instruction_t* inst, SSAInstruction* shift_amount) {
-    ::Group2 opcode = (::Group2)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
+    ::Group2 opcode = (::Group2)(inst->operand_reg.reg.ref & 0x7);
 
     x86_size_e size_e = inst->operand_rm.size;
     u8 shift_mask = size_e == X86_SIZE_QWORD ? 0x3F : 0x1F;
@@ -2006,7 +2120,7 @@ void IREmitter::Group2(x86_instruction_t* inst, SSAInstruction* shift_amount) {
 }
 
 void IREmitter::Group3(x86_instruction_t* inst) {
-    ::Group3 opcode = (::Group3)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
+    ::Group3 opcode = (::Group3)(inst->operand_reg.reg.ref & 0x7);
 
     if (inst->operand_rm.memory.lock) {
         WARN("Ignoring lock prefix during group3 instruction");
@@ -2247,7 +2361,7 @@ void IREmitter::Group3(x86_instruction_t* inst) {
 }
 
 void IREmitter::Group14(x86_instruction_t* inst) {
-    ::Group14 opcode = (::Group14)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
+    ::Group14 opcode = (::Group14)(inst->operand_reg.reg.ref & 0x7);
     ASSERT(inst->operand_rm.type == X86_OP_TYPE_REGISTER);
     switch (opcode) {
     case Group14::PSrlQ: {
@@ -2296,8 +2410,15 @@ void IREmitter::Group14(x86_instruction_t* inst) {
 }
 
 void IREmitter::Group15(x86_instruction_t* inst) {
-    ::Group15 opcode = (::Group15)((inst->operand_reg.reg.ref & 0x7) - X86_REF_RAX);
+    // TODO: this is not right, theres stuff like incsspd that are reg = 5
+    ::Group15 opcode = (::Group15)(inst->operand_reg.reg.ref & 0x7);
     switch (opcode) {
+    case Group15::LFence: {
+        // there's also a memory encoding, this should catch it if it happens
+        ASSERT(inst->operand_rm.type == X86_OP_TYPE_REGISTER);
+        Fence(FenceOrder::RW, FenceOrder::RW); // just make a full fence for now, TODO: we can optimize this some day
+        break;
+    }
     case Group15::SFence: {
         // there's also a memory encoding, this should catch it if it happens
         ASSERT(inst->operand_rm.type == X86_OP_TYPE_REGISTER);
@@ -2305,7 +2426,7 @@ void IREmitter::Group15(x86_instruction_t* inst) {
         break;
     }
     default: {
-        UNREACHABLE();
+        ASSERT_MSG(false, "Invalid group 15 opcode: %d", (int)opcode);
         break;
     }
     }

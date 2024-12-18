@@ -98,6 +98,15 @@ std::optional<std::filesystem::path> Filesystem::AtPath(int dirfd, const char* p
         path = rootfs_path / path.relative_path();
     }
 
+    if (std::filesystem::exists(path) && std::filesystem::is_symlink(path)) {
+        char resolved_path[PATH_MAX];
+        if (realpath(path.c_str(), resolved_path) == nullptr) {
+            ERROR("Failed to resolve path %s", path.c_str());
+        }
+
+        path = resolved_path;
+    }
+
     if (!validatePath(path)) {
         error = -ENOENT;
         return std::nullopt;
@@ -118,7 +127,7 @@ ssize_t Filesystem::ReadLinkAt(int dirfd, const char* pathname, char* buf, u32 b
     auto path_opt = AtPath(dirfd, pathname);
 
     if (!path_opt) {
-        return -error;
+        return error;
     }
 
     std::filesystem::path path = path_opt.value();
@@ -133,18 +142,29 @@ int Filesystem::FAccessAt(int dirfd, const char* pathname, int mode, int flags) 
     auto path_opt = AtPath(dirfd, pathname);
 
     if (!path_opt) {
-        return -error;
+        return error;
     }
 
     std::filesystem::path path = path_opt.value();
     return faccessat(AT_FDCWD, path.c_str(), mode, flags);
 }
 
+int Filesystem::Statx(int dirfd, const char* pathname, int flags, int mask, struct statx* statxbuf) {
+    auto path_opt = AtPath(dirfd, pathname);
+
+    if (!path_opt) {
+        return error;
+    }
+
+    std::filesystem::path path = path_opt.value();
+    return statx(AT_FDCWD, path.c_str(), flags, mask, statxbuf);
+}
+
 int Filesystem::OpenAt(int dirfd, const char* pathname, int flags, int mode) {
     auto path_opt = AtPath(dirfd, pathname);
 
     if (!path_opt) {
-        return -error;
+        return error;
     }
 
     std::filesystem::path path = path_opt.value();
@@ -166,4 +186,37 @@ bool Filesystem::validatePath(const std::filesystem::path& path) {
     }
 
     return true;
+}
+
+int Filesystem::Chdir(const char* path) {
+    std::filesystem::path new_cwd = path;
+    new_cwd = new_cwd.lexically_normal();
+    if (new_cwd.is_relative()) {
+        new_cwd = cwd_path / new_cwd;
+    } else {
+        new_cwd = rootfs_path / new_cwd.relative_path();
+    }
+
+    if (!validatePath(new_cwd)) {
+        return -ENOENT;
+    }
+
+    cwd_path = new_cwd;
+    return 0;
+}
+
+int Filesystem::GetCwd(char* buf, u32 bufsiz) {
+    std::string cwd_string = cwd_path.string();
+    cwd_string = cwd_string.substr(rootfs_path_string.size());
+    if (cwd_string.empty()) {
+        cwd_string = "/";
+    }
+
+    if (cwd_string[0] != '/') {
+        cwd_string = "/" + cwd_string;
+    }
+
+    size_t written_size = std::min(cwd_string.size(), (size_t)bufsiz);
+    memcpy(buf, cwd_string.c_str(), written_size);
+    return written_size;
 }

@@ -1,8 +1,13 @@
 #include <csignal>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <sys/ioctl.h>
+#include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/utsname.h>
+#include <termios.h>
+#undef VMIN
 #include <unistd.h>
 #include "felix86/common/log.hpp"
 #include "felix86/common/x86.hpp"
@@ -179,6 +184,16 @@ void felix86_syscall(ThreadState* state) {
         STRACE("close(%d) = %d", (int)rdi, (int)result);
         break;
     }
+    case felix86_x86_64_getcwd: {
+        result = fs.GetCwd((char*)rdi, rsi);
+        STRACE("getcwd(%p, %d) = %d", (void*)rdi, (int)rsi, (int)result);
+        break;
+    }
+    case felix86_x86_64_poll: {
+        result = poll((struct pollfd*)rdi, rsi, rdx);
+        STRACE("poll(%p, %d, %d) = %d", (void*)rdi, (int)rsi, (int)rdx, (int)result);
+        break;
+    }
     case felix86_x86_64_fstat: {
         x64Stat* guest_stat = (x64Stat*)rsi;
         struct stat host_stat;
@@ -196,7 +211,34 @@ void felix86_syscall(ThreadState* state) {
             STRACE("st_size : %ld", guest_stat->st_size);
             STRACE("st_blksize : %ld", guest_stat->st_blksize);
             STRACE("st_blocks : %ld", guest_stat->st_blocks);
+        } else {
+            STRACE("fstat failed: %d", errno);
         }
+        break;
+    }
+    case felix86_x86_64_statx: {
+        result = fs.Statx(rdi, (const char*)rsi, rdx, r10, (struct statx*)r8);
+        STRACE("statx(%d, %s, %d, %d, %d) = %d", (int)rdi, (const char*)rsi, (int)rdx, (int)r10, (int)r8, (int)result);
+        break;
+    }
+    case felix86_x86_64_fadvise64: {
+        result = HOST_SYSCALL(fadvise64, rdi, rsi, rdx, r10);
+        STRACE("fadvise64(%d, %d, %d, %d) = %d", (int)rdi, (int)rsi, (int)rdx, (int)r10, (int)result);
+        break;
+    }
+    case felix86_x86_64_fcntl: {
+        result = HOST_SYSCALL(fcntl, rdi, rsi, rdx);
+        STRACE("fcntl(%d, %d, %d) = %d", (int)rdi, (int)rsi, (int)rdx, (int)result);
+        break;
+    }
+    case felix86_x86_64_chdir: {
+        result = fs.Chdir((const char*)rdi);
+        STRACE("chdir(%s) = %d", (const char*)rdi, (int)result);
+        break;
+    }
+    case felix86_x86_64_fchdir: {
+        result = HOST_SYSCALL(fchdir, rdi);
+        STRACE("fchdir(%d) = %d", (int)rdi, (int)result);
         break;
     }
     case felix86_x86_64_newfstatat: {
@@ -219,6 +261,21 @@ void felix86_syscall(ThreadState* state) {
     case felix86_x86_64_ioctl: {
         result = HOST_SYSCALL(ioctl, rdi, rsi, rdx);
         STRACE("ioctl(%d, %016lx, %016lx) = %016lx", (int)rdi, rsi, rdx, result);
+
+#if 1
+        if (g_strace) {
+            // TCSETSW
+            termios* term = (termios*)rdx;
+            switch (rsi) {
+            case TCSETS:
+            case TCSETSW:
+            case TCSETSF: {
+                auto oflag = term->c_oflag;
+                // todo, output the flag properties
+            }
+            }
+        }
+#endif
         break;
     }
     case felix86_x86_64_write: {
@@ -281,6 +338,11 @@ void felix86_syscall(ThreadState* state) {
         STRACE("geteuid() = %d", (int)result);
         break;
     }
+    case felix86_x86_64_getegid: {
+        result = HOST_SYSCALL(getegid);
+        STRACE("getegid() = %d", (int)result);
+        break;
+    }
     case felix86_x86_64_getgid: {
         result = HOST_SYSCALL(getgid);
         STRACE("getgid() = %d", (int)result);
@@ -304,6 +366,31 @@ void felix86_syscall(ThreadState* state) {
     case felix86_x86_64_getpid: {
         result = HOST_SYSCALL(getpid);
         STRACE("getpid() = %d", (int)result);
+        break;
+    }
+    case felix86_x86_64_gettid: {
+        result = HOST_SYSCALL(gettid);
+        STRACE("gettid() = %d", (int)result);
+        break;
+    }
+    case felix86_x86_64_socket: {
+        result = HOST_SYSCALL(socket, rdi, rsi, rdx);
+        STRACE("socket(%d, %d, %d) = %d", (int)rdi, (int)rsi, (int)rdx, (int)result);
+        break;
+    }
+    case felix86_x86_64_connect: {
+        result = HOST_SYSCALL(connect, rdi, rsi, rdx);
+        STRACE("connect(%d, %p, %d) = %d", (int)rdi, (void*)rsi, (int)rdx, (int)result);
+        break;
+    }
+    case felix86_x86_64_sendto: {
+        result = HOST_SYSCALL(sendto, rdi, rsi, rdx, r10, r8, r9);
+        STRACE("sendto(%d, %p, %d, %d, %p, %d) = %d", (int)rdi, (void*)rsi, (int)rdx, (int)r10, (void*)r8, (int)r9, (int)result);
+        break;
+    }
+    case felix86_x86_64_recvfrom: {
+        result = HOST_SYSCALL(recvfrom, rdi, rsi, rdx, r10, r8, r9);
+        STRACE("recvfrom(%d, %p, %d, %d, %p, %p) = %d", (int)rdi, (void*)rsi, (int)rdx, (int)r10, (void*)r8, (void*)r9, (int)result);
         break;
     }
     case felix86_x86_64_uname: {
@@ -360,6 +447,84 @@ void felix86_syscall(ThreadState* state) {
         result = 0;
         WARN("rt_sigaction(%d, %p, %p) = %d", (int)rdi, (void*)rsi, (void*)r10, (int)result);
         STRACE("rt_sigaction(%d, %p, %p) = %d", (int)rdi, (void*)rsi, (void*)r10, (int)result);
+        break;
+    }
+    case felix86_x86_64_prctl: {
+#ifndef PR_GET_AUXV
+#define PR_GET_AUXV 0x41555856
+#endif
+        int option = rdi;
+        switch (option) {
+        case PR_GET_AUXV: {
+            if (r10 || r8) {
+                result = -EINVAL;
+            } else {
+                void* addr = (void*)rsi;
+                size_t size = rdx;
+                auto [auxv_addr, auxv_size] = g_emulator->GetAuxv();
+                size_t actual_size = std::min(size, auxv_size);
+                memcpy(addr, auxv_addr, actual_size);
+                result = actual_size;
+            }
+            break;
+        }
+        case PR_SET_SECCOMP:
+        case PR_GET_SECCOMP: {
+            WARN("prctl(SECCOMP) not implemented");
+            result = -EINVAL;
+            break;
+        }
+        default: {
+            result = HOST_SYSCALL(prctl, rdi, rsi, rdx, r10, r8);
+            break;
+        }
+        }
+        STRACE("prctl(%d, %016lx, %016lx, %016lx, %016lx) = %016lx", (int)rdi, rsi, rdx, r10, r8, result);
+        break;
+    }
+    case felix86_x86_64_futex: {
+        result = HOST_SYSCALL(futex, rdi, rsi, rdx, r10, r8, r9);
+        STRACE("futex(%p, %d, %d, %p, %p, %d) = %d", (void*)rdi, (int)rsi, (int)rdx, (void*)r10, (void*)r8, (int)r9, (int)result);
+        break;
+    }
+    case felix86_x86_64_rt_sigprocmask: {
+        int how = rdi;
+        sigset_t* set = (sigset_t*)rsi;
+        sigset_t* oldset = (sigset_t*)rdx;
+
+        if (set) {
+            for (int i = 1; i <= 64; i++) {
+                int res = sigismember(set, i);
+                if (res == 1) {
+                    if (how == SIG_BLOCK) {
+                        state->SetSignalMask(i, true);
+                    } else if (how == SIG_UNBLOCK) {
+                        state->SetSignalMask(i, false);
+                    } else if (how == SIG_SETMASK) {
+                        state->SetSignalMask(i, true);
+                    }
+                } else if (res == 0) {
+                    if (how == SIG_SETMASK) {
+                        state->SetSignalMask(i, false);
+                    }
+                }
+            }
+        }
+
+        if (oldset) {
+            sigemptyset(oldset);
+            for (int i = 1; i <= 64; i++) {
+                if (state->GetSignalMask(i)) {
+                    sigaddset(oldset, i);
+                }
+            }
+        }
+
+        if (how != SIG_BLOCK && how != SIG_UNBLOCK && how != SIG_SETMASK) {
+            result = -EINVAL;
+        } else {
+            result = 0;
+        }
         break;
     }
     default: {

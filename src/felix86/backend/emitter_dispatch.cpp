@@ -321,6 +321,16 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         break;
     }
 
+    case IROpcode::BSwap32: {
+        EmitBSwap32(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)));
+        break;
+    }
+
+    case IROpcode::BSwap64: {
+        EmitBSwap64(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)));
+        break;
+    }
+
     case IROpcode::Add: {
         EmitAdd(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)));
         break;
@@ -837,6 +847,26 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
         break;
     }
 
+    case IROpcode::VLessThanSigned: {
+        EmitVLessThanSigned(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VLessThanUnsigned: {
+        EmitVLessThanUnsigned(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VGreaterThanSigned: {
+        EmitVGreaterThanSigned(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VGreaterThanUnsigned: {
+        EmitVGreaterThanUnsigned(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)), inst.GetMask());
+        break;
+    }
+
     case IROpcode::VSll: {
         EmitVSll(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)), inst.GetMask());
         break;
@@ -929,6 +959,61 @@ void Emitter::Emit(Backend& backend, const AllocationMap& allocation_map, const 
 
     case IROpcode::VFRcpSqrt: {
         EmitVFRcpSqrt(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)));
+        break;
+    }
+
+    case IROpcode::VFNotEqual: {
+        EmitVFNotEqual(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VFLessThan: {
+        EmitVFLessThan(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), _Reg_(inst.GetOperand(1)), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VCvtSToF: {
+        EmitVCvtSToF(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VWCvtSToF: {
+        EmitVWCvtSToF(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VNCvtSToF: {
+        EmitVNCvtSToF(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VCvtFToS: {
+        EmitVCvtFToS(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VCvtFToSRtz: {
+        EmitVCvtFToSRtz(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VNCvtFToS: {
+        EmitVNCvtFToS(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VNCvtFToSRtz: {
+        EmitVNCvtFToSRtz(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VWCvtFToS: {
+        EmitVWCvtFToS(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetMask());
+        break;
+    }
+
+    case IROpcode::VWCvtFToSRtz: {
+        EmitVWCvtFToSRtz(backend, _Reg_(inst.GetName()), _Reg_(inst.GetOperand(0)), inst.GetMask());
         break;
     }
 
