@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include "felix86/backend/registers.hpp"
-#include "felix86/common/log.hpp"
 #include "felix86/common/utility.hpp"
 
 enum class Group1 : u8 {
@@ -147,6 +146,7 @@ typedef enum : u8 {
     X86_SIZE_QWORD,
     X86_SIZE_MM,
     X86_SIZE_XMM,
+    X86_SIZE_BYTE_HIGH,
 } x86_size_e;
 
 struct XmmReg {
@@ -177,7 +177,7 @@ struct ThreadState {
     std::array<bool, 64> masked_signals{};
 
     // Addresses that the JIT will load and call/jump to if necessary
-    u64 compile_next{};
+    u64 compile_next_handler{};
     u64 crash_handler{};
     u64 syscall_handler{};
     u64 cpuid_handler{};
@@ -186,11 +186,6 @@ struct ThreadState {
     u64 divu128_handler{};
 
     u8 exit_reason{};
-
-    // Storage for saved RISC-V registers, per thread, to restore when it's time to completely
-    // exit dispatcher and stop the emulator
-    // TODO: this is unnecessary, use the stack
-    u64 gpr_storage[Registers::GetSavedGPRs().size()]{};
 
     u64 GetGpr(x86_ref_e ref) const {
         if (ref < X86_REF_RAX || ref > X86_REF_R15) {

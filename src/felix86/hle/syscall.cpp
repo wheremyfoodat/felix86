@@ -1,6 +1,7 @@
 #include <csignal>
 #include <errno.h>
 #include <fcntl.h>
+#include <openssl/md5.h>
 #include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/prctl.h>
@@ -9,6 +10,7 @@
 #include <termios.h>
 #undef VMIN
 #include <unistd.h>
+#include "felix86/common/debug.hpp"
 #include "felix86/common/log.hpp"
 #include "felix86/common/x86.hpp"
 #include "felix86/emulator.hpp"
@@ -68,6 +70,11 @@ const char* print_syscall_name(u64 syscall_number) {
     }
 }
 
+bool detecting_memory_region = false;
+std::string name = {};
+u64 min_address = ULONG_MAX;
+u64 max_address = 0;
+
 void felix86_syscall(ThreadState* state) {
     u64 syscall_number = state->GetGpr(X86_REF_RAX);
     u64 rdi = state->GetGpr(X86_REF_RDI);
@@ -79,7 +86,6 @@ void felix86_syscall(ThreadState* state) {
     ssize_t result = -1;
 
     Filesystem& fs = g_emulator->GetFilesystem();
-    SignalHandler& signals = g_emulator->GetSignalHandler();
 
     switch (syscall_number) {
     case felix86_x86_64_brk: {
@@ -180,8 +186,19 @@ void felix86_syscall(ThreadState* state) {
         break;
     }
     case felix86_x86_64_close: {
-        result = HOST_SYSCALL(close, rdi);
+        // Don't close our stdout
+        // TODO: better implementation where it closes an emulated stdout instead
+        if (rdi != 1 && rdi != 2) {
+            result = HOST_SYSCALL(close, rdi);
+        } else {
+            result = 0;
+        }
         STRACE("close(%d) = %d", (int)rdi, (int)result);
+        if (detecting_memory_region && MemoryMetadata::IsInInterpreterRegion(state->rip)) {
+            detecting_memory_region = false;
+            ASSERT(result != -1);
+            MemoryMetadata::AddRegion(name, min_address, max_address);
+        }
         break;
     }
     case felix86_x86_64_getcwd: {
@@ -192,6 +209,11 @@ void felix86_syscall(ThreadState* state) {
     case felix86_x86_64_poll: {
         result = poll((struct pollfd*)rdi, rsi, rdx);
         STRACE("poll(%p, %d, %d) = %d", (void*)rdi, (int)rsi, (int)rdx, (int)result);
+        break;
+    }
+    case felix86_x86_64_clock_gettime: {
+        result = HOST_SYSCALL(clock_gettime, rdi, (struct timespec*)rsi);
+        STRACE("clock_gettime(%d, %p) = %d", (int)rdi, (void*)rsi, (int)result);
         break;
     }
     case felix86_x86_64_fstat: {
@@ -280,7 +302,18 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_write: {
         result = HOST_SYSCALL(write, rdi, rsi, rdx);
-        STRACE("write(%d, %s, %d) = %d", (int)rdi, (const char*)rsi, (int)rdx, (int)result);
+
+        if (g_strace) {
+            // Instead of stracing the data itself, we strace the hash
+            // This is to avoid printing out data that might take up a lot of terminal space
+            MD5_CTX md5;
+            MD5_Init(&md5);
+            MD5_Update(&md5, (const char*)rsi, rdx);
+            unsigned char md5_hash[MD5_DIGEST_LENGTH];
+            MD5_Final(md5_hash, &md5);
+            std::string hex_hash = fmt::format("{:016x}{:016x}", *(u64*)md5_hash, *(u64*)(md5_hash + 8));
+            STRACE("write(%d, md5 of data: %s, %d) = %d", (int)rdi, md5_hash, (int)rdx, (int)result);
+        }
         break;
     }
     case felix86_x86_64_writev: {
@@ -290,7 +323,10 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_exit_group: {
         VERBOSE("Emulator called exit_group(%d)", (int)rdi);
-        result = HOST_SYSCALL(exit_group, rdi);
+        STRACE("exit_group(%d)", (int)rdi);
+        // TODO: can we make felix into a child process and exit that instead of exiting the entire thing instead?
+        // result = HOST_SYSCALL(exit_group, rdi);
+        exit(0);
         break;
     }
     case felix86_x86_64_access: {
@@ -311,6 +347,15 @@ void felix86_syscall(ThreadState* state) {
     case felix86_x86_64_openat: {
         result = fs.OpenAt(rdi, (const char*)rsi, rdx, r10);
         STRACE("openat(%d, %s, %d, %d) = %d", (int)rdi, (const char*)rsi, (int)rdx, (int)r10, (int)result);
+
+        if (MemoryMetadata::IsInInterpreterRegion(state->rip)) {
+            ASSERT(!detecting_memory_region); // TODO: some programs may open libraries that need other libraries, so this detection needs to happen
+                                              // with a stack
+            detecting_memory_region = true;
+            name = std::filesystem::path((const char*)rsi).filename().string();
+            min_address = ULONG_MAX;
+            max_address = 0;
+        }
         break;
     }
     case felix86_x86_64_pread64: {
@@ -321,6 +366,15 @@ void felix86_syscall(ThreadState* state) {
     case felix86_x86_64_mmap: {
         result = HOST_SYSCALL(mmap, rdi, rsi, rdx, r10, r8, r9);
         STRACE("mmap(%p, %016lx, %d, %d, %d, %d) = %016lx", (void*)rdi, rsi, (int)rdx, (int)r10, (int)r8, (int)r9, result);
+
+        if (detecting_memory_region && MemoryMetadata::IsInInterpreterRegion(state->rip)) {
+            if (result < min_address) {
+                min_address = result;
+            }
+            if (result + rsi > max_address) {
+                max_address = result + rsi;
+            }
+        }
         break;
     }
     case felix86_x86_64_munmap: {
@@ -428,12 +482,12 @@ void felix86_syscall(ThreadState* state) {
         if (act) {
             bool sigaction = act->sa_flags & SA_SIGINFO;
             void* handler = sigaction ? (void*)act->sa_sigaction : (void*)act->sa_handler;
-            signals.RegisterSignalHandler(rdi, handler, act->sa_mask, act->sa_flags);
+            Signals::registerSignalHandler(rdi, handler, act->sa_mask, act->sa_flags);
         }
 
         struct sigaction* old_act = (struct sigaction*)rdx;
         if (old_act) {
-            RegisteredSignal old = signals.GetSignalHandler(rdi);
+            RegisteredSignal old = Signals::getSignalHandler(rdi);
             bool was_sigaction = old.flags & SA_SIGINFO;
             if (was_sigaction) {
                 old_act->sa_sigaction = (decltype(old_act->sa_sigaction))old.handler;

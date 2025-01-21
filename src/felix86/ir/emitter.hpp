@@ -131,6 +131,7 @@ struct IREmitter {
     SSAInstruction* VMSlt(SSAInstruction* value, SSAInstruction* reg, VectorState state);
     SSAInstruction* VSlideUpi(SSAInstruction* value, u8 shift, VectorState state);
     SSAInstruction* VSlideUpZeroesi(SSAInstruction* value, u8 shift, VectorState state);
+    SSAInstruction* VSlideDownZeroesi(SSAInstruction* value, u8 shift, VectorState state);
     SSAInstruction* VSlideDowni(SSAInstruction* value, u8 shift, VectorState state);
     SSAInstruction* VSlide1Up(SSAInstruction* integer, SSAInstruction* vector, VectorState state);
     SSAInstruction* VSlide1Down(SSAInstruction* integer, SSAInstruction* vector, VectorState state);
@@ -208,6 +209,9 @@ struct IREmitter {
 
     void TerminateJump(IRBlock* target);
     void TerminateJumpConditional(SSAInstruction* cond, IRBlock* target_true, IRBlock* target_false);
+
+    void TerminateJump(u64 offset);
+    void TerminateJumpConditional(SSAInstruction* cond, u64 offset_true, u64 offset_false);
 
     u64 GetCurrentAddress() {
         ASSERT(current_address != IR_NO_ADDRESS);

@@ -1076,6 +1076,10 @@ SSAInstruction* IREmitter::VSlideUpZeroesi(SSAInstruction* value, u8 shift, Vect
     return insertInstruction(IROpcode::VSlideUpZeroesi, state, {value}, shift);
 }
 
+SSAInstruction* IREmitter::VSlideDownZeroesi(SSAInstruction* value, u8 shift, VectorState state) {
+    return insertInstruction(IROpcode::VSlideDownZeroesi, state, {value}, shift);
+}
+
 SSAInstruction* IREmitter::VSlide1Up(SSAInstruction* integer, SSAInstruction* vector, VectorState state) {
     return insertInstruction(IROpcode::VSlide1Up, state, {integer, vector});
 }
@@ -1893,10 +1897,11 @@ u16 IREmitter::GetBitSize(x86_size_e size) {
         return 64;
     case X86_SIZE_XMM:
         return 128;
+    default: {
+        ERROR("Invalid register size");
+        return 0;
     }
-
-    ERROR("Invalid register size");
-    return 0;
+    }
 }
 
 SSAInstruction* IREmitter::VInsertInteger(SSAInstruction* integer, SSAInstruction* vector, u8 index, x86_size_e size) {
@@ -2410,7 +2415,6 @@ void IREmitter::Group14(x86_instruction_t* inst) {
 }
 
 void IREmitter::Group15(x86_instruction_t* inst) {
-    // TODO: this is not right, theres stuff like incsspd that are reg = 5
     ::Group15 opcode = (::Group15)(inst->operand_reg.reg.ref & 0x7);
     switch (opcode) {
     case Group15::LFence: {
@@ -2426,7 +2430,7 @@ void IREmitter::Group15(x86_instruction_t* inst) {
         break;
     }
     default: {
-        ASSERT_MSG(false, "Invalid group 15 opcode: %d", (int)opcode);
+        WARN("Invalid group 15 opcode: %d, crash incoming?", (int)opcode);
         break;
     }
     }
@@ -2482,6 +2486,40 @@ void IREmitter::TerminateJumpConditional(SSAInstruction* condition, IRBlock* tar
 
     if (target_false->GetStartAddress() != IR_NO_ADDRESS)
         compile_queue.push_back(target_false);
+}
+
+void IREmitter::TerminateJump(u64 offset) {
+    ASSERT_MSG(block->GetTermination() == Termination::Null, "Block %s already has a termination", block->GetName().c_str());
+
+    int block_count = function.GetBlocks().size();
+    if (g_block_limit != 0 && block_count >= g_block_limit) {
+        // The block limit has been reached, update the rip and exit to dispatcher instead
+        SSAInstruction* rip = GetReg(X86_REF_RIP);
+        SSAInstruction* new_rip = Add(rip, Imm(offset));
+        SetReg(new_rip, X86_REF_RIP);
+        block->TerminateJump(GetExit());
+    } else {
+        u64 target = function.GetStartAddress() + offset;
+        TerminateJump(CreateBlockAt(target));
+    }
+}
+
+void IREmitter::TerminateJumpConditional(SSAInstruction* condition, u64 offset_true, u64 offset_false) {
+    ASSERT_MSG(block->GetTermination() == Termination::Null, "Block %s already has a termination", block->GetName().c_str());
+
+    int block_count = function.GetBlocks().size();
+    if (g_block_limit != 0 && block_count >= g_block_limit) {
+        // The block limit has been reached, update the rip conditionally and exit to dispatcher instead
+        SSAInstruction* rip = GetReg(X86_REF_RIP);
+        SSAInstruction* new_rip_true = Add(rip, Imm(offset_true));
+        SSAInstruction* new_rip_false = Add(rip, Imm(offset_false));
+        SetReg(Select(condition, new_rip_true, new_rip_false), X86_REF_RIP);
+        block->TerminateJump(GetExit());
+    } else {
+        u64 target_true = function.GetStartAddress() + offset_true;
+        u64 target_false = function.GetStartAddress() + offset_false;
+        TerminateJumpConditional(condition, CreateBlockAt(target_true), CreateBlockAt(target_false));
+    }
 }
 
 void IREmitter::CallHostFunction(u64 function_address) {

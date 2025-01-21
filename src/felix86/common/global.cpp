@@ -22,8 +22,22 @@ bool g_print_block_start = false;
 bool g_print_state = false;
 bool g_print_disassembly = false;
 bool g_cache_functions = false;
+bool g_preload = false;
 bool g_coalesce = true;
+bool g_dont_link = false;
 bool g_extensions_manually_specified = false;
+bool g_include_comments = false;
+bool g_graph_coloring = false;
+bool g_fast_recompiler = false;
+bool g_profile_compilation = false;
+u64 g_dispatcher_exit_count = 0;
+std::unordered_map<u64, std::vector<u64>> g_breakpoints{};
+std::chrono::nanoseconds g_compilation_total_time = std::chrono::nanoseconds(0);
+
+// Having too many basic blocks in a function can cause the register allocator to take insanely long times
+// So a block limit can sacrifice some potential runtime performance for way better compilation times
+constexpr int default_block_limit = 1;
+int g_block_limit = default_block_limit;
 int g_output_fd = 1;
 u32 g_spilled_count = 0;
 std::filesystem::path g_rootfs_path{};
@@ -31,7 +45,6 @@ thread_local ThreadState* g_thread_state;
 u64 g_executable_base_hint = 0;
 u64 g_interpreter_base_hint = 0;
 Emulator* g_emulator = nullptr;
-SignalHandler g_signal_handler;
 
 u64 g_interpreter_start = 0;
 u64 g_interpreter_end = 0;
@@ -140,10 +153,32 @@ void initialize_globals() {
         environment += "\nFELIX86_QUIET";
     }
 
+    const char* block_limit_env = getenv("FELIX86_BLOCK_LIMIT");
+    if (block_limit_env) {
+        g_block_limit = std::atoi(block_limit_env);
+        environment += "\nFELIX86_BLOCK_LIMIT=" + std::string(block_limit_env);
+        if (g_block_limit < 0) {
+            WARN("Block limit is less than 0, setting to default value of %d", default_block_limit);
+            g_block_limit = default_block_limit;
+        }
+    }
+
     const char* dont_coalesce_env = getenv("FELIX86_NO_COALESCE");
     if (is_truthy(dont_coalesce_env)) {
         g_coalesce = false;
         environment += "\nFELIX86_NO_COALESCE";
+    }
+
+    const char* dont_link_env = getenv("FELIX86_NO_LINK");
+    if (is_truthy(dont_link_env)) {
+        g_dont_link = true;
+        environment += "\nFELIX86_NO_LINK";
+    }
+
+    const char* graph_coloring_env = getenv("FELIX86_GRAPH_COLORING");
+    if (is_truthy(graph_coloring_env)) {
+        g_graph_coloring = true;
+        environment += "\nFELIX86_GRAPH_COLORING";
     }
 
     const char* print_start_of_block_env = getenv("FELIX86_PRINT_BLOCK_START");
@@ -159,6 +194,24 @@ void initialize_globals() {
         }
         g_rootfs_path = rootfs_path;
         environment += "\nFELIX86_ROOTFS=" + std::string(rootfs_path);
+    }
+
+    const char* fast_recompiler_env = getenv("FELIX86_FAST_RECOMPILER");
+    if (is_truthy(fast_recompiler_env)) {
+        g_fast_recompiler = true;
+        environment += "\nFELIX86_FAST_RECOMPILER";
+    }
+
+    const char* profile_compilation_env = getenv("FELIX86_PROFILE_COMPILATION");
+    if (is_truthy(profile_compilation_env)) {
+        g_profile_compilation = true;
+        environment += "\nFELIX86_PROFILE_COMPILATION";
+
+        std::atexit([]() {
+            printf("Total compilation time: %ldms\n", g_compilation_total_time.count() / 1000000);
+            printf("Total dispatcher exits: %ld\n", g_dispatcher_exit_count);
+            printf("Total code cache size: %ldKB\n", g_emulator->GetCodeCacheSize() / 1024);
+        });
     }
 
     const char* executable_base = getenv("FELIX86_EXECUTABLE_BASE");
@@ -188,9 +241,24 @@ void initialize_globals() {
         const char* cache_env = getenv("FELIX86_NO_CACHE");
         if (is_truthy(cache_env)) {
             g_cache_functions = false;
+            environment += "\nFELIX86_NO_CACHE";
         } else {
             g_cache_functions = true;
+
+            const char* preload_env = getenv("FELIX86_NO_PRELOAD");
+            if (is_truthy(preload_env)) {
+                g_preload = false;
+            } else {
+                g_preload = false;
+                // g_preload = true; TODO: fix preloading
+            }
         }
+    }
+
+    const char* env_file = getenv("FELIX86_ENV_FILE");
+    if (env_file) {
+        // Handled in main
+        environment += "\nFELIX86_ENV_FILE=" + std::string(env_file);
     }
 
     if (!g_quiet && !environment.empty()) {

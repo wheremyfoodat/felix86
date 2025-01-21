@@ -60,6 +60,7 @@ set(FELIX86_IR_SOURCES
     src/felix86/ir/passes/extraneous_writeback_pass.cpp
     src/felix86/ir/passes/graph_coloring_pass.cpp
     src/felix86/ir/passes/immediate_transformation_pass.cpp
+    src/felix86/ir/passes/linear_scan_pass.cpp
     src/felix86/ir/passes/local_cse_pass.cpp
     src/felix86/ir/passes/peephole_pass.cpp
     src/felix86/ir/passes/ssa_pass.cpp
@@ -67,6 +68,7 @@ set(FELIX86_IR_SOURCES
 )
 
 set(FELIX86_COMMON_SOURCES
+    src/felix86/common/debug.cpp
     src/felix86/common/decoder.cpp
     src/felix86/common/disk_cache.cpp
     src/felix86/common/elf.cpp
@@ -95,6 +97,11 @@ set(FELIX86_HLE_SOURCES
     src/felix86/hle/syscall.cpp
 )
 
+set(FELIX86_V2_SOURCES
+    src/felix86/v2/fast_recompiler.cpp
+    src/felix86/v2/handlers.cpp
+)
+
 set(FELIX86_CORE_SOURCES
     ${FELIX86_COMMON_SOURCES}
     ${FELIX86_AOT_SOURCES}
@@ -102,6 +109,7 @@ set(FELIX86_CORE_SOURCES
     ${FELIX86_IR_SOURCES}
     ${FELIX86_BACKEND_SOURCES}
     ${FELIX86_HLE_SOURCES}
+    ${FELIX86_V2_SOURCES}
     src/felix86/emulator.cpp
 )
 

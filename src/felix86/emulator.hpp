@@ -6,6 +6,7 @@
 #include "felix86/common/x86.hpp"
 #include "felix86/hle/filesystem.hpp"
 #include "felix86/hle/signals.hpp"
+#include "felix86/v2/fast_recompiler.hpp"
 
 struct Config {
     std::filesystem::path rootfs_path;
@@ -19,7 +20,7 @@ struct TestConfig {
 };
 
 struct Emulator {
-    Emulator(const Config& config) : config(config), backend(*this) {
+    Emulator(const Config& config) : config(config), backend(*this), fast_recompiler(*this) {
         g_emulator = this;
         fs.LoadRootFS(config.rootfs_path);
         fs.LoadExecutable(config.executable_path);
@@ -28,13 +29,17 @@ struct Emulator {
         main_state->brk_current_address = fs.GetBRK();
         main_state->SetRip((u64)fs.GetEntrypoint());
 
+        AOT aot(*this, fs.GetExecutable());
+        if (g_preload) {
+            aot.PreloadAll();
+        }
+
         if (g_aot) {
-            AOT aot(*this, fs.GetExecutable());
             aot.CompileAll();
         }
     }
 
-    Emulator(const TestConfig& config) : backend(*this) {
+    Emulator(const TestConfig& config) : backend(*this), fast_recompiler(*this) {
         g_emulator = this;
         ThreadState* main_state = createThreadState();
         main_state->SetRip((u64)config.entrypoint);
@@ -45,10 +50,6 @@ struct Emulator {
 
     Filesystem& GetFilesystem() {
         return fs;
-    }
-
-    SignalHandler& GetSignalHandler() {
-        return signal_handler;
     }
 
     Config& GetConfig() {
@@ -65,6 +66,14 @@ struct Emulator {
         return backend.GetCodeAt(rip);
     }
 
+    Backend& GetBackend() {
+        return backend;
+    }
+
+    Assembler& GetAssembler() {
+        return fast_recompiler.getAssembler();
+    }
+
     void Run();
 
     static void* CompileNext(Emulator* emulator, ThreadState* state);
@@ -77,10 +86,22 @@ struct Emulator {
         return {auxv_base, auxv_size};
     }
 
+    void* LoadFromCache(u64 rip, const std::string& hash);
+
+    u64 GetCodeCacheSize() {
+        return backend.GetCodeCacheSize();
+    }
+
+    FastRecompiler& GetRecompiler() {
+        return fast_recompiler;
+    }
+
 private:
     void setupMainStack(ThreadState* state);
 
     void* compileFunction(u64 rip);
+
+    void* compileFunctionFast(u64 rip);
 
     ThreadState* createThreadState();
 
@@ -89,7 +110,7 @@ private:
     Config config;
     Backend backend;
     Filesystem fs;
-    SignalHandler signal_handler;
+    FastRecompiler fast_recompiler;
     bool testing = false;
     void* auxv_base = nullptr;
     size_t auxv_size = 0;

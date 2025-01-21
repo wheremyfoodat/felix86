@@ -59,7 +59,12 @@ void Emulator::Run() {
     VERBOSE("Entering main thread :)");
 
     ThreadState* state = &thread_states.back();
-    backend.EnterDispatcher(state);
+    g_thread_state = state;
+    if (g_fast_recompiler) {
+        fast_recompiler.enterDispatcher(state);
+    } else {
+        backend.EnterDispatcher(state);
+    }
 
     VERBOSE("Bye-bye main thread :(");
     VERBOSE("Main thread exited: %d", (int)state->exit_reason);
@@ -215,13 +220,9 @@ void* Emulator::compileFunction(u64 rip) {
     // Check disk cache if enabled
     if (g_cache_functions) {
         ASSERT(!g_testing);
-        std::string hex_hash = fmt::format("{:016x}{:016x}", function.GetHash().values[1], function.GetHash().values[0]);
+        std::string hex_hash = function.GetHash().ToString();
         if (DiskCache::Has(hex_hash)) {
-            std::vector<u8> function = DiskCache::Read(hex_hash);
-            compilation_mutex.lock();
-            void* start = backend.AddCodeAt(rip, function.data(), function.size());
-            compilation_mutex.unlock();
-            return start;
+            return LoadFromCache(rip, hex_hash);
         }
     }
 
@@ -233,7 +234,7 @@ void* Emulator::compileFunction(u64 rip) {
         do {
             changed = false;
             changed |= PassManager::PeepholePass(&function);
-            changed |= PassManager::LocalCSEPass(&function);
+            // changed |= PassManager::LocalCSEPass(&function);
             changed |= PassManager::CopyPropagationPass(&function);
             changed |= PassManager::DeadCodeEliminationPass(&function);
         } while (changed);
@@ -252,7 +253,12 @@ void* Emulator::compileFunction(u64 rip) {
 
     BackendFunction backend_function = BackendFunction::FromIRFunction(&function);
 
-    AllocationMap allocations = ir_graph_coloring_pass(backend_function);
+    AllocationMap allocations;
+    if (g_graph_coloring) {
+        allocations = ir_graph_coloring_pass(backend_function);
+    } else {
+        allocations = ir_linear_scan_pass(backend_function);
+    }
 
     // Add vector state instructions where necessary
     PassManager::VectorStatePass(&backend_function);
@@ -274,17 +280,50 @@ void* Emulator::compileFunction(u64 rip) {
 
     if (g_cache_functions) {
         ASSERT(!g_testing);
-        std::string hex_hash = fmt::format("{:016x}{:016x}", function.GetHash().values[1], function.GetHash().values[0]);
+        std::string hex_hash = function.GetHash().ToString();
         DiskCache::Write(hex_hash, func, size);
     }
 
     return func;
 }
 
+void* Emulator::compileFunctionFast(u64 rip) {
+    std::lock_guard<std::mutex> lock(compilation_mutex);
+    return fast_recompiler.compile(rip);
+}
+
+void* Emulator::LoadFromCache(u64 rip, const std::string& hash) {
+    ASSERT(g_cache_functions);
+    ASSERT(DiskCache::Has(hash));
+    ASSERT(!g_testing);
+
+    std::vector<u8> function = DiskCache::Read(hash);
+    compilation_mutex.lock();
+    void* start = backend.AddCodeAt(rip, function.data(), function.size());
+    compilation_mutex.unlock();
+    return start;
+}
+
 void* Emulator::CompileNext(Emulator* emulator, ThreadState* thread_state) {
+    std::chrono::high_resolution_clock::time_point start;
+    if (g_profile_compilation) {
+        g_dispatcher_exit_count++;
+        start = std::chrono::high_resolution_clock::now();
+    }
 
     // Mutex needs to be unlocked before the thread is dispatched
-    void* volatile function = emulator->compileFunction(thread_state->GetRip());
+    void* volatile function;
+    if (g_fast_recompiler) {
+        function = emulator->compileFunctionFast(thread_state->GetRip());
+    } else {
+        function = emulator->compileFunction(thread_state->GetRip());
+    }
+
+    if (g_profile_compilation) {
+        std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
+        std::chrono::nanoseconds duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
+        g_compilation_total_time += duration;
+    }
 
     u64 address = thread_state->GetRip();
     if (address >= g_interpreter_start && address < g_interpreter_end) {
@@ -313,8 +352,8 @@ ThreadState* Emulator::createThreadState() {
     thread_state->syscall_handler = (u64)felix86_syscall;
     thread_state->cpuid_handler = (u64)felix86_cpuid;
     thread_state->rdtsc_handler = (u64)felix86_rdtsc;
-    thread_state->compile_next = (u64)backend.GetCompileNext();
-    thread_state->crash_handler = (u64)backend.GetCrashHandler();
+    thread_state->compile_next_handler = g_fast_recompiler ? (u64)fast_recompiler.getCompileNext() : (u64)backend.GetCompileNext();
+    thread_state->crash_handler = g_fast_recompiler ? 0 : (u64)backend.GetCrashHandler();
     thread_state->div128_handler = (u64)felix86_div128;
     thread_state->divu128_handler = (u64)felix86_divu128;
     std::fill(thread_state->masked_signals.begin(), thread_state->masked_signals.end(), false);

@@ -457,6 +457,7 @@ void Emitter::EmitReadXmmWord(Backend& backend, biscuit::Vec Vd, biscuit::GPR Ad
         ASSERT(Extensions::VLEN == SUPPORTED_VLEN);
         AS.VL1RE8(Vd, Address);
         break;
+    default:
     case VectorState::AnyPacked:
         UNREACHABLE();
     }
@@ -531,6 +532,7 @@ void Emitter::EmitWriteXmmWord(Backend& backend, biscuit::GPR Address, biscuit::
         ASSERT(Extensions::VLEN == SUPPORTED_VLEN);
         AS.VS1R(Vs, Address); // use this one because we expect the address to be aligned
         break;
+    default:
     case VectorState::AnyPacked:
         UNREACHABLE();
     }
@@ -1320,6 +1322,12 @@ void Emitter::EmitVSlideUpZeroesi(Backend& backend, biscuit::Vec Vd, biscuit::Ve
     ASSERT(Vd != Vs);
     AS.VMV(Vd, 0);
     AS.VSLIDEUP(Vd, Vs, immediate, masked);
+}
+
+void Emitter::EmitVSlideDownZeroesi(Backend& backend, biscuit::Vec Vd, biscuit::Vec Vs, u64 immediate, VecMask masked) {
+    ASSERT(Vd != Vs);
+    AS.VMV(Vd, 0);
+    AS.VSLIDEDOWN(Vd, Vs, immediate, masked);
 }
 
 void Emitter::EmitVSlide1Up(Backend& backend, biscuit::Vec Vd, biscuit::GPR Rs, biscuit::Vec Vs, VecMask masked) {

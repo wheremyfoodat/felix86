@@ -7,17 +7,6 @@ using namespace biscuit;
 
 constexpr static u64 code_cache_size = 64 * 1024 * 1024;
 
-// If you don't flush the cache the code will randomly SIGILL
-static inline void flush_icache() {
-#if defined(__riscv)
-    asm volatile("fence.i" ::: "memory");
-#elif defined(__aarch64__)
-#pragma message("Don't forget to implement me")
-#elif defined(__x86_64__)
-    // No need to flush the cache on x86
-#endif
-}
-
 namespace {
 std::string ExitReasonToString(ExitReason reason) {
     switch (reason) {
@@ -62,13 +51,11 @@ void Backend::emitNecessaryStuff() {
     // Give it an initial valid state
     as.VSETIVLI(x0, SUPPORTED_VLEN / 8, SEW::E8);
 
-    biscuit::GPR address = t0;
-
     // Save the current register state of callee-saved registers and return address
-    as.ADDI(address, a0, offsetof(ThreadState, gpr_storage));
     const auto& saved_gprs = Registers::GetSavedGPRs();
+    as.ADDI(sp, sp, -((int)saved_gprs.size() * 8));
     for (size_t i = 0; i < saved_gprs.size(); i++) {
-        as.SD(saved_gprs[i], i * sizeof(u64), address);
+        as.SD(saved_gprs[i], i * sizeof(u64), sp);
     }
 
     // Since we picked callee-saved registers, we don't have to save them when calling stuff,
@@ -78,7 +65,7 @@ void Backend::emitNecessaryStuff() {
     // Jump
     Label exit_dispatcher_label;
 
-    compile_next = (decltype(compile_next))as.GetCursorPointer();
+    compile_next_handler = (decltype(compile_next_handler))as.GetCursorPointer();
 
     // If it's not zero it has some exit reason, exit the dispatcher
     as.LB(a0, offsetof(ThreadState, exit_reason), Registers::ThreadStatePointer());
@@ -94,23 +81,21 @@ void Backend::emitNecessaryStuff() {
 
     as.Bind(&exit_dispatcher_label);
 
-    // Load the old state
-    as.MV(address, Registers::ThreadStatePointer());
-    as.ADDI(address, address, offsetof(ThreadState, gpr_storage));
     for (size_t i = 0; i < saved_gprs.size(); i++) {
-        as.LD(saved_gprs[i], i * sizeof(u64), address);
+        as.LD(saved_gprs[i], i * sizeof(u64), sp);
     }
+
+    as.ADDI(sp, sp, (int)saved_gprs.size() * 8);
 
     as.RET();
 
     crash_handler = as.GetCursorPointer();
 
-    // Load the old state and print a message
-    as.MV(address, Registers::ThreadStatePointer());
-    as.ADDI(address, address, offsetof(ThreadState, gpr_storage));
     for (size_t i = 0; i < saved_gprs.size(); i++) {
-        as.LD(saved_gprs[i], i * sizeof(u64), address);
+        as.LD(saved_gprs[i], i * sizeof(u64), sp);
     }
+
+    as.ADDI(sp, sp, (int)saved_gprs.size() * 8);
 
     as.MV(a0, Registers::ThreadStatePointer());
     as.LI(a1, (u64)PrintExitReason);
@@ -121,7 +106,7 @@ void Backend::emitNecessaryStuff() {
     VERBOSE("Enter dispatcher at: %p", enter_dispatcher);
     VERBOSE("Exit dispatcher at: %p", exit_dispatcher);
     VERBOSE("Crash target at: %p", crash_handler);
-    VERBOSE("Compile next at: %p", compile_next);
+    VERBOSE("Compile next at: %p", compile_next_handler);
 }
 
 void Backend::resetCodeCache() {
@@ -146,7 +131,6 @@ void Backend::EnterDispatcher(ThreadState* state) {
         ERROR("Dispatcher not initialized??");
     }
 
-    g_thread_state = state;
     enter_dispatcher(state);
 }
 
@@ -162,7 +146,7 @@ void* Backend::AddCodeAt(u64 address, void* code, u64 size) {
     return start;
 }
 
-std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, const AllocationMap& allocations) {
+std::pair<void*, u64> Backend::EmitFunction(const BackendFunction& function, AllocationMap& allocations) {
     void* start = as.GetCursorPointer();
     std::vector<const BackendBlock*> blocks_postorder = function.GetBlocksPostorder();
 

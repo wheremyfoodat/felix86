@@ -1,4 +1,5 @@
 #include <csetjmp>
+#include <fstream>
 #include <thread>
 #include <argp.h>
 #include <fmt/format.h>
@@ -184,6 +185,26 @@ static error_t parse_opt(int key, char* arg, struct argp_state* state) {
 static struct argp argp = {options, parse_opt, args_doc, doc};
 
 int main(int argc, char* argv[]) {
+#if 0 // for testing zydis behavior on specific instructions
+    ZydisDecoder decoder;
+    ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
+
+    u8 data[] = {
+        0x4c,
+        0x8d,
+        0x14,
+        0x82,
+    };
+
+    ZydisDecodedInstruction instruction;
+    ZydisDecodedOperand operands[10];
+    ZyanStatus status = ZydisDecoderDecodeFull(&decoder, data, sizeof(data), &instruction, operands);
+    ASSERT(ZYAN_SUCCESS(status));
+
+    printf("operand count: %d\n", instruction.operand_count_visible);
+    printf("op 0: %d\n", operands[1].mem.scale);
+#endif
+
     Config config = {};
 
     argp_parse(&argp, argc, argv, ARGP_IN_ORDER, 0, &config);
@@ -207,12 +228,28 @@ int main(int argc, char* argv[]) {
 #ifdef __x86_64__
     WARN("You're running an x86-64 executable version of felix86, get ready for a crash soon");
 #endif
+    g_output_fd = dup(STDOUT_FILENO);
 
     initialize_globals();
     initialize_extensions();
     print_extensions();
 
-    g_output_fd = dup(STDOUT_FILENO);
+    Signals::initialize();
+
+    const char* env_file = getenv("FELIX86_ENV_FILE");
+    if (env_file) {
+        std::string env_path = env_file;
+        if (std::filesystem::exists(env_path)) {
+            std::ifstream env_stream(env_path);
+            std::string line;
+            while (std::getline(env_stream, line)) {
+                config.envp.push_back(line);
+            }
+        } else {
+            ERROR("Environment variable file %s does not exist", env_file);
+        }
+    }
+
     config.rootfs_path = g_rootfs_path;
 
     // Sanitize the executable path
