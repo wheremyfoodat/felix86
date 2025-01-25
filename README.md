@@ -1,5 +1,5 @@
 # felix86
-An x86-64 userspace emulator for RISC-V Linux. Early in development.
+felix86 is a Linux userspace emulator. It allows you to run x86-64 Linux programs on RISC-V processors. Early in development.
 
 Compilation and usage instructions can be found [here](./docs/how-to-use.md).
 
