@@ -34,7 +34,7 @@ felix86 depends on a bunch of great projects:
 ## Why?
 felix86 was started for several reasons, but to name a few:
 - Learning more about x86-64, RISC-V, Linux, high-level emulation
-- Learning about optimizing compilers, method JITs (SSA, RA, optimization passes, ...)
+- Learning about optimizing compilers, JITs (SSA, RA, optimization passes, ...)
 - Learning more about different memory models and low level details
 - Fun challenge
 
