@@ -3,7 +3,7 @@
 #include "felix86/hle/filesystem.hpp"
 #include "felix86/hle/signals.hpp"
 
-std::array<RegisteredSignal, 32> handlers{};
+std::array<RegisteredSignal, 64> handlers{};
 
 bool is_in_jit_code(uintptr_t ptr) {
     uintptr_t start = g_emulator->GetAssembler().GetCodeBuffer().GetOffsetAddress(0);
@@ -24,8 +24,8 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
     ucontext_t* context = (ucontext_t*)ctx;
     uintptr_t pc = context->uc_mcontext.__gregs[REG_PC];
 
-    ASSERT(FastRecompiler::threadStatePointer() == x27);
-    FastRecompiler& recompiler = g_emulator->GetRecompiler();
+    ASSERT(Recompiler::threadStatePointer() == x27);
+    Recompiler& recompiler = g_emulator->GetRecompiler();
 
     switch (sig) {
     case SIGBUS: {
@@ -103,12 +103,20 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
         }
 
         if (!found) {
-            ERROR("Unhandled SIGILL at PC: %016lx", pc);
+            ERROR("Unhandled SIGILL (%d) at PC: %016lx", info->si_code, pc);
         }
         break;
     }
     default: {
-        ERROR("Unhandled signal: %d", sig);
+        if (handlers[sig - 1].handler) {
+            // There's a guest signal handler for this signal.
+            // If the signal happened inside the JIT code, we need to do some sort of state reconstruction at the end
+            // of the guest signal handler.
+            // Otherwise I think we're good to recompile and run it :cluegi:
+            ERROR("implme");
+        } else {
+            ERROR("Unhandled signal %d", sig);
+        }
         break;
     }
     }
@@ -126,12 +134,23 @@ void Signals::initialize() {
 }
 
 void Signals::registerSignalHandler(int sig, void* handler, sigset_t mask, int flags) {
-    ASSERT(sig > 0 && sig < 32);
-    handlers[sig] = {handler, mask, flags};
+    ASSERT(sig > 0 && sig < 64);
+    handlers[sig - 1] = {handler, mask, flags};
     WARN("Registering signal handler for signal %d", sig);
+
+    struct sigaction sa;
+    sa.sa_sigaction = signal_handler;
+    sa.sa_flags = SA_SIGINFO;
+    sigemptyset(&sa.sa_mask);
+    sigaction(sig, &sa, nullptr);
 }
 
 RegisteredSignal Signals::getSignalHandler(int sig) {
-    ASSERT(sig > 0 && sig < 32);
-    return handlers[sig];
+    u8 sig_index = sig - 1;
+    if (sig_index >= 0 && sig_index <= 63) {
+        return handlers[sig_index];
+    } else {
+        WARN("Trying to get signal %d, but it is out of bounds", sig);
+        return {nullptr, {}, 0};
+    }
 }

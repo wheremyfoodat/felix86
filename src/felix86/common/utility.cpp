@@ -86,7 +86,25 @@ void flush_icache() {
 #endif
 }
 
-int guest_breakpoint(u64 address) {
+int guest_breakpoint(const char* region, u64 address) {
+    auto [start, end] = MemoryMetadata::GetRegionByName(region);
+
+    if (start == 0 && end == 0) {
+        WARN("Region %s not found, breakpoint will be added later if loaded", region);
+        MemoryMetadata::AddDeferredBreakpoint(region, address);
+        return -1;
+    }
+
+    if (address >= (end - start)) {
+        WARN("Address %016lx is out of bounds for region %s", address, region);
+        return -1;
+    }
+
+    g_breakpoints[address + start] = {};
+    return g_breakpoints.size();
+}
+
+int guest_breakpoint_abs(u64 address) {
     g_breakpoints[address] = {};
     return g_breakpoints.size();
 }
@@ -95,4 +113,50 @@ int clear_breakpoints() {
     int count = g_breakpoints.size();
     g_breakpoints.clear();
     return count;
+}
+
+void felix86_fxsave(struct ThreadState* state, u64 address, bool fxsave64) {
+    if (fxsave64) {
+        memcpy((u8*)address + 160, state->xmm, 16 * 16);
+    } else {
+        memcpy((u8*)address + 160, state->xmm, 8 * 16);
+    }
+}
+
+void felix86_fxrstor(struct ThreadState* state, u64 address, bool fxrstor64) {
+    if (fxrstor64) {
+        memcpy(state->xmm, (u8*)address + 160, 16 * 16);
+    } else {
+        memcpy(state->xmm, (u8*)address + 160, 8 * 16);
+    }
+}
+
+void felix86_packuswb(u8* dst, u8* src) {
+    i16* src16 = (i16*)src;
+    i16* dst16 = (i16*)dst;
+    for (int i = 0; i < 8; i++) {
+        i16 value = *dst16++;
+        u8 result;
+        if (value < 0) {
+            result = 0;
+        } else if (value > SCHAR_MAX) {
+            result = 255;
+        } else {
+            result = (u8)value;
+        }
+        dst[i] = result;
+    }
+
+    for (int i = 8; i < 16; i++) {
+        i16 value = *src16++;
+        u8 result;
+        if (value < 0) {
+            result = 0;
+        } else if (value > SCHAR_MAX) {
+            result = 255;
+        } else {
+            result = (u8)value;
+        }
+        dst[i] = result;
+    }
 }

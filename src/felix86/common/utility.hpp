@@ -38,6 +38,15 @@ u64 current_rip();
 
 void flush_icache();
 
-int guest_breakpoint(u64 address);
+int guest_breakpoint(const char* name, u64 address);
 
 int clear_breakpoints();
+
+void felix86_fxsave(struct ThreadState* state, u64 address, bool fxsave64);
+
+void felix86_fxrstor(struct ThreadState* state, u64 address, bool fxrstor64);
+
+void felix86_packuswb(u8* dst, u8* src);
+
+namespace biscuit {}
+using namespace biscuit;

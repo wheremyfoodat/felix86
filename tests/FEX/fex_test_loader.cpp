@@ -4,9 +4,9 @@
 #include <unistd.h>
 #include "catch2/catch_message.hpp"
 #include "catch2/catch_test_macros.hpp"
-#include "felix86/backend/disassembler.hpp"
 #include "felix86/common/print.hpp"
 #include "fex_test_loader.hpp"
+#include "fmt/format.h"
 #include "nlohmann/json.hpp"
 
 FEXTestLoader::FEXTestLoader(const std::filesystem::path& path) {
@@ -65,16 +65,16 @@ FEXTestLoader::FEXTestLoader(const std::filesystem::path& path) {
         exit(1);
     } else {
         close(pipefd[1]);
-        bytes_read = read(pipefd[0], buffer.data(), buffer.size());
-        if (bytes_read == -1) {
-            ERROR("Failed to read from pipe");
-        }
-        close(pipefd[0]);
         int status;
         waitpid(fork_result, &status, 0);
         if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
             ERROR("nasm failed with exit code: %d", WEXITSTATUS(status));
         }
+        bytes_read = read(pipefd[0], buffer.data(), buffer.size());
+        if (bytes_read == -1) {
+            ERROR("Failed to read from pipe");
+        }
+        close(pipefd[0]);
     }
 
     // At this point buffer should contain the compiled binary as raw bytes and
@@ -190,9 +190,6 @@ void FEXTestLoader::Run() {
 }
 
 void FEXTestLoader::Validate() {
-    auto [address, size] = emulator->GetCodeAt(0x10'0000);
-    CATCH_INFO(fmt::format("Disassembly:\n{}", Disassembler::Disassemble(address, size)));
-
     for (size_t i = 0; i < expected_gpr.size(); i++) {
         auto& pexpected = expected_gpr[i];
         if (pexpected.has_value()) {

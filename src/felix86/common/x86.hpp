@@ -1,7 +1,7 @@
 #pragma once
 
-#include <cstddef>
-#include "felix86/backend/registers.hpp"
+#include <array>
+#include "felix86/common/log.hpp"
 #include "felix86/common/utility.hpp"
 
 enum class Group1 : u8 {
@@ -178,7 +178,6 @@ struct ThreadState {
 
     // Addresses that the JIT will load and call/jump to if necessary
     u64 compile_next_handler{};
-    u64 crash_handler{};
     u64 syscall_handler{};
     u64 cpuid_handler{};
     u64 rdtsc_handler{};

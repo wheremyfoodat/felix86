@@ -55,6 +55,24 @@ bool Filesystem::LoadRootFS(const std::filesystem::path& path) {
 }
 
 std::optional<std::filesystem::path> Filesystem::AtPath(int dirfd, const char* pathname) {
+    // Check if it starts with /dev
+    constexpr static const char* dev = "/dev";
+    if (strncmp(pathname, dev, strlen(dev)) == 0) {
+        return std::filesystem::path(pathname);
+    }
+
+    // Check if it starts with /run/user/1000
+    constexpr static const char* run_user_1000 = "/run/user/1000";
+    if (strncmp(pathname, run_user_1000, strlen(run_user_1000)) == 0) {
+        return std::filesystem::path(pathname);
+    }
+
+    // Check if it starts with /sys/dev
+    constexpr static const char* sys_dev = "/sys/dev";
+    if (strncmp(pathname, sys_dev, strlen(sys_dev)) == 0) {
+        return std::filesystem::path(pathname);
+    }
+
     std::filesystem::path path = pathname;
     if (path.is_relative()) {
         if (dirfd == AT_FDCWD) {
@@ -207,6 +225,12 @@ int Filesystem::Chdir(const char* path) {
 
 int Filesystem::GetCwd(char* buf, u32 bufsiz) {
     std::string cwd_string = cwd_path.string();
+
+    if (cwd_string.size() < rootfs_path_string.size()) {
+        ERROR("cwd is not part of the rootfs");
+        return -ENOENT;
+    }
+
     cwd_string = cwd_string.substr(rootfs_path_string.size());
     if (cwd_string.empty()) {
         cwd_string = "/";
