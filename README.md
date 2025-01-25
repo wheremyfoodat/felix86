@@ -3,7 +3,7 @@ An x86-64 userspace emulator for RISC-V Linux. Early in development.
 
 Compilation and usage instructions can be found [here](./docs/how-to-use.md).
 
-Want to contribute but don't know what to do? [Check this out](./docs/internals/contributing.md).
+Want to contribute but don't know what to do? [Check this out](./docs/contributing.md).
 
 ## Features
 - Just-in-Time recompiler
