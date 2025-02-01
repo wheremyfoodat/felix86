@@ -5,18 +5,31 @@
 #include <Zydis/Utils.h>
 #include "Zydis/Decoder.h"
 #include "biscuit/assembler.hpp"
-#include "felix86/common/riscv.hpp"
 #include "felix86/common/utility.hpp"
 #include "felix86/common/x86.hpp"
+
+// 16 gprs, 5 flags, 16 xmm registers
+constexpr u64 allocated_reg_count = 16 + 5 + 16;
 
 struct HandlerMetadata {
     u64 rip;
     u64 block_start;
 };
 
+// This struct is for indicating within a block at which points a register contains a value of a guest register,
+// and when it is just undefined. For example within a block, the register that represents RAX is not valid until it's loaded
+// for the first time, and then when it's written back it becomes invalid again because it may change due to a syscall or something.
+struct RegisterAccess {
+    u64 address; // address where the load or writeback happened
+    bool valid;  // true if loaded and potentially modified, false if written back to memory and allocated register holds garbage
+};
+
 struct BlockMetadata {
-    void* address = nullptr;
+    void* address{};
+    void* address_end{};
     std::vector<u64> pending_links{};
+    std::vector<std::pair<u64, u64>> instruction_spans{}; // {guest, host}
+    std::array<std::vector<RegisterAccess>, allocated_reg_count> register_accesses;
 };
 
 struct VectorMemoryAccess {
@@ -29,7 +42,7 @@ struct VectorMemoryAccess {
 };
 
 struct Recompiler {
-    Recompiler(Emulator& emulator);
+    Recompiler();
     ~Recompiler();
     Recompiler(const Recompiler&) = delete;
     Recompiler& operator=(const Recompiler&) = delete;
@@ -80,7 +93,13 @@ struct Recompiler {
 
     void enterDispatcher(ThreadState* state);
 
+    void exitDispatcher(ThreadState* state);
+
     void* getCompileNext();
+
+    void disableSignals();
+
+    void enableSignals();
 
     bool shouldEmitFlag(u64 current_rip, x86_ref_e ref);
 
@@ -127,9 +146,9 @@ struct Recompiler {
     x86_size_e zydisToSize(ZyanU8 size);
 
     // Get the allocated register for the given register reference
-    biscuit::GPR allocatedGPR(x86_ref_e reg);
+    static biscuit::GPR allocatedGPR(x86_ref_e reg);
 
-    biscuit::Vec allocatedVec(x86_ref_e reg);
+    static biscuit::Vec allocatedVec(x86_ref_e reg);
 
     bool setVectorState(SEW sew, int elem_count, LMUL grouping = LMUL::M1);
 
@@ -173,6 +192,12 @@ struct Recompiler {
 
     u64 getImmediate(ZydisDecodedOperand* operand);
 
+    void* emitSigreturnThunk();
+
+    auto& getBlockMap() {
+        return block_metadata;
+    }
+
 private:
     struct RegisterMetadata {
         x86_ref_e reg;
@@ -209,7 +234,7 @@ private:
 
     void expirePendingLinks(u64 rip);
 
-    Emulator& emulator;
+    void addRegisterAccess(x86_ref_e ref, bool is_load);
 
     u8* code_cache{};
     biscuit::Assembler as{};
@@ -220,9 +245,10 @@ private:
 
     void (*enter_dispatcher)(ThreadState*){};
 
+    void (*exit_dispatcher)(ThreadState*){};
+
     void* compile_next_handler{};
 
-    // 16 gprs, 6 flags, 16 xmm registers
     std::array<RegisterMetadata, 16 + 5 + 16> metadata{};
 
     std::unordered_map<u64, BlockMetadata> block_metadata{};
@@ -237,6 +263,7 @@ private:
 
     std::unordered_map<u64, VectorMemoryAccess> vector_memory_access{};
 
+    BlockMetadata* current_block_metadata;
     HandlerMetadata* current_meta{};
     SEW current_sew = SEW::E1024;
     u8 current_vlen = 0;

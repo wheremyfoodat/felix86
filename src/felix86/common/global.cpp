@@ -22,7 +22,6 @@ std::chrono::nanoseconds g_compilation_total_time = std::chrono::nanoseconds(0);
 
 int g_output_fd = 1;
 std::filesystem::path g_rootfs_path{};
-thread_local ThreadState* g_thread_state;
 u64 g_executable_base_hint = 0;
 u64 g_interpreter_base_hint = 0;
 Emulator* g_emulator = nullptr;
@@ -117,6 +116,15 @@ void initialize_globals() {
         }
         g_rootfs_path = rootfs_path;
         environment += "\nFELIX86_ROOTFS=" + std::string(rootfs_path);
+    } else {
+        const char* rootfs_path = getenv("FELIX86_ROOTFS_PATH");
+        if (rootfs_path) {
+            if (!g_rootfs_path.empty()) {
+                WARN("Rootfs overwritten by environment variable FELIX86_ROOTFS_PATH");
+            }
+            g_rootfs_path = rootfs_path;
+            environment += "\nFELIX86_ROOTFS_PATH=" + std::string(rootfs_path);
+        }
     }
 
     const char* profile_compilation_env = getenv("FELIX86_PROFILE_COMPILATION");

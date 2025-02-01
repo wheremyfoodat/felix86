@@ -93,7 +93,12 @@ FAST_HANDLE(SUB) {
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_CF)) {
         biscuit::GPR cf = rec.flagW(X86_REF_CF);
-        AS.SLTU(cf, dst, src);
+        if (operands[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE && size != X86_SIZE_QWORD) {
+            rec.zext(cf, src, size);
+            AS.SLTU(cf, dst, cf);
+        } else {
+            AS.SLTU(cf, dst, src);
+        }
     }
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_PF)) {
@@ -180,7 +185,12 @@ FAST_HANDLE(SBB) {
         biscuit::GPR cf = rec.flagWR(X86_REF_CF);
         rec.zext(scratch, result, size);
         AS.SLTU(scratch, scratch, cf);
-        AS.SLTU(cf, dst, src);
+        if (operands[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE && size != X86_SIZE_QWORD) {
+            rec.zext(cf, src, size);
+            AS.SLTU(cf, dst, cf);
+        } else {
+            AS.SLTU(cf, dst, src);
+        }
         AS.OR(cf, cf, scratch);
         rec.popScratch();
     }
@@ -283,7 +293,12 @@ FAST_HANDLE(CMP) {
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_CF)) {
         biscuit::GPR cf = rec.flagW(X86_REF_CF);
-        AS.SLTU(cf, dst, src);
+        if (operands[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE && size != X86_SIZE_QWORD) {
+            rec.zext(cf, src, size);
+            AS.SLTU(cf, dst, cf);
+        } else {
+            AS.SLTU(cf, dst, src);
+        }
     }
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_PF)) {
@@ -1914,7 +1929,7 @@ FAST_HANDLE(MOVDQU) {
 
 FAST_HANDLE(RDTSC) {
     biscuit::GPR tsc = rec.scratch();
-    AS.RDCYCLE(tsc);
+    AS.RDTIME(tsc);
     rec.setRefGPR(X86_REF_RAX, X86_SIZE_DWORD, tsc);
     AS.SRLI(tsc, tsc, 32);
     rec.setRefGPR(X86_REF_RDX, X86_SIZE_DWORD, tsc);
@@ -2880,8 +2895,6 @@ FAST_HANDLE(PALIGNR) {
         return;
     }
 
-    // Use two register grouping
-
     if (16 - imm > 0) {
         AS.LI(temp, ~((1ull << (16 - imm)) - 1));
         AS.VMV_SX(v0, temp);
@@ -2974,11 +2987,44 @@ FAST_HANDLE(BTC) {
 }
 
 FAST_HANDLE(BT) {
-    ASSERT(operands[0].type != ZYDIS_OPERAND_TYPE_MEMORY);
     biscuit::GPR shift = rec.scratch();
     biscuit::GPR bit = rec.getOperandGPR(&operands[1]);
-    biscuit::GPR dst = rec.getOperandGPR(&operands[0]);
     biscuit::GPR cf = rec.flagW(X86_REF_CF);
+
+    biscuit::GPR dst;
+
+    if (operands[0].type == ZYDIS_OPERAND_TYPE_MEMORY) {
+        dst = rec.scratch();
+        biscuit::GPR address = rec.lea(&operands[0]);
+
+        u8 shr = 0;
+        u8 shl = 0;
+        switch (operands[0].size) {
+        case 16:
+            shr = 4;
+            shl = 1;
+            break;
+        case 32:
+            shr = 5;
+            shl = 2;
+            break;
+        case 64:
+            shr = 6;
+            shl = 3;
+            break;
+        default:
+            UNREACHABLE();
+        }
+
+        // Point to the exact word in memory
+        AS.SRLI(shift, bit, shr);
+        AS.SLLI(shift, shift, shl);
+        AS.ADD(address, address, shift);
+        rec.readMemory(dst, address, 0, rec.zydisToSize(operands[0].size));
+        rec.popScratch();
+    } else {
+        dst = rec.getOperandGPR(&operands[0]);
+    }
 
     u8 bit_size = operands[0].size;
     AS.ANDI(shift, bit, bit_size - 1);
@@ -2991,17 +3037,52 @@ FAST_HANDLE(BT) {
 }
 
 FAST_HANDLE(BTS) {
-    ASSERT(operands[0].type != ZYDIS_OPERAND_TYPE_MEMORY);
     biscuit::GPR shift = rec.scratch();
     biscuit::GPR result = rec.scratch();
     biscuit::GPR bit = rec.getOperandGPR(&operands[1]);
-    biscuit::GPR dst = rec.getOperandGPR(&operands[0]);
-    biscuit::GPR cf = rec.flagW(X86_REF_CF);
+    biscuit::GPR dst;
 
-    u8 bit_size = operands[0].size;
-    AS.ANDI(shift, bit, bit_size - 1);
-    AS.SRL(cf, dst, shift);
-    AS.ANDI(cf, cf, 1);
+    if (operands[0].type == ZYDIS_OPERAND_TYPE_MEMORY) {
+        dst = rec.scratch();
+        biscuit::GPR address = rec.lea(&operands[0]);
+
+        u8 shr = 0;
+        u8 shl = 0;
+        switch (operands[0].size) {
+        case 16:
+            shr = 4;
+            shl = 1;
+            break;
+        case 32:
+            shr = 5;
+            shl = 2;
+            break;
+        case 64:
+            shr = 6;
+            shl = 3;
+            break;
+        default:
+            UNREACHABLE();
+        }
+
+        // Point to the exact word in memory
+        AS.SRLI(shift, bit, shr);
+        AS.SLLI(shift, shift, shl);
+        AS.ADD(address, address, shift);
+        rec.readMemory(dst, address, 0, rec.zydisToSize(operands[0].size));
+        rec.popScratch();
+    } else {
+        dst = rec.getOperandGPR(&operands[0]);
+    }
+
+    if (rec.shouldEmitFlag(meta.rip, X86_REF_CF)) {
+        biscuit::GPR cf = rec.flagW(X86_REF_CF);
+        u8 bit_size = operands[0].size;
+        AS.ANDI(shift, bit, bit_size - 1);
+        AS.SRL(cf, dst, shift);
+        AS.ANDI(cf, cf, 1);
+    }
+
     biscuit::GPR one = rec.scratch();
     AS.LI(one, 1);
     AS.SLL(one, one, shift);
@@ -4251,4 +4332,12 @@ FAST_HANDLE(FNSTCW) {
 
 FAST_HANDLE(FLDCW) {
     WARN("FLDCW is not implemented, ignoring");
+}
+
+FAST_HANDLE(STMXCSR) {
+    WARN("STMXCSR is not implemented, ignoring");
+}
+
+FAST_HANDLE(LDMXCSR) {
+    WARN("LDMXCSR is not implemented, ignoring");
 }

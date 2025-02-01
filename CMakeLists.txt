@@ -23,8 +23,8 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=implicit-fallthrough -Wall -Werr
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "riscv64")
     # GDB decides to tell you the perfectly fine vector instructions don't exist if you
     # don't specify the ISA here
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=rv64gcv")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=rv64gcv")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=rv64gcv_zicsr_zifencei")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=rv64gcv_zicsr_zifencei")
 endif()
 
 add_compile_options($<$<COMPILE_LANGUAGE:CPP>:-fno-rtti> $<$<COMPILE_LANGUAGE:CPP>:-fno-exceptions>)
@@ -38,7 +38,6 @@ set(FELIX86_COMMON_SOURCES
     src/felix86/common/elf.cpp
     src/felix86/common/exit.cpp
     src/felix86/common/global.cpp
-    src/felix86/common/hash.cpp
     src/felix86/common/log.cpp
     src/felix86/common/print.cpp
     src/felix86/common/utility.cpp
@@ -47,7 +46,6 @@ set(FELIX86_COMMON_SOURCES
 set(FELIX86_HLE_SOURCES
     src/felix86/hle/cpuid.cpp
     src/felix86/hle/filesystem.cpp
-    src/felix86/hle/rdtsc.cpp
     src/felix86/hle/signals.cpp
     src/felix86/hle/syscall.cpp
     src/felix86/hle/thread.cpp

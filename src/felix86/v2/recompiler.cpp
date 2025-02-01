@@ -42,7 +42,7 @@ static bool flag_passthrough(ZydisMnemonic mnemonic, x86_ref_e flag) {
     }
 }
 
-Recompiler::Recompiler(Emulator& emulator) : emulator(emulator), code_cache(allocateCodeCache()), as(code_cache, code_cache_size) {
+Recompiler::Recompiler() : code_cache(allocateCodeCache()), as(code_cache, code_cache_size) {
     for (int i = 0; i < 16; i++) {
         metadata[i].reg = (x86_ref_e)(X86_REF_RAX + i);
         metadata[i + 16 + 5].reg = (x86_ref_e)(X86_REF_XMM0 + i);
@@ -55,6 +55,7 @@ Recompiler::Recompiler(Emulator& emulator) : emulator(emulator), code_cache(allo
     metadata[20].reg = X86_REF_OF;
 
     emitDispatcher();
+    emitSigreturnThunk();
 
     ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
     ZydisDecoderEnableMode(&decoder, ZYDIS_DECODER_MODE_AMD_BRANCHES, ZYAN_TRUE);
@@ -71,9 +72,10 @@ void Recompiler::emitDispatcher() {
     as.VSETIVLI(x0, SUPPORTED_VLEN / 8, SEW::E8);
 
     // Save the current register state of callee-saved registers and return address
-    as.ADDI(sp, sp, -((int)saved_gprs.size() * 8));
+    static_assert(sizeof(ThreadState::saved_host_gprs) == saved_gprs.size() * 8);
+    as.ADDI(t0, a0, offsetof(ThreadState, saved_host_gprs));
     for (size_t i = 0; i < saved_gprs.size(); i++) {
-        as.SD(saved_gprs[i], i * sizeof(u64), sp);
+        as.SD(saved_gprs[i], i * sizeof(u64), t0);
     }
 
     as.MV(threadStatePointer(), a0);
@@ -83,25 +85,39 @@ void Recompiler::emitDispatcher() {
     Label exit_dispatcher_label;
 
     // If it's not zero it has some exit reason, exit the dispatcher
-    as.LBU(a0, offsetof(ThreadState, exit_reason), threadStatePointer());
-    as.BNEZ(a0, &exit_dispatcher_label);
-    as.LI(a0, (u64)&emulator);
-    as.MV(a1, threadStatePointer());
-    as.LI(a2, (u64)Emulator::CompileNext);
-    as.JALR(a2); // returns the function pointer to the compiled function
+    as.MV(a0, threadStatePointer());
+    as.LBU(t0, offsetof(ThreadState, exit_reason), threadStatePointer());
+    as.BNEZ(t0, &exit_dispatcher_label);
+    as.LI(t0, (u64)Emulator::CompileNext);
+    as.JALR(t0); // returns the function pointer to the compiled function
     as.JR(a0);   // jump to the compiled function
 
     as.Bind(&exit_dispatcher_label);
 
-    for (size_t i = 0; i < saved_gprs.size(); i++) {
-        as.LD(saved_gprs[i], i * sizeof(u64), sp);
-    }
+    exit_dispatcher = (decltype(exit_dispatcher))as.GetCursorPointer();
 
-    as.ADDI(sp, sp, (int)saved_gprs.size() * 8);
+    as.ADDI(t0, a0, offsetof(ThreadState, saved_host_gprs));
+    for (size_t i = 0; i < saved_gprs.size(); i++) {
+        as.LD(saved_gprs[i], i * sizeof(u64), t0);
+    }
 
     as.JR(ra);
 
     flush_icache();
+}
+
+void* Recompiler::emitSigreturnThunk() {
+    // This piece of code is responsible for moving the thread state pointer to the right place (so we don't have to find it using tid)
+    // calling sigreturn, returning and going back to the dispatcher.
+    void* here = as.GetCursorPointer();
+    block_metadata[Signals::magicSigreturnAddress()].address = here;
+
+    as.MV(a0, threadStatePointer());
+    as.LI(t0, (u64)Signals::sigreturn);
+    as.JALR(t0);
+    backToDispatcher();
+
+    return here;
 }
 
 void* Recompiler::compile(u64 rip) {
@@ -119,9 +135,6 @@ void* Recompiler::compile(u64 rip) {
 
     expirePendingLinks(rip);
 
-    // Make code visible to instruction fetches.
-    flush_icache();
-
     return start;
 }
 
@@ -129,9 +142,10 @@ void Recompiler::compileSequence(u64 rip) {
     compiling = true;
     scanFlagUsageAhead(rip);
     HandlerMetadata meta = {rip, rip};
+    BlockMetadata& block_meta = block_metadata[rip];
 
     current_meta = &meta;
-
+    current_block_metadata = &block_meta;
     current_sew = SEW::E1024;
     current_vlen = 0;
     current_grouping = LMUL::M1;
@@ -144,6 +158,8 @@ void Recompiler::compileSequence(u64 rip) {
             g_breakpoints[rip].push_back(current_address);
             as.GetCodeBuffer().Emit32(0); // UNIMP instruction
         }
+
+        block_meta.instruction_spans.push_back({meta.rip, (u64)as.GetCursorPointer()});
 
         ZydisMnemonic mnemonic = decode(meta.rip, instruction, operands);
         switch (mnemonic) {
@@ -207,7 +223,11 @@ void Recompiler::compileSequence(u64 rip) {
         meta.rip += instruction.length;
     }
 
+    current_block_metadata->address_end = as.GetCursorPointer();
+
     current_meta = nullptr;
+
+    flush_icache();
 }
 
 biscuit::GPR Recompiler::allocatedGPR(x86_ref_e reg) {
@@ -675,28 +695,7 @@ biscuit::GPR Recompiler::getOperandGPR(ZydisDecodedOperand* operand) {
     case ZYDIS_OPERAND_TYPE_MEMORY: {
         biscuit::GPR address = lea(operand);
 
-        switch (operand->size) {
-        case 8: {
-            as.LBU(address, 0, address);
-            break;
-        }
-        case 16: {
-            as.LHU(address, 0, address);
-            break;
-        }
-        case 32: {
-            as.LWU(address, 0, address);
-            break;
-        }
-        case 64: {
-            as.LD(address, 0, address);
-            break;
-        }
-        default: {
-            UNREACHABLE();
-            break;
-        }
-        }
+        readMemory(address, address, 0, zydisToSize(operand->size));
 
         return address;
     }
@@ -778,6 +777,8 @@ biscuit::GPR Recompiler::flag(x86_ref_e ref) {
 
     biscuit::GPR reg = allocatedGPR(ref);
     loadGPR(ref, reg);
+    addRegisterAccess(ref, true); // this is not quite right, as flags may be used as temporaries sometimes
+                                  // but it's good enough for now. Surely the signal handler behavior won't care about flags that much :cluegi:
     return reg;
 }
 
@@ -786,6 +787,7 @@ biscuit::GPR Recompiler::flagW(x86_ref_e ref) {
     RegisterMetadata& meta = getMetadata(ref);
     meta.dirty = true;
     meta.loaded = true;
+    addRegisterAccess(ref, true);
     return reg;
 }
 
@@ -795,6 +797,7 @@ biscuit::GPR Recompiler::flagWR(x86_ref_e ref) {
     meta.dirty = true;
     meta.loaded = true;
     loadGPR(ref, reg);
+    addRegisterAccess(ref, true);
     return reg;
 }
 
@@ -802,6 +805,7 @@ biscuit::GPR Recompiler::getRefGPR(x86_ref_e ref, x86_size_e size) {
     biscuit::GPR gpr = allocatedGPR(ref);
 
     loadGPR(ref, gpr);
+    addRegisterAccess(ref, true); // mark register state as valid at this address
 
     switch (size) {
     case X86_SIZE_BYTE: {
@@ -843,6 +847,7 @@ biscuit::Vec Recompiler::getRefVec(x86_ref_e ref) {
     biscuit::Vec vec = allocatedVec(ref);
 
     loadVec(ref, vec);
+    addRegisterAccess(ref, true); // mark register state as valid at this address
 
     return vec;
 }
@@ -911,7 +916,8 @@ void Recompiler::setRefGPR(x86_ref_e ref, x86_size_e size, biscuit::GPR reg) {
 
     RegisterMetadata& meta = getMetadata(ref);
     meta.dirty = true;
-    meta.loaded = true; // since the value is fresh it's as if we read it from memory
+    meta.loaded = true;           // since the value is fresh it's as if we read it from memory
+    addRegisterAccess(ref, true); // mark register state as valid at this address
 }
 
 void Recompiler::setRefVec(x86_ref_e ref, biscuit::Vec vec) {
@@ -923,7 +929,8 @@ void Recompiler::setRefVec(x86_ref_e ref, biscuit::Vec vec) {
 
     RegisterMetadata& meta = getMetadata(ref);
     meta.dirty = true;
-    meta.loaded = true; // since the value is fresh it's as if we read it from memory
+    meta.loaded = true;           // since the value is fresh it's as if we read it from memory
+    addRegisterAccess(ref, true); // mark register state as valid at this address
 }
 
 void Recompiler::setOperandGPR(ZydisDecodedOperand* operand, biscuit::GPR reg) {
@@ -1011,6 +1018,58 @@ void Recompiler::setOperandVec(ZydisDecodedOperand* operand, biscuit::Vec vec) {
     default: {
         UNREACHABLE();
     }
+    }
+}
+
+void Recompiler::addRegisterAccess(x86_ref_e ref, bool valid) {
+    std::vector<RegisterAccess>* access = nullptr;
+    switch (ref) {
+    case X86_REF_RAX ... X86_REF_R15: {
+        access = &current_block_metadata->register_accesses[ref - X86_REF_RAX];
+        break;
+    }
+    case X86_REF_CF: {
+        access = &current_block_metadata->register_accesses[16];
+        break;
+    }
+    case X86_REF_AF: {
+        access = &current_block_metadata->register_accesses[17];
+        break;
+    }
+    case X86_REF_ZF: {
+        access = &current_block_metadata->register_accesses[18];
+        break;
+    }
+    case X86_REF_SF: {
+        access = &current_block_metadata->register_accesses[19];
+        break;
+    }
+    case X86_REF_OF: {
+        access = &current_block_metadata->register_accesses[20];
+        break;
+    }
+    case X86_REF_XMM0 ... X86_REF_XMM15: {
+        access = &current_block_metadata->register_accesses[ref - X86_REF_XMM0 + 16 + 5];
+        break;
+    }
+    default: {
+        UNREACHABLE();
+        break;
+    }
+    }
+
+    u64 address = (u64)as.GetCursorPointer();
+    if (access->empty()) {
+        ASSERT(valid);
+        access->push_back({address, valid});
+    } else {
+        RegisterAccess& last = access->back();
+        if (!last.valid) {
+            ASSERT(valid); // should never go from invalid to invalid
+            access->push_back({address, valid});
+        } else if (last.valid && !valid) { // only push a state change if it goes from valid to invalid
+            access->push_back({address, valid});
+        }
     }
 }
 
@@ -1185,7 +1244,9 @@ void Recompiler::setExitReason(ExitReason reason) {
 void Recompiler::writebackDirtyState() {
     for (int i = 0; i < 16; i++) {
         if (metadata[i].dirty) {
-            as.SD(allocatedGPR((x86_ref_e)(X86_REF_RAX + i)), offsetof(ThreadState, gprs) + i * sizeof(u64), threadStatePointer());
+            x86_ref_e ref = (x86_ref_e)(X86_REF_RAX + i);
+            as.SD(allocatedGPR(ref), offsetof(ThreadState, gprs) + i * sizeof(u64), threadStatePointer());
+            addRegisterAccess(ref, false);
         }
     }
 
@@ -1196,28 +1257,34 @@ void Recompiler::writebackDirtyState() {
             setVectorState(SEW::E64, maxVlen() / 64);
             as.ADDI(address, threadStatePointer(), offsetof(ThreadState, xmm) + i * 16);
             as.VSE64(allocatedVec(ref), address);
+            addRegisterAccess(ref, false);
         }
     }
     popScratch();
 
     if (getMetadata(X86_REF_CF).dirty) {
         as.SB(allocatedGPR(X86_REF_CF), offsetof(ThreadState, cf), threadStatePointer());
+        addRegisterAccess(X86_REF_CF, false);
     }
 
     if (getMetadata(X86_REF_AF).dirty) {
         as.SB(allocatedGPR(X86_REF_AF), offsetof(ThreadState, af), threadStatePointer());
+        addRegisterAccess(X86_REF_AF, false);
     }
 
     if (getMetadata(X86_REF_ZF).dirty) {
         as.SB(allocatedGPR(X86_REF_ZF), offsetof(ThreadState, zf), threadStatePointer());
+        addRegisterAccess(X86_REF_ZF, false);
     }
 
     if (getMetadata(X86_REF_SF).dirty) {
         as.SB(allocatedGPR(X86_REF_SF), offsetof(ThreadState, sf), threadStatePointer());
+        addRegisterAccess(X86_REF_SF, false);
     }
 
     if (getMetadata(X86_REF_OF).dirty) {
         as.SB(allocatedGPR(X86_REF_OF), offsetof(ThreadState, of), threadStatePointer());
+        addRegisterAccess(X86_REF_OF, false);
     }
 
     for (int i = 0; i < metadata.size(); i++) {
@@ -1238,8 +1305,11 @@ void Recompiler::backToDispatcher() {
 }
 
 void Recompiler::enterDispatcher(ThreadState* state) {
-    g_thread_state = state;
     enter_dispatcher(state);
+}
+
+void Recompiler::exitDispatcher(ThreadState* state) {
+    exit_dispatcher(state);
 }
 
 void* Recompiler::getCompileNext() {
@@ -1541,8 +1611,27 @@ void Recompiler::expirePendingLinks(u64 rip) {
     for (u64 link : links) {
         auto current_offset = as.GetCodeBuffer().GetCursorOffset();
 
-        as.RewindBuffer(link);
+        as.RewindBuffer(link - 4);
+
+        // First, insert an instruction that just jumps in place and flush the cache
+        // This way, until we are done modifying code, nothing can enter this area of code
+        // Important to note: Only one thread compiles (and thus links) code at a time
+        constexpr u32 jump_lock = 0x0000006F; // j 0x0 instruction
+        u32 old_instruction = __atomic_exchange_n((u32*)as.GetCursorPointer(), jump_lock, __ATOMIC_SEQ_CST);
+        flush_icache();
+
+        as.AdvanceBuffer(link);
+
         jumpAndLink(rip);
+
+        as.RewindBuffer(link - 4);
+
+        // Block linking is done, replace the "lock" jump with the old instruction
+        u32 jump_instruction = __atomic_exchange_n((u32*)as.GetCursorPointer(), old_instruction, __ATOMIC_SEQ_CST);
+        flush_icache();
+
+        ASSERT(jump_instruction == jump_lock);
+
         as.AdvanceBuffer(current_offset);
     }
 
@@ -1641,11 +1730,8 @@ biscuit::GPR Recompiler::getCond(int cond) {
     }
     case 7: {
         biscuit::GPR cond = scratch();
-        biscuit::GPR temp = scratch();
-        as.XORI(cond, flag(X86_REF_CF), 1);
-        as.XORI(temp, flag(X86_REF_ZF), 1);
-        as.AND(cond, cond, temp);
-        popScratch();
+        as.OR(cond, flag(X86_REF_CF), flag(X86_REF_ZF));
+        as.XORI(cond, cond, 1);
         return cond;
     }
     case 8:
@@ -1761,6 +1847,8 @@ x86_size_e Recompiler::zydisToSize(ZyanU8 size) {
 }
 
 void Recompiler::repPrologue(Label* loop_end) {
+    // Signal handling would get tricky if we had to account for this looping mess of an instruction
+    disableSignals();
     biscuit::GPR rcx = getRefGPR(X86_REF_RCX, X86_SIZE_QWORD);
     as.BEQZ(rcx, loop_end);
 }
@@ -1770,6 +1858,7 @@ void Recompiler::repEpilogue(Label* loop_body) {
     as.ADDI(rcx, rcx, -1);
     setRefGPR(X86_REF_RCX, X86_SIZE_QWORD, rcx);
     as.BNEZ(rcx, loop_body);
+    enableSignals();
 }
 
 void Recompiler::repzEpilogue(Label* loop_body, bool is_repz) {
@@ -1785,6 +1874,7 @@ void Recompiler::repzEpilogue(Label* loop_body, bool is_repz) {
         biscuit::GPR zf = flag(X86_REF_ZF);
         as.BEQZ(zf, loop_body);
     }
+    enableSignals();
 }
 
 void Recompiler::sext(biscuit::GPR dst, biscuit::GPR src, x86_size_e size) {
@@ -1878,4 +1968,15 @@ biscuit::GPR Recompiler::getFlags() {
     as.ORI(reg, reg, 0b10); // bit 1 always set in flags
     popScratch();
     return reg;
+}
+
+void Recompiler::disableSignals() {
+    biscuit::GPR i_love_risc_architecture = scratch();
+    as.LI(i_love_risc_architecture, 1);
+    as.SB(i_love_risc_architecture, offsetof(ThreadState, signals_disabled), threadStatePointer());
+    popScratch();
+}
+
+void Recompiler::enableSignals() {
+    as.SB(x0, offsetof(ThreadState, signals_disabled), threadStatePointer());
 }

@@ -19,19 +19,22 @@ struct TestConfig {
 };
 
 struct Emulator {
-    Emulator(const Config& config) : config(config), recompiler(*this) {
+    Emulator(const Config& config) : config(config), recompiler() {
         g_emulator = this;
         fs.LoadRootFS(config.rootfs_path);
         fs.LoadExecutable(config.executable_path);
         ThreadState* main_state = CreateThreadState();
+        VERBOSE("Created thread state with tid %ld", main_state->tid);
         setupMainStack(main_state);
+        main_state->signal_handlers = std::make_shared<SignalHandlerTable>();
         main_state->brk_current_address = fs.GetBRK();
         main_state->SetRip((u64)fs.GetEntrypoint());
     }
 
-    Emulator(const TestConfig& config) : recompiler(*this) {
+    Emulator(const TestConfig& config) : recompiler() {
         g_emulator = this;
         ThreadState* main_state = CreateThreadState();
+        VERBOSE("Created thread state with tid %ld", main_state->tid);
         main_state->SetRip((u64)config.entrypoint);
         testing = true;
     }
@@ -44,6 +47,10 @@ struct Emulator {
 
     Config& GetConfig() {
         return config;
+    }
+
+    auto& GetStates() {
+        return thread_states;
     }
 
     ThreadState* GetTestState() {
@@ -60,11 +67,11 @@ struct Emulator {
 
     void StartThread(ThreadState* state);
 
-    static void* CompileNext(Emulator* emulator, ThreadState* state);
+    static void* CompileNext(ThreadState* state);
 
-    static void CompileFunction(Emulator* emulator, u64 rip) {
-        emulator->compileFunction(rip);
-    }
+    static void Sigreturn();
+
+    ThreadState* GetThreadState();
 
     std::pair<void*, size_t> GetAuxv() {
         return {auxv_base, auxv_size};
@@ -74,14 +81,18 @@ struct Emulator {
         return recompiler;
     }
 
-    ThreadState* CreateThreadState();
+    ThreadState* CreateThreadState(ThreadState* copy_state = nullptr);
+
+    void RemoveState(ThreadState* state);
+
+    void CleanExit(ThreadState* state);
+
+    std::unique_lock<std::mutex> Lock();
 
 private:
     void setupMainStack(ThreadState* state);
 
-    void* compileFunction(u64 rip);
-
-    std::mutex compilation_mutex; // to synchronize compilation and function lookup
+    std::mutex mutex; // to synchronize compilation and function lookup
     std::list<ThreadState> thread_states;
     Config config;
     Filesystem fs;

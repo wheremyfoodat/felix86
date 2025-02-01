@@ -85,7 +85,30 @@ void felix86_syscall(ThreadState* state) {
     u64 r10 = state->GetGpr(X86_REF_R10);
     u64 r8 = state->GetGpr(X86_REF_R8);
     u64 r9 = state->GetGpr(X86_REF_R9);
-    ssize_t result = -1;
+
+    struct Result {
+        Result& operator=(ssize_t inner) {
+            if (inner == -1) {
+                this->inner = -errno;
+            } else {
+                this->inner = inner;
+            }
+            return *this;
+        }
+
+        operator ssize_t() const {
+            return inner;
+        }
+
+        operator void*() const {
+            return (void*)inner;
+        }
+
+    private:
+        ssize_t inner;
+    };
+
+    Result result;
 
     Filesystem& fs = g_emulator->GetFilesystem();
 
@@ -121,50 +144,36 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
         default: {
-            ERROR("Unimplemented arch_prctl %016lx", rdi);
+            result = -EINVAL;
             break;
         }
         }
-        STRACE("arch_prctl(%016lx, %016lx) = %016lx", rdi, rsi, result);
+        STRACE("arch_prctl(%016lx, %016lx) = %016lx", rdi, rsi, (u64)result);
         break;
     }
     case felix86_x86_64_set_tid_address: {
-        state->clear_child_tid = rdi;
-        result = rdi;
-        STRACE("set_tid_address(%016lx) = %016lx", rdi, result);
-        break;
-    }
-    case felix86_x86_64_get_robust_list: {
-        if (rdi != 0) {
-            ERROR("get_robust_list asking for a different thread not implemented");
-        }
-        ERROR("get_robust_list not implemented");
+        result = HOST_SYSCALL(set_tid_address, rdi);
+        STRACE("set_tid_address(%016lx) = %016lx", rdi, (u64)result);
         break;
     }
     case felix86_x86_64_set_robust_list: {
-        // state->robust_futex_list = rdi;
-        // if (rsi != sizeof(u64) * 3) {
-        //     WARN("Struct size is wrong during set_robust_list");
-        //     result = -EINVAL;
-        // }
-        // STRACE("set_robust_list(%016lx, %016lx) = %016lx", rdi, rsi, result);
         result = -ENOSYS;
         break;
     }
     case felix86_x86_64_rseq: {
         // Couldn't find any solid documentation and FEX doesn't support it either
         result = -ENOSYS;
-        STRACE("rseq(...) = %016lx", result);
+        STRACE("rseq(...) = %016lx", (u64)result);
         break;
     }
     case felix86_x86_64_time: {
         result = ::time((time_t*)rdi);
-        STRACE("time(%p) = %016lx", (void*)rdi, result);
+        STRACE("time(%p) = %016lx", (void*)rdi, (u64)result);
         break;
     }
     case felix86_x86_64_prlimit64: {
         result = HOST_SYSCALL(prlimit64, rdi, rsi, rdx, r10);
-        STRACE("prlimit64(%016lx, %016lx, %016lx, %016lx) = %016lx", rdi, rsi, rdx, r10, result);
+        STRACE("prlimit64(%016lx, %016lx, %016lx, %016lx) = %016lx", rdi, rsi, rdx, r10, (u64)result);
         break;
     }
     case felix86_x86_64_readlink: {
@@ -179,12 +188,12 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_getrandom: {
         result = HOST_SYSCALL(getrandom, rdi, rsi, rdx);
-        STRACE("getrandom(%p, %016lx, %d) = %016lx", (void*)rdi, rsi, (int)rdx, result);
+        STRACE("getrandom(%p, %016lx, %d) = %016lx", (void*)rdi, rsi, (int)rdx, (u64)result);
         break;
     }
     case felix86_x86_64_mprotect: {
         result = HOST_SYSCALL(mprotect, rdi, rsi, rdx);
-        STRACE("mprotect(%p, %016lx, %d) = %016lx", (void*)rdi, rsi, (int)rdx, result);
+        STRACE("mprotect(%p, %016lx, %d) = %016lx", (void*)rdi, rsi, (int)rdx, (u64)result);
         break;
     }
     case felix86_x86_64_close: {
@@ -258,21 +267,29 @@ void felix86_syscall(ThreadState* state) {
         struct stat host_stat;
         result = HOST_SYSCALL(fstat, rdi, &host_stat);
         STRACE("fstat(%d, %p) = %d", (int)rdi, (void*)rsi, (int)result);
-        if (result != -1) {
+        if (result >= 0) {
             *guest_stat = host_stat;
-            STRACE("st_dev : %ld", guest_stat->st_dev);
-            STRACE("st_ino : %ld", guest_stat->st_ino);
-            STRACE("st_mode : %d", guest_stat->st_mode);
-            STRACE("st_nlink : %ld", guest_stat->st_nlink);
-            STRACE("st_uid : %d", guest_stat->st_uid);
-            STRACE("st_gid : %d", guest_stat->st_gid);
-            STRACE("st_rdev : %ld", guest_stat->st_rdev);
-            STRACE("st_size : %ld", guest_stat->st_size);
-            STRACE("st_blksize : %ld", guest_stat->st_blksize);
-            STRACE("st_blocks : %ld", guest_stat->st_blocks);
-        } else {
-            STRACE("fstat failed: %d", errno);
         }
+        break;
+    }
+    case felix86_x86_64_sendmmsg: {
+        result = HOST_SYSCALL(sendmmsg, rdi, (struct mmsghdr*)rsi, rdx, r10);
+        STRACE("sendmmsg(%d, %p, %d, %d) = %d", (int)rdi, (void*)rsi, (int)rdx, (int)r10, (int)result);
+        break;
+    }
+    case felix86_x86_64_recvmmsg: {
+        result = HOST_SYSCALL(recvmmsg, rdi, (struct mmsghdr*)rsi, rdx, r10, r8);
+        STRACE("recvmmsg(%d, %p, %d, %d, %d) = %d", (int)rdi, (void*)rsi, (int)rdx, (int)r10, (int)r8, (int)result);
+        break;
+    }
+    case felix86_x86_64_setsockopt: {
+        result = HOST_SYSCALL(setsockopt, rdi, rsi, rdx, r10, r8);
+        STRACE("setsockopt(%d, %d, %d, %d, %d) = %d", (int)rdi, (int)rsi, (int)rdx, (int)r10, (int)r8, (int)result);
+        break;
+    }
+    case felix86_x86_64_getsockopt: {
+        result = HOST_SYSCALL(getsockopt, rdi, rsi, rdx, r10, r8);
+        STRACE("getsockopt(%d, %d, %d, %d, %d) = %d", (int)rdi, (int)rsi, (int)rdx, (int)r10, (int)r8, (int)result);
         break;
     }
     case felix86_x86_64_statx: {
@@ -317,14 +334,9 @@ void felix86_syscall(ThreadState* state) {
         struct stat host_stat;
         result = HOST_SYSCALL(newfstatat, rdi, path->c_str(), &host_stat, r10);
         STRACE("newfstatat(%d, %s, %p, %d) = %d", (int)rdi, path->c_str(), (void*)rdx, (int)r10, (int)result);
-        if (result != -1) {
+        if (result >= 0) {
             *guest_stat = host_stat;
         }
-        break;
-    }
-    case felix86_x86_64_sigaltstack: {
-        result = HOST_SYSCALL(sigaltstack, rdi, rsi);
-        STRACE("sigaltstack(%p, %p) = %d", (void*)rdi, (void*)rsi, (int)result);
         break;
     }
     case felix86_x86_64_sysinfo: {
@@ -334,22 +346,7 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_ioctl: {
         result = HOST_SYSCALL(ioctl, rdi, rsi, rdx);
-        STRACE("ioctl(%d, %016lx, %016lx) = %016lx", (int)rdi, rsi, rdx, result);
-
-#if 1
-        if (g_strace) {
-            // TCSETSW
-            termios* term = (termios*)rdx;
-            switch (rsi) {
-            case TCSETS:
-            case TCSETSW:
-            case TCSETSF: {
-                auto oflag = term->c_oflag;
-                // todo, output the flag properties
-            }
-            }
-        }
-#endif
+        STRACE("ioctl(%d, %016lx, %016lx) = %016lx", (int)rdi, rsi, rdx, (u64)result);
         break;
     }
     case felix86_x86_64_write: {
@@ -368,9 +365,7 @@ void felix86_syscall(ThreadState* state) {
     case felix86_x86_64_exit_group: {
         VERBOSE("Emulator called exit_group(%d)", (int)rdi);
         STRACE("exit_group(%d)", (int)rdi);
-        // TODO: can we make felix into a child process and exit that instead of exiting the entire thing instead?
-        // result = HOST_SYSCALL(exit_group, rdi);
-        exit(0);
+        result = HOST_SYSCALL(exit_group, rdi);
         break;
     }
     case felix86_x86_64_access: {
@@ -450,7 +445,7 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_mmap: {
         result = HOST_SYSCALL(mmap, rdi, rsi, rdx, r10, r8, r9);
-        STRACE("mmap(%p, %016lx, %d, %d, %d, %d) = %016lx", (void*)rdi, rsi, (int)rdx, (int)r10, (int)r8, (int)r9, result);
+        STRACE("mmap(%p, %016lx, %d, %d, %d, %d) = %016lx", (void*)rdi, rsi, (int)rdx, (int)r10, (int)r8, (int)r9, (u64)result);
 
         if (detecting_memory_region && MemoryMetadata::IsInInterpreterRegion(state->rip)) {
             if (result < min_address) {
@@ -464,7 +459,7 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_munmap: {
         result = HOST_SYSCALL(munmap, rdi, rsi);
-        STRACE("munmap(%p, %016lx) = %016lx", (void*)rdi, rsi, result);
+        STRACE("munmap(%p, %016lx) = %016lx", (void*)rdi, rsi, (u64)result);
         break;
     }
     case felix86_x86_64_getuid: {
@@ -572,6 +567,18 @@ void felix86_syscall(ThreadState* state) {
         STRACE("getsockname(%d, %p, %p) = %d", (int)rdi, (void*)rsi, (void*)rdx, (int)result);
         break;
     }
+    case felix86_x86_64_madvise: {
+        result = HOST_SYSCALL(madvise, rdi, rsi, rdx);
+        STRACE("madvise(%p, %016lx, %d) = %d", (void*)rdi, rsi, (int)rdx, (int)result);
+        break;
+    }
+    case felix86_x86_64_exit: {
+        STRACE("exit(%d)", (int)rdi);
+        state->exit_reason = ExitReason::EXIT_REASON_EXIT_SYSCALL;
+        g_emulator->CleanExit(state);
+        result = 0;
+        break;
+    }
     case felix86_x86_64_recvmsg: {
         result = HOST_SYSCALL(recvmsg, rdi, (struct msghdr*)rsi, rdx);
         STRACE("recvmsg(%d, %p, %d) = %d", (int)rdi, (void*)rsi, (int)rdx, (int)result);
@@ -587,30 +594,69 @@ void felix86_syscall(ThreadState* state) {
         STRACE("flock(%d, %d) = %d", (int)rdi, (int)rsi, (int)result);
         break;
     }
+    case felix86_x86_64_clock_nanosleep: {
+        result = HOST_SYSCALL(clock_nanosleep, rdi, rsi, rdx, r10);
+        STRACE("clock_nanosleep(%d, %d, %p, %p) = %d", (int)rdi, (int)rsi, (void*)rdx, (void*)r10, (int)result);
+        break;
+    }
     case felix86_x86_64_rt_sigaction: {
         struct sigaction* act = (struct sigaction*)rsi;
         if (act) {
             bool sigaction = act->sa_flags & SA_SIGINFO;
             void* handler = sigaction ? (void*)act->sa_sigaction : (void*)act->sa_handler;
-            Signals::registerSignalHandler(rdi, handler, act->sa_mask, act->sa_flags);
+            Signals::registerSignalHandler(state, rdi, handler, act->sa_mask, act->sa_flags);
         }
 
         struct sigaction* old_act = (struct sigaction*)rdx;
         if (old_act) {
-            RegisteredSignal old = Signals::getSignalHandler(rdi);
+            RegisteredSignal old = Signals::getSignalHandler(state, rdi);
             bool was_sigaction = old.flags & SA_SIGINFO;
             if (was_sigaction) {
-                old_act->sa_sigaction = (decltype(old_act->sa_sigaction))old.handler;
+                old_act->sa_sigaction = (decltype(old_act->sa_sigaction))old.func;
             } else {
-                old_act->sa_handler = (decltype(old_act->sa_handler))old.handler;
+                old_act->sa_handler = (decltype(old_act->sa_handler))old.func;
             }
             old_act->sa_flags = old.flags;
             old_act->sa_mask = old.mask;
         }
 
         result = 0;
-        WARN("rt_sigaction(%d, %p, %p) = %d", (int)rdi, (void*)rsi, (void*)r10, (int)result);
         STRACE("rt_sigaction(%d, %p, %p) = %d", (int)rdi, (void*)rsi, (void*)r10, (int)result);
+        break;
+    }
+    case felix86_x86_64_sigaltstack: {
+        stack_t host_stack; // save old stack here while we check if guest stack is valid
+        stack_t* guest_stack = (stack_t*)rdi;
+        stack_t guest_stack_copy = *guest_stack;
+
+        // Let the kernel decide if the guest_stack is valid
+        int result_temp = sigaltstack(&guest_stack_copy, &host_stack);
+
+        // Restore old stack
+        int result_must = sigaltstack(&host_stack, nullptr);
+        ASSERT(result_must == 0);
+
+        if (result_temp != 0) {
+            result = result_temp;
+            break;
+        }
+
+        stack_t* new_ss = (stack_t*)rdi;
+        stack_t* old_ss = (stack_t*)rsi;
+
+        if (new_ss) {
+            state->alt_stack.ss_sp = new_ss->ss_sp;
+            state->alt_stack.ss_flags = new_ss->ss_flags;
+            state->alt_stack.ss_size = new_ss->ss_size;
+        }
+
+        if (old_ss) {
+            old_ss->ss_sp = state->alt_stack.ss_sp;
+            old_ss->ss_flags = state->alt_stack.ss_flags;
+            old_ss->ss_size = state->alt_stack.ss_size;
+        }
+
+        result = 0;
         break;
     }
     case felix86_x86_64_prctl: {
@@ -643,7 +689,7 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
         }
-        STRACE("prctl(%d, %016lx, %016lx, %016lx, %016lx) = %016lx", (int)rdi, rsi, rdx, r10, r8, result);
+        STRACE("prctl(%d, %016lx, %016lx, %016lx, %016lx) = %016lx", (int)rdi, rsi, rdx, r10, r8, (u64)result);
         break;
     }
     case felix86_x86_64_futex: {
@@ -662,23 +708,7 @@ void felix86_syscall(ThreadState* state) {
         break;
     }
     case felix86_x86_64_clone3: {
-        clone_args args;
-        memset(&args, 0, sizeof(clone_args));
-        size_t size = std::min(rsi, sizeof(clone_args));
-        memcpy(&args, (void*)rdi, size);
-
-        if (args.flags & CLONE_CLEAR_SIGHAND) { // we don't support this
-            result = -EINVAL;
-            break;
-        }
-
-        long result = Threads::Clone3(state, &args);
-
-        if (result != 0) { // Parent
-            ERROR("parent");
-        }
-
-        ERROR("child");
+        result = -ENOSYS; // don't support these for now
         break;
     }
     case felix86_x86_64_clone: {
@@ -694,11 +724,28 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_wait4: {
         result = HOST_SYSCALL(wait4, rdi, rsi, rdx, r10);
-        STRACE("wait4(%d, %p, %d, %p) = %d", (int)rdi, (void*)rsi, (int)rdx, (void*)r10, (int)result);
+        STRACE("wait4(%d, %p, %d, %p)", (int)rdi, (void*)rsi, (int)rdx, (void*)r10);
+        break;
+    }
+    case felix86_x86_64_execve: {
+        auto path = fs.AtPath(AT_FDCWD, (const char*)rdi);
+
+        if (!path) {
+            result = -EACCES;
+            break;
+        }
+
+        result = HOST_SYSCALL(execve, path->c_str(), (char**)rsi, (char**)rdx);
+        STRACE("execve(%s, %p, %p) = %d", path->c_str(), (void*)rsi, (void*)rdx, (int)result);
+
+        if (result == 0) {
+            // A successful call to execve(2) removes any existing alternate signal stack
+            state->alt_stack = {};
+        }
         break;
     }
     case felix86_x86_64_unlink: {
-        std::optional<std::filesystem::path> path = fs.AtPath(AT_FDCWD, (const char*)rdi);
+        auto path = fs.AtPath(AT_FDCWD, (const char*)rdi);
 
         if (!path) {
             result = fs.Error();
@@ -716,52 +763,37 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_rt_sigprocmask: {
         int how = rdi;
-        sigset_t* set = (sigset_t*)rsi;
-        sigset_t* oldset = (sigset_t*)rdx;
+        u64* set = (u64*)rsi;
+        u64* oldset = (u64*)rdx;
 
+        u64 old_set = state->signal_mask;
+        result = 0;
         if (set) {
-            for (int i = 1; i <= 64; i++) {
-                int res = sigismember(set, i);
-                if (res == 1) {
-                    if (how == SIG_BLOCK) {
-                        state->SetSignalMask(i, true);
-                    } else if (how == SIG_UNBLOCK) {
-                        state->SetSignalMask(i, false);
-                    } else if (how == SIG_SETMASK) {
-                        state->SetSignalMask(i, true);
-                    }
-                } else if (res == 0) {
-                    if (how == SIG_SETMASK) {
-                        state->SetSignalMask(i, false);
-                    }
-                }
+            if (how == SIG_BLOCK) {
+                state->signal_mask |= *set;
+            } else if (how == SIG_UNBLOCK) {
+                state->signal_mask &= ~(*set);
+            } else if (how == SIG_SETMASK) {
+                state->signal_mask = *set;
+            } else {
+                result = -EINVAL;
+                break;
             }
+
+            u64 host_mask = state->signal_mask & Signals::hostSignalMask();
+            syscall(SYS_rt_sigprocmask, SIG_SETMASK, &host_mask, nullptr, sizeof(u64));
         }
 
         if (oldset) {
-            sigemptyset(oldset);
-            for (int i = 1; i <= 64; i++) {
-                if (state->GetSignalMask(i)) {
-                    sigaddset(oldset, i);
-                }
-            }
-        }
-
-        if (how != SIG_BLOCK && how != SIG_UNBLOCK && how != SIG_SETMASK) {
-            result = -EINVAL;
-        } else {
-            result = 0;
+            *oldset = old_set;
         }
         break;
     }
     default: {
+        result = -ENOSYS;
         ERROR("Unimplemented syscall %s (%016lx)", print_syscall_name(syscall_number), syscall_number);
         break;
     }
-    }
-
-    if (result == -1) {
-        result = -errno;
     }
 
     state->SetGpr(X86_REF_RAX, result);

@@ -1,5 +1,6 @@
 #include <chrono>
 #include <csignal>
+#include <mutex>
 #include <vector>
 #include <elf.h>
 #include <fmt/base.h>
@@ -8,7 +9,6 @@
 #include <sys/random.h>
 #include "felix86/emulator.hpp"
 #include "felix86/hle/cpuid.hpp"
-#include "felix86/hle/rdtsc.hpp"
 #include "felix86/hle/syscall.hpp"
 
 extern char** environ;
@@ -57,7 +57,6 @@ void Emulator::Run() {
     VERBOSE("Entering main thread :)");
 
     ThreadState* state = &thread_states.back();
-    g_thread_state = state;
     StartThread(state);
 
     VERBOSE("Bye-bye main thread :(");
@@ -196,34 +195,63 @@ void Emulator::setupMainStack(ThreadState* state) {
     state->SetGpr(X86_REF_RSP, rsp);
 }
 
-void* Emulator::compileFunction(u64 rip) {
-    return recompiler.compile(rip);
+ThreadState* Emulator::GetThreadState() {
+    auto tid = gettid();
+    ThreadState* current_state = nullptr;
+    for (ThreadState& state : g_emulator->GetStates()) {
+        if (tid == state.tid) {
+            if (!current_state) {
+                current_state = &state;
+                // Continue scanning to make sure we don't have a duplicate
+            } else {
+                ERROR("Multiple ThreadState objects found for tid %d", tid);
+            }
+        }
+    }
+
+    if (!current_state) {
+        ERROR("No ThreadState object found for tid %d", tid);
+        return nullptr;
+    } else {
+        return current_state;
+    }
 }
 
-void* Emulator::CompileNext(Emulator* emulator, ThreadState* thread_state) {
+void* Emulator::CompileNext(ThreadState* thread_state) {
+    // Check if there's any pending signals. If there are, raise them.
+    // SURELY it won't be the case a synchronous signal would happen in our signal disabled jit regions, right?
+    // This should be safe to access without protection, as jitted code is the only one that can modify this
+    while (!thread_state->pending_signals.empty()) {
+        int signal = thread_state->pending_signals.front();
+        thread_state->pending_signals.pop();
+        raise(signal);
+    }
+
+    // Block signals so we don't get a signal during the compilation period, this would lead to deadlock
+    // since the signal handler needs to also compile code.
+    static sigset_t mask_empty, mask_full;
+    static bool init = false;
+    if (!init) {
+        sigemptyset(&mask_empty);
+        sigfillset(&mask_full);
+        init = true;
+    }
+
+    sigprocmask(SIG_SETMASK, &mask_full, NULL);
+
     std::chrono::high_resolution_clock::time_point start;
     if (g_profile_compilation) {
         g_dispatcher_exit_count++;
         start = std::chrono::high_resolution_clock::now();
     }
 
-    // Block signals so we don't get a signal during the compilation period, this would lead to deadlock
-    // since the signal handler needs to also compile code.
-    // TODO: if this proves to be slow, we might need to defer signals like FEX does
-    sigset_t mask;
-    sigfillset(&mask);
-    sigprocmask(SIG_SETMASK, &mask, NULL);
-
     void* volatile function;
     {
         // Mutex needs to be unlocked before the thread is dispatched
         // Volatile so we can access it in gdb if needed
-        std::lock_guard<std::mutex> lock(emulator->compilation_mutex);
-        function = emulator->recompiler.compile(thread_state->GetRip());
+        auto lock = g_emulator->Lock();
+        function = g_emulator->recompiler.compile(thread_state->GetRip());
     }
-
-    sigemptyset(&mask);
-    sigprocmask(SIG_SETMASK, &mask, NULL);
 
     if (g_profile_compilation) {
         std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
@@ -238,27 +266,77 @@ void* Emulator::CompileNext(Emulator* emulator, ThreadState* thread_state) {
         address = address - g_executable_start;
     }
 
-    VERBOSE("Jumping to function %s@0x%lx (%lx), located at %p", MemoryMetadata::GetRegionName(thread_state->GetRip()).c_str(),
-            MemoryMetadata::GetOffset(thread_state->GetRip()), thread_state->GetRip(), function);
+    VERBOSE("State %p is jumping to function %s@0x%lx (%lx), located at %p", thread_state,
+            MemoryMetadata::GetRegionName(thread_state->GetRip()).c_str(), MemoryMetadata::GetOffset(thread_state->GetRip()), thread_state->GetRip(),
+            function);
+
+    sigprocmask(SIG_SETMASK, &mask_empty, NULL);
 
     return function;
 }
 
-ThreadState* Emulator::CreateThreadState() {
+ThreadState* Emulator::CreateThreadState(ThreadState* copy_state) {
+    auto lock = Lock();
     thread_states.push_back(ThreadState{});
 
     ThreadState* thread_state = &thread_states.back();
+
+    if (copy_state) {
+        for (size_t i = 0; i < sizeof(thread_state->gprs) / sizeof(thread_state->gprs[0]); i++) {
+            thread_state->gprs[i] = copy_state->gprs[i];
+        }
+
+        for (size_t i = 0; i < sizeof(thread_state->xmm) / sizeof(thread_state->xmm[0]); i++) {
+            thread_state->xmm[i] = copy_state->xmm[i];
+        }
+
+        for (size_t i = 0; i < sizeof(thread_state->fp) / sizeof(thread_state->fp[0]); i++) {
+            thread_state->fp[i] = copy_state->fp[i];
+        }
+
+        thread_state->cf = copy_state->cf;
+        thread_state->zf = copy_state->zf;
+        thread_state->sf = copy_state->sf;
+        thread_state->of = copy_state->of;
+        thread_state->pf = copy_state->pf;
+        thread_state->af = copy_state->af;
+
+        thread_state->fsbase = copy_state->fsbase;
+        thread_state->gsbase = copy_state->gsbase;
+
+        thread_state->alt_stack = copy_state->alt_stack;
+    }
+
     thread_state->syscall_handler = (u64)felix86_syscall;
     thread_state->cpuid_handler = (u64)felix86_cpuid;
-    thread_state->rdtsc_handler = (u64)felix86_rdtsc;
     thread_state->compile_next_handler = (u64)recompiler.getCompileNext();
     thread_state->div128_handler = (u64)felix86_div128;
     thread_state->divu128_handler = (u64)felix86_divu128;
-    std::fill(thread_state->masked_signals.begin(), thread_state->masked_signals.end(), false);
+
     return thread_state;
 }
 
+void Emulator::RemoveState(ThreadState* state) {
+    auto lock = Lock();
+    for (auto it = thread_states.begin(); it != thread_states.end(); it++) {
+        if (&*it == state) {
+            thread_states.erase(it);
+            return;
+        }
+    }
+    ERROR("State not found");
+}
+
 void Emulator::StartThread(ThreadState* state) {
+    state->tid = gettid();
     recompiler.enterDispatcher(state);
     VERBOSE("Thread exited with reason %d\n", state->exit_reason);
+}
+
+std::unique_lock<std::mutex> Emulator::Lock() {
+    return std::unique_lock<std::mutex>(mutex);
+}
+
+void Emulator::CleanExit(ThreadState* state) {
+    recompiler.exitDispatcher(state);
 }

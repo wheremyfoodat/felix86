@@ -5,6 +5,7 @@
 #include "felix86/common/debug.hpp"
 #include "felix86/common/exit.hpp"
 #include "felix86/common/global.hpp"
+#include "felix86/common/utility.hpp"
 
 #define ANSI_COLOR_RED "\x1b[31m"
 #define ANSI_COLOR_GREEN "\x1b[32m"
@@ -18,30 +19,24 @@
     do {                                                                                                                                             \
         if (!g_quiet) {                                                                                                                              \
             dprintf(g_output_fd, ANSI_COLOR_CYAN format ANSI_COLOR_RESET "\n", ##__VA_ARGS__);                                                       \
-            fsync(g_output_fd);                                                                                                                      \
         }                                                                                                                                            \
     } while (0)
 #define ERROR(format, ...)                                                                                                                           \
     do {                                                                                                                                             \
         dprintf(g_output_fd, ANSI_COLOR_RED "%s:%d " format ANSI_COLOR_RESET "\n", __FILE__, __LINE__, ##__VA_ARGS__);                               \
-        if (g_thread_state)                                                                                                                          \
-            dprintf(g_output_fd, ANSI_COLOR_RED "PC: %016lx - %s@0x%lx\n" ANSI_COLOR_RESET, current_rip(),                                           \
-                    MemoryMetadata::GetRegionName(current_rip()).c_str(), MemoryMetadata::GetOffset(current_rip()));                                 \
-        fsync(g_output_fd);                                                                                                                          \
+        dump_states();                                                                                                                               \
         felix86_exit(1);                                                                                                                             \
     } while (0)
 #define WARN(format, ...)                                                                                                                            \
     do {                                                                                                                                             \
         if (!g_quiet) {                                                                                                                              \
             dprintf(g_output_fd, ANSI_COLOR_YELLOW format ANSI_COLOR_RESET "\n", ##__VA_ARGS__);                                                     \
-            fsync(g_output_fd);                                                                                                                      \
         }                                                                                                                                            \
     } while (0)
 #define VERBOSE(format, ...)                                                                                                                         \
     do {                                                                                                                                             \
         if (g_verbose && !g_quiet) {                                                                                                                 \
             dprintf(g_output_fd, ANSI_COLOR_MAGENTA "%s:%d " format ANSI_COLOR_RESET "\n", __FILE__, __LINE__, ##__VA_ARGS__);                       \
-            fsync(g_output_fd);                                                                                                                      \
         }                                                                                                                                            \
     } while (0)
 
@@ -49,7 +44,6 @@
     do {                                                                                                                                             \
         if (g_strace && !g_quiet) {                                                                                                                  \
             dprintf(g_output_fd, ANSI_COLOR_BLUE format ANSI_COLOR_RESET "\n", ##__VA_ARGS__);                                                       \
-            fsync(g_output_fd);                                                                                                                      \
         }                                                                                                                                            \
     } while (0)
 
@@ -57,14 +51,12 @@
     do {                                                                                                                                             \
         if (!g_quiet) {                                                                                                                              \
             dprintf(g_output_fd, ANSI_COLOR_GREEN format ANSI_COLOR_RESET "\n", ##__VA_ARGS__);                                                      \
-            fsync(g_output_fd);                                                                                                                      \
         }                                                                                                                                            \
     } while (0)
 
 #define PLAIN(format, ...)                                                                                                                           \
     do {                                                                                                                                             \
         dprintf(g_output_fd, format "\n", ##__VA_ARGS__);                                                                                            \
-        fsync(g_output_fd);                                                                                                                          \
     } while (0)
 
 #define UNREACHABLE() ERROR("Unreachable code hit")

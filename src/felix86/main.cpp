@@ -255,18 +255,15 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    std::thread main_thread([argc, &config]() {
-        pthread_setname_np(pthread_self(), "MainThread");
+    pthread_setname_np(pthread_self(), "MainThread");
 
-        Emulator emulator(config);
+    Emulator emulator(config);
 
-        if (argc == 1) {
-            ERROR("Unimplemented");
-        } else {
-            emulator.Run();
-        }
-    });
-    main_thread.join();
+    if (argc == 1) {
+        ERROR("Unimplemented");
+    } else {
+        emulator.Run();
+    }
 
     felix86_exit(0);
 }

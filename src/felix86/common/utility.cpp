@@ -1,4 +1,5 @@
 #include "felix86/common/x86.hpp"
+#include "felix86/emulator.hpp"
 #include "fmt/format.h"
 #include "utility.hpp"
 
@@ -69,10 +70,6 @@ u64 sext_if_64(u64 value, u8 size_e) {
         ERROR("Invalid immediate size");
         return 0;
     }
-}
-
-u64 current_rip() {
-    return g_thread_state->rip;
 }
 
 // If you don't flush the cache the code will randomly SIGILL
@@ -158,5 +155,19 @@ void felix86_packuswb(u8* dst, u8* src) {
             result = (u8)value;
         }
         dst[i] = result;
+    }
+}
+
+void dump_states() {
+    if (!g_emulator) {
+        return;
+    }
+
+    auto& states = g_emulator->GetStates();
+    int i = 0;
+    for (auto& state : states) {
+        dprintf(g_output_fd, ANSI_COLOR_RED "State %d: PC: %016lx - %s@0x%lx\n" ANSI_COLOR_RESET, i, state.GetRip(),
+                MemoryMetadata::GetRegionName(state.GetRip()).c_str(), MemoryMetadata::GetOffset(state.GetRip()));
+        i++;
     }
 }
