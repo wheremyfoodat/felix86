@@ -1,10 +1,12 @@
 #include <vector>
 #include <elf.h>
+#include <linux/prctl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/personality.h>
+#include <sys/prctl.h>
 #include <sys/resource.h>
 #include "felix86/common/debug.hpp"
 #include "felix86/common/elf.hpp"
@@ -208,6 +210,10 @@ void Elf::Load(const std::filesystem::path& path) {
                 }
             }
 
+            static int seg_name = 0;
+            std::string name = "segment" + std::to_string(seg_name++);
+            prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, addr, segment_size, name.c_str());
+
             u8 prot = 0;
             if (phdr.p_flags & PF_R) {
                 prot |= PROT_READ;
@@ -250,6 +256,7 @@ void Elf::Load(const std::filesystem::path& path) {
                     if (bss == MAP_FAILED) {
                         ERROR("Failed to allocate memory for BSS in file %s", path.c_str());
                     }
+                    prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, bss, bss_page_end - bss_page_start, "bss");
 
                     VERBOSE("BSS segment at %p-%p", (void*)bss_page_start, (void*)bss_page_end);
 
@@ -267,11 +274,12 @@ void Elf::Load(const std::filesystem::path& path) {
     }
 
     if (!is_interpreter) {
-        const u64 brk_size = 8 * 1024 * 1024;
+        const u64 brk_size = 64 * 1024 * 1024;
         brk_base = (u8*)mmap((void*)PAGE_ALIGN(highest_vaddr), brk_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (brk_base == MAP_FAILED) {
             ERROR("Failed to allocate memory for brk in file %s", path.c_str());
         }
+        prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, brk_base, brk_size, "brk");
         VERBOSE("BRK base at %p", brk_base);
 
         g_executable_start = base_address + lowest_vaddr;

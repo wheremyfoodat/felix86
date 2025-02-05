@@ -5,9 +5,10 @@
 
 using VectorState = std::array<XmmReg, 32>;
 
-bool is_in_jit_code(uintptr_t ptr) {
-    uintptr_t start = g_emulator->GetAssembler().GetCodeBuffer().GetOffsetAddress(0);
-    uintptr_t end = g_emulator->GetAssembler().GetCodeBuffer().GetCursorAddress();
+bool is_in_jit_code(ThreadState* state, uintptr_t ptr) {
+    CodeBuffer& buffer = state->recompiler->getAssembler().GetCodeBuffer();
+    uintptr_t start = buffer.GetOffsetAddress(0);
+    uintptr_t end = buffer.GetCursorAddress();
     return ptr >= start && ptr < end;
 }
 
@@ -241,7 +242,7 @@ void setup(BlockMetadata* current_block, u64 rip, ThreadState* state, sigset_t n
         frame->uc.uc_stack.ss_flags = 0;
     }
 
-    sigset_t* old_mask = (sigset_t*)&state->signal_mask;
+    sigset_t* old_mask = &state->signal_mask;
     frame->uc.uc_sigmask = *old_mask;
 
     if (in_jit_code) {
@@ -293,8 +294,8 @@ void setup(BlockMetadata* current_block, u64 rip, ThreadState* state, sigset_t n
     state->SetGpr(X86_REF_RDX, (u64)&frame->uc);   // set the ucontext pointer
 }
 
-BlockMetadata* get_block_metadata(u64 host_pc) {
-    auto& map = g_emulator->GetRecompiler().getBlockMap();
+BlockMetadata* get_block_metadata(ThreadState* state, u64 host_pc) {
+    auto& map = state->recompiler->getBlockMap();
 
     for (auto& span : map) {
         if (host_pc >= (u64)span.second.address && host_pc < (u64)span.second.address_end) {
@@ -384,8 +385,9 @@ void Signals::sigreturn(ThreadState* state) {
     state->SetXmmReg(X86_REF_XMM15, frame->uc.uc_mcontext.fpregs->xmm[15]);
 
     // Restore signal mask to what it was supposed to be outside of signal handler
-    u64 host_mask = state->signal_mask & Signals::hostSignalMask();
-    syscall(SYS_rt_sigprocmask, SIG_SETMASK, &host_mask, nullptr, sizeof(u64));
+    sigset_t host_mask;
+    sigandset(&host_mask, &state->signal_mask, Signals::hostSignalMask());
+    pthread_sigmask(SIG_SETMASK, &host_mask, nullptr);
 }
 
 struct riscv_v_state {
@@ -397,18 +399,31 @@ struct riscv_v_state {
     void* datap;
 };
 
-std::optional<VectorState> get_vector_state(void* ctx) {
+#if defined(__x86_64__)
+void signal_handler(int sig, siginfo_t* info, void* ctx) {
+    UNREACHABLE();
+}
+#elif defined(__riscv)
+riscv_v_state* get_riscv_vector_state(void* ctx) {
     ucontext_t* context = (ucontext_t*)ctx;
     mcontext_t* mcontext = &context->uc_mcontext;
     unsigned int* reserved = mcontext->__fpregs.__q.__glibc_reserved;
 
     // Normally the glibc should have better support for this, but this will be fine for now
     if (reserved[1] != 0x53465457) { // RISC-V V extension magic number that indicates the presence of vector state
-        return std::nullopt;
+        return nullptr;
     }
 
     void* after_fpregs = reserved + 3;
     riscv_v_state* v_state = (riscv_v_state*)after_fpregs;
+    return v_state;
+}
+
+std::optional<VectorState> get_vector_state(void* ctx) {
+    riscv_v_state* v_state = get_riscv_vector_state(ctx);
+    if (!v_state) {
+        return std::nullopt;
+    }
     u8* datap = (u8*)v_state->datap;
 
     std::array<XmmReg, 32> xmm_regs;
@@ -420,52 +435,73 @@ std::optional<VectorState> get_vector_state(void* ctx) {
     return xmm_regs;
 }
 
-// #if defined(__x86_64__)
-// void signal_handler(int sig, siginfo_t* info, void* ctx) {
-//     UNREACHABLE();
-// }
-// #elif defined(__riscv)
 void signal_handler(int sig, siginfo_t* info, void* ctx) {
     ucontext_t* context = (ucontext_t*)ctx;
     uintptr_t pc = context->uc_mcontext.__gregs[REG_PC];
 
-    Recompiler& recompiler = g_emulator->GetRecompiler();
+    ThreadState* current_state = ThreadState::Get();
+    ASSERT(current_state);
+    Recompiler& recompiler = *current_state->recompiler;
 
     switch (sig) {
     case SIGBUS: {
         switch (info->si_code) {
         case BUS_ADRALN: {
-            auto lock = g_emulator->Lock();
-            ASSERT(is_in_jit_code(pc));
+            ASSERT(is_in_jit_code(current_state, pc));
+            // TODO: assert it's a vector load/store
+            u32 instruction = *(u32*)pc; // Read the faulting instruction
+
             // Go back one instruction, we are going to overwrite it with vsetivli.
             // It's guaranteed to be either a vsetivli or a nop.
             context->uc_mcontext.__gregs[REG_PC] = pc - 4;
 
             Assembler& as = recompiler.getAssembler();
-            // TODO: instead of asserting, we should check and fallback to guest signal handler if not found
-            VectorMemoryAccess vma = recompiler.getVectorMemoryAccess(pc - 4);
+            riscv_v_state* vstate = get_riscv_vector_state(ctx);
+
+            SEW sew = (SEW)(vstate->vtype >> 3);
+            u64 len = vstate->vl;
+
+            // when are we gonna get a proper decoder...
+            biscuit::Vec vd = biscuit::Vec((instruction >> 7) & 0b11111);
+            biscuit::GPR address = biscuit::GPR((instruction >> 15) & 0b11111);
+            bool is_load = !((instruction >> 5) & 1);
+
+            // TODO: normally this needs to unlink the block, then modify, then relink to be safe
+            void* start = as.GetCursorPointer();
 
             ptrdiff_t cursor = as.GetCodeBuffer().GetCursorOffset();
             as.RewindBuffer(pc - as.GetCodeBuffer().GetOffsetAddress(0) - 4); // go to vsetivli
-            switch (vma.sew) {
+            u32 vsetivli = *(u32*)(pc - 4);
+            ASSERT(((vsetivli & 0b1111111) == 0b1010111) || vsetivli == 0b0010011); // vsetivli or nop
+            switch (sew) {
             case SEW::E64: {
-                as.VSETIVLI(x0, vma.len * 8, SEW::E8);
-                if (vma.load) {
-                    as.VLE8(vma.dest, vma.address);
+                as.VSETIVLI(x0, len * 8, SEW::E8);
+                if (is_load) {
+                    as.VLE8(vd, address);
                 } else {
-                    as.VSE8(vma.dest, vma.address);
+                    as.VSE8(vd, address);
                 }
-                as.VSETIVLI(x0, vma.len, vma.sew);
+                as.VSETIVLI(x0, len, sew); // go back to old len + sew
                 break;
             }
             case SEW::E32: {
-                as.VSETIVLI(x0, vma.len * 4, SEW::E8);
-                if (vma.load) {
-                    as.VLE8(vma.dest, vma.address);
+                as.VSETIVLI(x0, len * 4, SEW::E8);
+                if (is_load) {
+                    as.VLE8(vd, address);
                 } else {
-                    as.VSE8(vma.dest, vma.address);
+                    as.VSE8(vd, address);
                 }
-                as.VSETIVLI(x0, vma.len, vma.sew);
+                as.VSETIVLI(x0, len, sew); // go back to old len + sew
+                break;
+            }
+            case SEW::E16: {
+                as.VSETIVLI(x0, len * 2, SEW::E8);
+                if (is_load) {
+                    as.VLE8(vd, address);
+                } else {
+                    as.VSE8(vd, address);
+                }
+                as.VSETIVLI(x0, len, sew); // go back to old len + sew
                 break;
             }
             default: {
@@ -473,8 +509,10 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
                 break;
             }
             }
+            void* end = as.GetCursorPointer();
+
             as.AdvanceBuffer(cursor);
-            flush_icache();
+            flush_icache(start, end);
             break;
         }
         default: {
@@ -484,9 +522,8 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
         break;
     }
     case SIGILL: {
-        auto lock = g_emulator->Lock();
         bool found = false;
-        if (is_in_jit_code(pc)) {
+        if (is_in_jit_code(current_state, pc)) {
             // Search to see if it is our breakpoint
             // Note the we don't use EBREAK as gdb refuses to continue when it hits that if it doesn't have a breakpoint,
             // and also refuses to call our signal handler.
@@ -508,14 +545,15 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
             }
         }
 
+        if (found) {
+            return;
+        }
+
         goto check_guest_signal;
     }
     default: {
     check_guest_signal:
-        auto lock = g_emulator->Lock();
-
         // First we need to find the current ThreadState object
-        ThreadState* current_state = g_emulator->GetThreadState();
         SignalHandlerTable& handlers = *current_state->signal_handlers;
         RegisteredSignal& handler = handlers[sig - 1];
         if (!handler.func) {
@@ -523,7 +561,9 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
         }
 
         ASSERT(handler.func != SIG_IGN); // TODO: what does that even mean?
-        VERBOSE("Handling signal %d, handler: %p", sig, handler.func);
+        if (g_strace) {
+            STRACE("------- Guest signal %s -------", strsignal(sig));
+        }
 
         // TODO: this could cause issues if it never jumps back to the dispatcher
         if (current_state->signals_disabled) {
@@ -542,7 +582,7 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
             return;
         }
 
-        bool jit_code = is_in_jit_code(pc);
+        bool jit_code = is_in_jit_code(current_state, pc);
         auto vecs = get_vector_state(ctx);
         bool use_altstack = handler.flags & SA_ONSTACK;
 
@@ -555,8 +595,12 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
             sigaddset(&mask_during_signal, sig);
         }
 
-        BlockMetadata* metadata = get_block_metadata(pc);
-        u64 actual_rip = get_actual_rip(*metadata, pc);
+        BlockMetadata* metadata = nullptr;
+        u64 actual_rip = current_state->GetRip();
+        if (jit_code) {
+            metadata = get_block_metadata(current_state, pc);
+            actual_rip = get_actual_rip(*metadata, pc);
+        }
 
         // Prepares everything necessary to run the signal handler when we return from the host signal handler.
         // The stack is switched if necessary and filled with the frame that the signal handler expects.
@@ -568,8 +612,9 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
         current_state->SetRip((u64)handler.func);
 
         // Block the signals specified in the sa_mask until the signal handler returns
-        u64 host_mask = Signals::hostSignalMask() & *(u64*)&mask_during_signal;
-        syscall(SYS_rt_sigprocmask, SIG_SETMASK, &host_mask, nullptr, sizeof(u64));
+        sigset_t new_mask;
+        sigandset(&new_mask, &mask_during_signal, Signals::hostSignalMask());
+        pthread_sigmask(SIG_BLOCK, &new_mask, nullptr);
 
         if (handler.flags & SA_RESETHAND) {
             handler.func = nullptr;
@@ -577,13 +622,13 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
 
         if (jit_code) {
             // If in jit code, make it jump to the dispatcher immediately. If it's not in jit code, just let it naturally go to the dispatcher.
-            context->uc_mcontext.__gregs[REG_PC] = (u64)g_emulator->GetRecompiler().getCompileNext();
+            context->uc_mcontext.__gregs[REG_PC] = (u64)recompiler.getCompileNext();
         }
         break;
     }
     }
 }
-// #endif
+#endif
 
 void Signals::initialize() {
     struct sigaction sa;
@@ -591,23 +636,27 @@ void Signals::initialize() {
     sa.sa_flags = SA_SIGINFO;
     sigemptyset(&sa.sa_mask);
 
-    if (!g_testing) { // we don't need to install guest handlers for tests
-        for (int i = 1; i <= 64; i++) {
-            sigaction(i, &sa, nullptr);
-        }
-    } else {
-        // Only install the signal handler for SIGILL and SIGBUS
-        sigaction(SIGILL, &sa, nullptr);
-        sigaction(SIGBUS, &sa, nullptr);
-    }
+    sigaction(SIGILL, &sa, nullptr);
+    sigaction(SIGBUS, &sa, nullptr);
 }
 
 void Signals::registerSignalHandler(ThreadState* state, int sig, void* handler, sigset_t mask, int flags) {
     ASSERT(sig >= 1 && sig <= 64);
+    // TODO: atomic!!
     (*state->signal_handlers)[sig - 1] = {handler, mask, flags};
+
+    // Start capturing at the first register of a signal handler and don't stop capturing even if it is disabled
+    if (handler) {
+        struct sigaction sa;
+        sa.sa_sigaction = signal_handler;
+        sa.sa_flags = SA_SIGINFO;
+        sigemptyset(&sa.sa_mask);
+        sigaction(sig, &sa, nullptr);
+    }
 }
 
 RegisteredSignal Signals::getSignalHandler(ThreadState* state, int sig) {
     ASSERT(sig >= 1 && sig <= 64);
+    // TODO: atomic!!
     return (*state->signal_handlers)[sig - 1];
 }

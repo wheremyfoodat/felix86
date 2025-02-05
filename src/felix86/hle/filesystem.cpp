@@ -49,8 +49,9 @@ bool Filesystem::LoadRootFS(const std::filesystem::path& path) {
         }
     }
 
-    std::unique_lock<std::mutex> lock(cwd_mutex);
+    FELIX86_LOCK;
     cwd_path = rootfs_path;
+    FELIX86_UNLOCK;
 
     return true;
 }
@@ -74,11 +75,16 @@ std::optional<std::filesystem::path> Filesystem::AtPath(int dirfd, const char* p
         return std::filesystem::path(pathname);
     }
 
+    if (std::string(pathname) == proc_self_exe) { // TODO: remove this, AtPath should handle this
+        return executable_path;                   // TODO: remove the rootfs from this path
+    }
+
     std::filesystem::path path = pathname;
     if (path.is_relative()) {
         if (dirfd == AT_FDCWD) {
-            std::unique_lock<std::mutex> lock(cwd_mutex);
+            FELIX86_LOCK;
             path = cwd_path / path;
+            FELIX86_UNLOCK;
         } else {
             struct stat dirfd_stat;
             fstat(dirfd, &dirfd_stat);
@@ -136,10 +142,10 @@ std::optional<std::filesystem::path> Filesystem::AtPath(int dirfd, const char* p
 }
 
 ssize_t Filesystem::ReadLinkAt(int dirfd, const char* pathname, char* buf, u32 bufsiz) {
-    if (std::string(pathname) == proc_self_exe) {
+    if (std::string(pathname) == proc_self_exe) { // TODO: remove this, AtPath should handle this
         std::string executable_path_string = executable_path.string();
         // readlink does not append a null terminator
-        size_t written_size = std::min(executable_path_string.size(), (size_t)bufsiz);
+        size_t written_size = std::min(executable_path_string.size() - 1, (size_t)bufsiz);
         memcpy(buf, executable_path_string.c_str(), written_size);
         return written_size;
     }
@@ -209,11 +215,12 @@ bool Filesystem::validatePath(const std::filesystem::path& path) {
 }
 
 int Filesystem::Chdir(const char* path) {
-    std::unique_lock<std::mutex> lock(cwd_mutex);
     std::filesystem::path new_cwd = path;
     new_cwd = new_cwd.lexically_normal();
     if (new_cwd.is_relative()) {
+        FELIX86_LOCK;
         new_cwd = cwd_path / new_cwd;
+        FELIX86_UNLOCK;
     } else {
         new_cwd = rootfs_path / new_cwd.relative_path();
     }
@@ -222,13 +229,16 @@ int Filesystem::Chdir(const char* path) {
         return -ENOENT;
     }
 
+    FELIX86_LOCK;
     cwd_path = new_cwd;
+    FELIX86_UNLOCK;
     return 0;
 }
 
 int Filesystem::GetCwd(char* buf, u32 bufsiz) {
-    std::unique_lock<std::mutex> lock(cwd_mutex);
+    FELIX86_LOCK;
     std::string cwd_string = cwd_path.string();
+    FELIX86_UNLOCK;
 
     if (cwd_string.size() < rootfs_path_string.size()) {
         ERROR("cwd is not part of the rootfs");

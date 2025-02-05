@@ -19,9 +19,11 @@ struct Filesystem {
             return false;
         }
 
-        if (!validatePath(path)) {
-            ERROR("Invalid executable path %s", path.c_str());
-            return false;
+        if (!g_dont_validate_exe_path) {
+            if (!validatePath(path)) {
+                ERROR("Executable path %s not inside rootfs", path.c_str());
+                return false;
+            }
         }
 
         executable_path = path;
@@ -102,7 +104,6 @@ struct Filesystem {
 private:
     bool validatePath(const std::filesystem::path& path);
 
-    std::mutex cwd_mutex;
     std::filesystem::path rootfs_path;
     std::string rootfs_path_string;
     std::filesystem::path executable_path;

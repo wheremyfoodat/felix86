@@ -5,20 +5,27 @@
 #include "biscuit/cpuinfo.hpp"
 #include "felix86/common/global.hpp"
 #include "felix86/common/log.hpp"
-#include "felix86/common/x86.hpp"
+#include "felix86/common/state.hpp"
 #include "felix86/emulator.hpp"
 #include "fmt/format.h"
 #include "version.hpp"
 
+bool g_paranoid = false;
 bool g_verbose = false;
 bool g_quiet = false;
 bool g_testing = false;
 bool g_strace = false;
+bool g_dont_link = false;
 bool g_extensions_manually_specified = false;
-bool g_profile_compilation = false;
+bool g_dont_validate_exe_path = false;
+bool g_calltrace = false;
+u64 g_current_brk = 0;
+sem_t* g_semaphore = nullptr;
 u64 g_dispatcher_exit_count = 0;
+std::list<ThreadState*> g_thread_states{};
 std::unordered_map<u64, std::vector<u64>> g_breakpoints{};
 std::chrono::nanoseconds g_compilation_total_time = std::chrono::nanoseconds(0);
+pthread_key_t g_thread_state_key = -1;
 
 int g_output_fd = 1;
 std::filesystem::path g_rootfs_path{};
@@ -127,15 +134,16 @@ void initialize_globals() {
         }
     }
 
-    const char* profile_compilation_env = getenv("FELIX86_PROFILE_COMPILATION");
-    if (is_truthy(profile_compilation_env)) {
-        g_profile_compilation = true;
-        environment += "\nFELIX86_PROFILE_COMPILATION";
+    const char* calltrace_env = getenv("FELIX86_CALLTRACE");
+    if (is_truthy(calltrace_env)) {
+        g_calltrace = true;
+        environment += "\nFELIX86_CALLTRACE";
+    }
 
-        std::atexit([]() {
-            printf("Total compilation time: %ldms\n", g_compilation_total_time.count() / 1000000);
-            printf("Total dispatcher exits: %ld\n", g_dispatcher_exit_count);
-        });
+    const char* paranoid_env = getenv("FELIX86_PARANOID");
+    if (is_truthy(paranoid_env)) {
+        g_paranoid = true;
+        environment += "\nFELIX86_PARANOID";
     }
 
     const char* executable_base = getenv("FELIX86_EXECUTABLE_BASE");
@@ -150,6 +158,12 @@ void initialize_globals() {
         environment += "\nFELIX86_INTERPRETER_BASE=" + fmt::format("{:016x}", g_interpreter_base_hint);
     }
 
+    const char* dont_link = getenv("FELIX86_DONT_LINK");
+    if (is_truthy(dont_link)) {
+        g_dont_link = true;
+        environment += "\nFELIX86_DONT_LINK";
+    }
+
     const char* log_file = getenv("FELIX86_LOG_FILE");
     if (log_file) {
         int fd = open(log_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -161,6 +175,12 @@ void initialize_globals() {
         }
     }
 
+    const char* dont_validate_exe_path = getenv("FELIX86_DONT_VALIDATE_EXE_PATH");
+    if (is_truthy(dont_validate_exe_path)) {
+        g_dont_validate_exe_path = true;
+        environment += "\nFELIX86_DONT_VALIDATE_EXE_PATH";
+    }
+
     const char* env_file = getenv("FELIX86_ENV_FILE");
     if (env_file) {
         // Handled in main
@@ -170,6 +190,8 @@ void initialize_globals() {
     if (!g_quiet && !environment.empty()) {
         LOG("Environment:%s", environment.c_str());
     }
+
+    ThreadState::InitializeKey();
 }
 
 void initialize_extensions() {
@@ -185,6 +207,7 @@ void initialize_extensions() {
         Extensions::Zacas = cpuinfo.Has(RISCVExtension::Zacas);
         Extensions::Zicond = cpuinfo.Has(RISCVExtension::Zicond);
         Extensions::Zfa = cpuinfo.Has(RISCVExtension::Zfa);
+        Extensions::Zvbb = cpuinfo.Has(RISCVExtension::Zvbb);
     }
 
 #ifdef __riscv
@@ -251,4 +274,22 @@ bool parse_extensions(const char* arg) {
     }
 
     return true;
+}
+
+// Needs to be reopened on new processes, the very first time it will be null though
+void initialize_semaphore() {
+    if (!g_semaphore) {
+        g_semaphore = sem_open("/felix86_semaphore", O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP, 1);
+    } else {
+        g_semaphore = sem_open("/felix86_semaphore", 0);
+    }
+
+    if (g_semaphore == SEM_FAILED) {
+        ERROR("Failed to create semaphore: %s", strerror(errno));
+        exit(1);
+    }
+}
+
+void unlink_semaphore() {
+    sem_unlink("/felix86_semaphore");
 }

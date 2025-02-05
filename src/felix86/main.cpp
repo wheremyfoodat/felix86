@@ -257,6 +257,9 @@ int main(int argc, char* argv[]) {
 
     pthread_setname_np(pthread_self(), "MainThread");
 
+    unlink_semaphore(); // in case it was not closed properly last time
+    initialize_semaphore();
+
     Emulator emulator(config);
 
     if (argc == 1) {
@@ -264,6 +267,8 @@ int main(int argc, char* argv[]) {
     } else {
         emulator.Run();
     }
+
+    unlink_semaphore();
 
     felix86_exit(0);
 }

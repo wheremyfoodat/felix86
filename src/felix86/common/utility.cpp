@@ -1,7 +1,11 @@
-#include "felix86/common/x86.hpp"
+#include "felix86/common/state.hpp"
 #include "felix86/emulator.hpp"
 #include "fmt/format.h"
 #include "utility.hpp"
+
+#ifdef __riscv
+#include <sys/cachectl.h>
+#endif
 
 namespace {
 std::string GetBlockName(u32 name) {
@@ -73,13 +77,10 @@ u64 sext_if_64(u64 value, u8 size_e) {
 }
 
 // If you don't flush the cache the code will randomly SIGILL
-void flush_icache() {
+void flush_icache(void* start, void* end) {
 #if defined(__riscv)
-    asm volatile("fence.i" ::: "memory");
-#elif defined(__aarch64__)
-#pragma message("Don't forget to implement me")
-#elif defined(__x86_64__)
-    // No need to flush the cache on x86
+    // TODO: Code cache is local to each thread
+    __riscv_flush_icache(start, end, 0);
 #endif
 }
 
@@ -136,7 +137,7 @@ void felix86_packuswb(u8* dst, u8* src) {
         u8 result;
         if (value < 0) {
             result = 0;
-        } else if (value > SCHAR_MAX) {
+        } else if (value > 255) {
             result = 255;
         } else {
             result = (u8)value;
@@ -149,6 +150,66 @@ void felix86_packuswb(u8* dst, u8* src) {
         u8 result;
         if (value < 0) {
             result = 0;
+        } else if (value > 255) {
+            result = 255;
+        } else {
+            result = (u8)value;
+        }
+        dst[i] = result;
+    }
+}
+
+void felix86_packusdw(u16* dst, u8* src) {
+    i32* src32 = (i32*)src;
+    i32* dst32 = (i32*)dst;
+    for (int i = 0; i < 4; i++) {
+        i32 value = *dst32++;
+        u16 result;
+        if (value < 0) {
+            result = 0;
+        } else if (value > 0xFFFF) {
+            result = 0xFFFF;
+        } else {
+            result = (u16)value;
+        }
+        dst[i] = result;
+    }
+
+    for (int i = 4; i < 8; i++) {
+        i32 value = *src32++;
+        u16 result;
+        if (value < 0) {
+            result = 0;
+        } else if (value > 0xFFFF) {
+            result = 0xFFFF;
+        } else {
+            result = (u16)value;
+        }
+        dst[i] = result;
+    }
+}
+
+void felix86_packsswb(u8* dst, u8* src) {
+    i16* src16 = (i16*)src;
+    i16* dst16 = (i16*)dst;
+    for (int i = 0; i < 8; i++) {
+        i16 value = *dst16++;
+        u8 result;
+        if (value < -127) {
+            result = 128;
+        } else if (value > SCHAR_MAX) {
+            result = 255;
+        } else {
+            result = (u8)value;
+        }
+        dst[i] = result;
+    }
+
+    for (int i = 8; i < 16; i++) {
+        i16 value = *src16++;
+        u8 result;
+        if (value < -127) {
+            result = 128;
         } else if (value > SCHAR_MAX) {
             result = 255;
         } else {
@@ -158,16 +219,95 @@ void felix86_packuswb(u8* dst, u8* src) {
     }
 }
 
+void felix86_packssdw(u16* dst, u8* src) {
+    i32* src32 = (i32*)src;
+    i32* dst32 = (i32*)dst;
+    for (int i = 0; i < 4; i++) {
+        i32 value = *dst32++;
+        u16 result;
+        if (value < -32767) {
+            result = 0x8000;
+        } else if (value > SHRT_MAX) {
+            result = SHRT_MAX;
+        } else {
+            result = (u16)value;
+        }
+        dst[i] = result;
+    }
+
+    for (int i = 4; i < 8; i++) {
+        i32 value = *src32++;
+        u16 result;
+        if (value < -32767) {
+            result = 0x8000;
+        } else if (value > SHRT_MAX) {
+            result = SHRT_MAX;
+        } else {
+            result = (u16)value;
+        }
+        dst[i] = result;
+    }
+}
+
+void felix86_pmaddwd(i16* dst, i16* src) {
+    u32 temp[4];
+    u32 result[4];
+
+    temp[0] = dst[0] * src[0];
+    temp[1] = dst[2] * src[2];
+    temp[2] = dst[4] * src[4];
+    temp[3] = dst[6] * src[6];
+
+    result[0] = dst[1] * src[1];
+    result[1] = dst[3] * src[3];
+    result[2] = dst[5] * src[5];
+    result[3] = dst[7] * src[7];
+
+    u32* dst32 = (u32*)dst;
+    dst32[0] = temp[0] + result[0];
+    dst32[1] = temp[1] + result[1];
+    dst32[2] = temp[2] + result[2];
+    dst32[3] = temp[3] + result[3];
+}
+
 void dump_states() {
     if (!g_emulator) {
         return;
     }
 
-    auto& states = g_emulator->GetStates();
+    FELIX86_LOCK;
+    auto& states = g_thread_states;
     int i = 0;
     for (auto& state : states) {
-        dprintf(g_output_fd, ANSI_COLOR_RED "State %d: PC: %016lx - %s@0x%lx\n" ANSI_COLOR_RESET, i, state.GetRip(),
-                MemoryMetadata::GetRegionName(state.GetRip()).c_str(), MemoryMetadata::GetOffset(state.GetRip()));
+        dprintf(g_output_fd, ANSI_COLOR_RED "State %d: PC: %016lx - %s@0x%lx\n" ANSI_COLOR_RESET, i, state->GetRip(),
+                MemoryMetadata::GetRegionName(state->GetRip()).c_str(), MemoryMetadata::GetOffset(state->GetRip()));
+
+        if (g_calltrace) {
+            dprintf(g_output_fd, ANSI_COLOR_RED "--- CALLTRACE ---\n" ANSI_COLOR_RESET);
+            auto it = state->calltrace.rbegin();
+            while (it != state->calltrace.rend()) {
+                print_address(*it);
+                it++;
+            }
+        }
         i++;
     }
+    FELIX86_UNLOCK;
+}
+
+void print_address(u64 address) {
+    dprintf(g_output_fd, ANSI_COLOR_RED "%s@0x%lx (%p)\n" ANSI_COLOR_RESET, MemoryMetadata::GetRegionName(address).c_str(),
+            MemoryMetadata::GetOffset(address), (void*)address);
+}
+
+void push_calltrace(ThreadState* state) {
+    state->calltrace.push_back(state->rip);
+}
+
+void pop_calltrace(ThreadState* state) {
+    if (state->calltrace.empty()) {
+        return;
+    }
+
+    state->calltrace.pop_back();
 }

@@ -40,6 +40,7 @@ set(FELIX86_COMMON_SOURCES
     src/felix86/common/global.cpp
     src/felix86/common/log.cpp
     src/felix86/common/print.cpp
+    src/felix86/common/state.cpp
     src/felix86/common/utility.cpp
 )
 
@@ -83,6 +84,7 @@ target_link_libraries(felix86 PRIVATE felix86_core)
 if (BUILD_TESTS)
     set(FELIX86_TEST_SOURCES
         tests/common.cpp
+        tests/Binaries/binary_test_loader.cpp
         tests/FEX/fex_test_loader.cpp
         tests/FEX/primary.cpp
         tests/FEX/primary_group.cpp
@@ -103,4 +105,5 @@ if (BUILD_TESTS)
     target_compile_definitions(felix86_test PRIVATE CATCH_CONFIG_PREFIX_ALL)
     file(COPY external/FEX/ASM DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
     file(COPY tests/ASM DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+    file(COPY tests/Binaries DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 endif()

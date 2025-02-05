@@ -1,4 +1,3 @@
-#include <unordered_set>
 #include <sys/mman.h>
 #include <unistd.h>
 #include "Zydis/Disassembler.h"
@@ -103,7 +102,7 @@ void Recompiler::emitDispatcher() {
 
     as.JR(ra);
 
-    flush_icache();
+    flush_icache((void*)enter_dispatcher, as.GetCursorPointer());
 }
 
 void* Recompiler::emitSigreturnThunk() {
@@ -121,8 +120,11 @@ void* Recompiler::emitSigreturnThunk() {
 }
 
 void* Recompiler::compile(u64 rip) {
-    if (blockExists(rip)) {
-        return block_metadata[rip].address;
+    size_t remaining_size = code_cache_size - (as.GetCursorPointer() - as.GetCodeBuffer().GetOffsetPointer(0));
+    if (remaining_size < 100'000) { // less than ~100KB left, clear cache
+        WARN("Clearing cache on thread %u", gettid());
+        as.GetCodeBuffer().RewindCursor();
+        block_metadata.clear();
     }
 
     void* start = as.GetCursorPointer();
@@ -136,6 +138,14 @@ void* Recompiler::compile(u64 rip) {
     expirePendingLinks(rip);
 
     return start;
+}
+
+void* Recompiler::getCompiledBlock(u64 rip) {
+    if (blockExists(rip)) {
+        return block_metadata[rip].address;
+    }
+
+    return nullptr;
 }
 
 void Recompiler::compileSequence(u64 rip) {
@@ -196,38 +206,51 @@ void Recompiler::compileSequence(u64 rip) {
         // }
 
         // Checks that we didn't forget to emulate any flags
-        // if (mnemonic != ZYDIS_MNEMONIC_SYSCALL) {
+        // if (g_paranoid && mnemonic != ZYDIS_MNEMONIC_SYSCALL) {
         //     u32 changed = instruction.cpu_flags->modified | instruction.cpu_flags->set_0 | instruction.cpu_flags->set_1;
+        //     u32 undefined = instruction.cpu_flags->undefined;
 
-        //     if ((changed & ZYDIS_CPUFLAG_CF) && shouldEmitFlag(meta.rip, X86_REF_CF) && !getMetadata(X86_REF_CF).dirty) {
+        //     if ((changed & ZYDIS_CPUFLAG_CF) && !getMetadata(X86_REF_CF).dirty) {
         //         ERROR("Instruction %s should've modified CF", ZydisMnemonicGetString(mnemonic));
+        //     } else if (!(changed & ZYDIS_CPUFLAG_CF) && getMetadata(X86_REF_CF).dirty && !(undefined & ZYDIS_CPUFLAG_CF)) {
+        //         ERROR("Instruction %s should've not modified CF", ZydisMnemonicGetString(mnemonic));
         //     }
 
-        //     if ((changed & ZYDIS_CPUFLAG_AF) && shouldEmitFlag(meta.rip, X86_REF_AF) && !getMetadata(X86_REF_AF).dirty) {
+        //     if ((changed & ZYDIS_CPUFLAG_AF) && !getMetadata(X86_REF_AF).dirty) {
         //         ERROR("Instruction %s should've modified AF", ZydisMnemonicGetString(mnemonic));
+        //     } else if (!(changed & ZYDIS_CPUFLAG_AF) && getMetadata(X86_REF_AF).dirty && !(undefined & ZYDIS_CPUFLAG_AF)) {
+        //         ERROR("Instruction %s should've not modified AF", ZydisMnemonicGetString(mnemonic));
         //     }
 
-        //     if ((changed & ZYDIS_CPUFLAG_ZF) && shouldEmitFlag(meta.rip, X86_REF_ZF) && !getMetadata(X86_REF_ZF).dirty) {
+        //     if ((changed & ZYDIS_CPUFLAG_ZF) && !getMetadata(X86_REF_ZF).dirty) {
         //         ERROR("Instruction %s should've modified ZF", ZydisMnemonicGetString(mnemonic));
+        //     } else if (!(changed & ZYDIS_CPUFLAG_ZF) && getMetadata(X86_REF_ZF).dirty && !(undefined & ZYDIS_CPUFLAG_ZF)) {
+        //         ERROR("Instruction %s should've not modified ZF", ZydisMnemonicGetString(mnemonic));
         //     }
 
-        //     if ((changed & ZYDIS_CPUFLAG_SF) && shouldEmitFlag(meta.rip, X86_REF_SF) && !getMetadata(X86_REF_SF).dirty) {
+        //     if ((changed & ZYDIS_CPUFLAG_SF) && !getMetadata(X86_REF_SF).dirty) {
         //         ERROR("Instruction %s should've modified SF", ZydisMnemonicGetString(mnemonic));
+        //     } else if (!(changed & ZYDIS_CPUFLAG_SF) && getMetadata(X86_REF_SF).dirty && !(undefined & ZYDIS_CPUFLAG_SF)) {
+        //         ERROR("Instruction %s should've not modified SF", ZydisMnemonicGetString(mnemonic));
         //     }
 
-        //     if ((changed & ZYDIS_CPUFLAG_OF) && shouldEmitFlag(meta.rip, X86_REF_OF) && !getMetadata(X86_REF_OF).dirty) {
+        //     if ((changed & ZYDIS_CPUFLAG_OF) && !getMetadata(X86_REF_OF).dirty) {
         //         ERROR("Instruction %s should've modified OF", ZydisMnemonicGetString(mnemonic));
+        //     } else if (!(changed & ZYDIS_CPUFLAG_OF) && getMetadata(X86_REF_OF).dirty && !(undefined & ZYDIS_CPUFLAG_OF)) {
+        //         ERROR("Instruction %s should've not modified OF", ZydisMnemonicGetString(mnemonic));
         //     }
+
+        //     writebackDirtyState();
         // }
 
         meta.rip += instruction.length;
     }
 
     current_block_metadata->address_end = as.GetCursorPointer();
+    flush_icache(current_block_metadata->address, current_block_metadata->address_end);
 
+    current_block_metadata = nullptr;
     current_meta = nullptr;
-
-    flush_icache();
 }
 
 biscuit::GPR Recompiler::allocatedGPR(x86_ref_e reg) {
@@ -720,34 +743,67 @@ biscuit::Vec Recompiler::getOperandVec(ZydisDecodedOperand* operand) {
     case ZYDIS_OPERAND_TYPE_MEMORY: {
         biscuit::GPR address = lea(operand);
         biscuit::Vec vec = scratchVec();
-        u64 current = (u64)as.GetCursorPointer();
 
         switch (operand->size) {
-        case 32: {
-            if (!setVectorState(SEW::E32, 1)) {
-                as.NOP(); // Add a NOP in case this load needs to be patched and we need to insert a vsetivli
+        case 8: {
+            setVectorState(SEW::E8, 1);
+            as.VLE8(vec, address); // These won't need to be patched as they can't be unaligned
+            break;
+        }
+        case 16: {
+            if (g_paranoid) {
+                setVectorState(SEW::E8, 2);
+                as.VLE8(vec, address);
+            } else {
+                if (!setVectorState(SEW::E16, 1)) {
+                    as.NOP(); // Add a NOP in case this load needs to be patched and we need to insert a vsetivli
+                }
+                as.VLE16(vec, address);
+                as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
             }
-            as.VLE32(vec, address);
-            as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
-            registerVLE(current, SEW::E32, 1, vec, address);
+            break;
+        }
+        case 32: {
+            if (g_paranoid) {
+                setVectorState(SEW::E8, 4);
+                as.VLE8(vec, address);
+            } else {
+                if (!setVectorState(SEW::E32, 1)) {
+                    as.NOP(); // Add a NOP in case this load needs to be patched and we need to insert a vsetivli
+                }
+                as.VLE32(vec, address);
+                as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
+            }
             break;
         }
         case 64: {
-            if (!setVectorState(SEW::E64, 1)) {
-                as.NOP(); // Add a NOP in case this load needs to be patched and we need to insert a vsetivli
+            if (g_paranoid) {
+                setVectorState(SEW::E8, 8);
+                as.VLE8(vec, address);
+            } else {
+                if (!setVectorState(SEW::E64, 1)) {
+                    as.NOP(); // Add a NOP in case this load needs to be patched and we need to insert a vsetivli
+                }
+                as.VLE64(vec, address);
+                as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
             }
-            as.VLE64(vec, address);
-            as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
-            registerVLE(current, SEW::E64, 1, vec, address);
             break;
         }
         case 128: {
-            if (!setVectorState(SEW::E64, 2)) {
-                as.NOP(); // Add a NOP in case this load needs to be patched and we need to insert a vsetivli
+            if (g_paranoid) {
+                setVectorState(SEW::E8, 16);
+                as.VLE8(vec, address);
+            } else {
+                if (!setVectorState(SEW::E64, 2)) {
+                    as.NOP(); // Add a NOP in case this load needs to be patched and we need to insert a vsetivli
+                }
+                as.VLE64(vec, address);
+                as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
             }
-            as.VLE64(vec, address);
-            as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
-            registerVLE(current, SEW::E64, 2, vec, address);
+            break;
+        }
+        default: {
+            UNREACHABLE();
             break;
         }
         }
@@ -794,9 +850,9 @@ biscuit::GPR Recompiler::flagW(x86_ref_e ref) {
 biscuit::GPR Recompiler::flagWR(x86_ref_e ref) {
     biscuit::GPR reg = allocatedGPR(ref);
     RegisterMetadata& meta = getMetadata(ref);
+    loadGPR(ref, reg);
     meta.dirty = true;
     meta.loaded = true;
-    loadGPR(ref, reg);
     addRegisterAccess(ref, true);
     return reg;
 }
@@ -983,33 +1039,44 @@ void Recompiler::setOperandVec(ZydisDecodedOperand* operand, biscuit::Vec vec) {
     }
     case ZYDIS_OPERAND_TYPE_MEMORY: {
         biscuit::GPR address = lea(operand);
-        u64 current = (u64)as.GetCursorPointer();
         switch (operand->size) {
         case 128: {
-            if (!setVectorState(SEW::E64, 2)) {
-                as.NOP(); // Add a NOP in case this store needs to be patched and we need to insert a vsetivli
+            if (g_paranoid) { // don't patch vector accesses in paranoid mode
+                setVectorState(SEW::E8, 128 / 8);
+                as.VSE8(vec, address);
+            } else {
+                if (!setVectorState(SEW::E64, 2)) {
+                    as.NOP(); // Add a NOP in case this store needs to be patched and we need to insert a vsetivli
+                }
+                as.VSE64(vec, address);
+                as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
             }
-            as.VSE64(vec, address);
-            as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
-            registerVSE(current, SEW::E64, 2, vec, address);
             break;
         }
         case 64: {
-            if (!setVectorState(SEW::E64, 1)) {
-                as.NOP(); // Add a NOP in case this store needs to be patched and we need to insert a vsetivli
+            if (g_paranoid) {
+                setVectorState(SEW::E8, 64 / 8);
+                as.VSE8(vec, address);
+            } else {
+                if (!setVectorState(SEW::E64, 1)) {
+                    as.NOP(); // Add a NOP in case this store needs to be patched and we need to insert a vsetivli
+                }
+                as.VSE64(vec, address);
+                as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
             }
-            as.VSE64(vec, address);
-            as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
-            registerVSE(current, SEW::E64, 1, vec, address);
             break;
         }
         case 32: {
-            if (!setVectorState(SEW::E32, 1)) {
-                as.NOP(); // Add a NOP in case this store needs to be patched and we need to insert a vsetivli
+            if (g_paranoid) {
+                setVectorState(SEW::E8, 32 / 8);
+                as.VSE8(vec, address);
+            } else {
+                if (!setVectorState(SEW::E32, 1)) {
+                    as.NOP(); // Add a NOP in case this store needs to be patched and we need to insert a vsetivli
+                }
+                as.VSE32(vec, address);
+                as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
             }
-            as.VSE32(vec, address);
-            as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
-            registerVSE(current, SEW::E32, 1, vec, address);
             break;
         }
         }
@@ -1122,7 +1189,7 @@ void Recompiler::loadVec(x86_ref_e reg, biscuit::Vec vec) {
     biscuit::GPR address = scratch();
     u64 offset = offsetof(ThreadState, xmm) + (reg - X86_REF_XMM0) * 16;
     as.ADDI(address, threadStatePointer(), offset);
-    setVectorState(SEW::E64, max_vlen / 64);
+    setVectorState(SEW::E64, maxVlen() / 64);
     as.VLE64(vec, address);
     popScratch();
 }
@@ -1234,6 +1301,22 @@ void Recompiler::stopCompiling() {
     compiling = false;
 }
 
+void Recompiler::pushCalltrace() {
+    if (g_calltrace) {
+        as.LI(t0, (u64)push_calltrace);
+        as.MV(a0, threadStatePointer());
+        as.JALR(t0);
+    }
+}
+
+void Recompiler::popCalltrace() {
+    if (g_calltrace) {
+        as.LI(t0, (u64)pop_calltrace);
+        as.MV(a0, threadStatePointer());
+        as.JALR(t0);
+    }
+}
+
 void Recompiler::setExitReason(ExitReason reason) {
     biscuit::GPR reg = scratch();
     as.LI(reg, (int)reason);
@@ -1287,7 +1370,7 @@ void Recompiler::writebackDirtyState() {
         addRegisterAccess(X86_REF_OF, false);
     }
 
-    for (int i = 0; i < metadata.size(); i++) {
+    for (size_t i = 0; i < metadata.size(); i++) {
         metadata[i].dirty = false;
         metadata[i].loaded = false;
     }
@@ -1331,10 +1414,6 @@ void Recompiler::scanFlagUsageAhead(u64 rip) {
         bool is_illegal = mnemonic == ZYDIS_MNEMONIC_UD2;
         bool is_hlt = mnemonic == ZYDIS_MNEMONIC_HLT;
 
-        if (is_jump || is_ret || is_call || is_illegal || is_hlt) {
-            break;
-        }
-
         if (instruction.attributes & ZYDIS_ATTRIB_CPUFLAG_ACCESS) {
             u32 changed =
                 instruction.cpu_flags->modified | instruction.cpu_flags->set_0 | instruction.cpu_flags->set_1 | instruction.cpu_flags->undefined;
@@ -1375,6 +1454,10 @@ void Recompiler::scanFlagUsageAhead(u64 rip) {
             } else if (changed & ZYDIS_CPUFLAG_OF) {
                 flag_access_cpazso[5].push_back({true, rip});
             }
+        }
+
+        if (is_jump || is_ret || is_call || is_illegal || is_hlt) {
+            break;
         }
 
         rip += instruction.length;
@@ -1519,17 +1602,23 @@ biscuit::GPR Recompiler::getRip() {
 }
 
 void Recompiler::jumpAndLink(u64 rip) {
+    if (g_dont_link) {
+        // Just emit jump to dispatcher
+        as.NOP();
+        as.LD(t0, offsetof(ThreadState, compile_next_handler), threadStatePointer());
+        as.JR(t0);
+        return;
+    }
+
     if (!blockExists(rip)) {
-        biscuit::GPR address = scratch();
         // 3 instructions of space to be overwritten with:
         // AUIPC
         // ADDI
         // JR
         u64 link_me = (u64)as.GetCodeBuffer().GetCursorOffset();
         as.NOP();
-        as.LD(address, offsetof(ThreadState, compile_next_handler), threadStatePointer());
-        as.JR(address);
-        popScratch();
+        as.LD(t0, offsetof(ThreadState, compile_next_handler), threadStatePointer());
+        as.JR(t0);
 
         block_metadata[rip].pending_links.push_back(link_me);
     } else {
@@ -1538,20 +1627,43 @@ void Recompiler::jumpAndLink(u64 rip) {
 
         if (IsValidJTypeImm(offset)) {
             if (offset != 3 * 4) {
-                as.J(offset);
+                u32 mem;
+                Assembler tempas((u8*)&mem, 4);
+                tempas.J(offset);
+
+                // TODO: remove atomic stuff
+                // Atomically replace the NOP with a J instruction
+                // The instructions after that J can stay as they are
+                __atomic_store_n((u32*)as.GetCursorPointer(), mem, __ATOMIC_SEQ_CST);
+                as.AdvanceBuffer(as.GetCodeBuffer().GetCursorOffset() + 4);
             } else {
-                as.NOP(); // offset is just ahead, inline it
+                // Offset is just ahead, we can inline
+                as.NOP(); // Skip the first NOP
+
+                // Atomically replace the LD + JR with 2 NOPs
+                u64 mem;
+                Assembler tempas((u8*)&mem, 8);
+                tempas.NOP();
+                tempas.NOP();
+
+                // mem now has the 2 NOPs, store them atomically
+                __atomic_store_n((u64*)as.GetCursorPointer(), mem, __ATOMIC_SEQ_CST);
+                as.AdvanceBuffer(as.GetCodeBuffer().GetCursorOffset() + 8);
             }
-            as.NOP();
-            as.NOP();
+
         } else {
             const auto hi20 = static_cast<int32_t>((static_cast<uint32_t>(offset) + 0x800) >> 12 & 0xFFFFF);
             const auto lo12 = static_cast<int32_t>(offset << 20) >> 20;
-            biscuit::GPR reg = scratch();
-            as.AUIPC(reg, hi20);
-            as.ADDI(reg, reg, lo12);
-            as.JR(reg);
-            popScratch();
+            u64 mem;
+            biscuit::Assembler tempas((u8*)&mem, 8);
+            tempas.AUIPC(t0, hi20);
+            tempas.ADDI(t0, t0, lo12);
+
+            // Atomically replace the NOP + LD with AUIPC and ADDI, JR doesn't need to be replaced atomically
+            __atomic_store_n((u64*)as.GetCursorPointer(), mem, __ATOMIC_SEQ_CST);
+
+            as.AdvanceBuffer(as.GetCodeBuffer().GetCursorOffset() + 8);
+            as.JR(t0);
         }
     }
 }
@@ -1603,6 +1715,10 @@ void Recompiler::jumpAndLinkConditional(biscuit::GPR condition, biscuit::GPR gpr
 }
 
 void Recompiler::expirePendingLinks(u64 rip) {
+    if (g_dont_link) {
+        return;
+    }
+
     if (!blockExists(rip)) {
         return;
     }
@@ -1610,27 +1726,17 @@ void Recompiler::expirePendingLinks(u64 rip) {
     auto& links = block_metadata[rip].pending_links;
     for (u64 link : links) {
         auto current_offset = as.GetCodeBuffer().GetCursorOffset();
+        void* start = as.GetCursorPointer();
 
-        as.RewindBuffer(link - 4);
+        as.RewindBuffer(link);
 
-        // First, insert an instruction that just jumps in place and flush the cache
-        // This way, until we are done modifying code, nothing can enter this area of code
-        // Important to note: Only one thread compiles (and thus links) code at a time
-        constexpr u32 jump_lock = 0x0000006F; // j 0x0 instruction
-        u32 old_instruction = __atomic_exchange_n((u32*)as.GetCursorPointer(), jump_lock, __ATOMIC_SEQ_CST);
-        flush_icache();
-
-        as.AdvanceBuffer(link);
-
+        // This will atomically replace the instructions with appropriate ones that jump directly
+        // to the next block
         jumpAndLink(rip);
 
-        as.RewindBuffer(link - 4);
+        void* end = as.GetCursorPointer();
 
-        // Block linking is done, replace the "lock" jump with the old instruction
-        u32 jump_instruction = __atomic_exchange_n((u32*)as.GetCursorPointer(), old_instruction, __ATOMIC_SEQ_CST);
-        flush_icache();
-
-        ASSERT(jump_instruction == jump_lock);
+        flush_icache(start, end);
 
         as.AdvanceBuffer(current_offset);
     }
@@ -1903,31 +2009,6 @@ BlockMetadata& Recompiler::getBlockMetadata(u64 rip) {
     return block_metadata[rip];
 }
 
-void Recompiler::registerVLE(u64 rip, SEW sew, u16 len, biscuit::Vec dst, biscuit::GPR address) {
-    VectorMemoryAccess& vma = vector_memory_access[rip];
-    vma.rip = rip;
-    vma.sew = sew;
-    vma.len = len;
-    vma.load = true;
-    vma.dest = dst;
-    vma.address = address;
-}
-
-void Recompiler::registerVSE(u64 rip, SEW sew, u16 len, biscuit::Vec dst, biscuit::GPR address) {
-    VectorMemoryAccess& vma = vector_memory_access[rip];
-    vma.rip = rip;
-    vma.sew = sew;
-    vma.len = len;
-    vma.load = false;
-    vma.dest = dst;
-    vma.address = address;
-}
-
-VectorMemoryAccess Recompiler::getVectorMemoryAccess(u64 rip) {
-    ASSERT(vector_memory_access.find(rip) != vector_memory_access.end());
-    return vector_memory_access[rip];
-}
-
 bool Recompiler::blockExists(u64 rip) {
     return block_metadata[rip].address != nullptr;
 }
@@ -1979,4 +2060,50 @@ void Recompiler::disableSignals() {
 
 void Recompiler::enableSignals() {
     as.SB(x0, offsetof(ThreadState, signals_disabled), threadStatePointer());
+}
+
+void Recompiler::readBitstring(biscuit::GPR dest, ZydisDecodedOperand* operand, biscuit::GPR bit) {
+    biscuit::GPR shift = scratch();
+    biscuit::GPR address = lea(operand);
+
+    u8 shr = 0;
+    u8 shl = 0;
+    switch (operands[0].size) {
+    case 16:
+        shr = 4;
+        shl = 1;
+        break;
+    case 32:
+        shr = 5;
+        shl = 2;
+        break;
+    case 64:
+        shr = 6;
+        shl = 3;
+        break;
+    default:
+        UNREACHABLE();
+    }
+
+    // Point to the exact word in memory
+    Label gtzero;
+    as.BGEZ(bit, &gtzero);
+
+    // If the shift is less than zero, this is possible but we don't handle it yet so let's panic
+    as.LI(shift, EXIT_REASON_NEGATIVE_BITSTRING);
+    as.SB(shift, offsetof(ThreadState, exit_reason), threadStatePointer());
+    as.LI(shift, (u64)exit_dispatcher);
+    as.JR(shift);
+
+    as.Bind(&gtzero);
+    as.SRLI(shift, bit, shr);
+    as.SLLI(shift, shift, shl);
+    as.ADD(address, address, shift);
+    readMemory(dest, address, 0, zydisToSize(operands[0].size));
+    popScratch();
+    popScratch();
+}
+
+void Recompiler::tryFastReturn(biscuit::GPR rip) {
+    // Implement me
 }

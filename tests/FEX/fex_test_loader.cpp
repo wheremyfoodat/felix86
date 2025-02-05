@@ -170,13 +170,19 @@ FEXTestLoader::FEXTestLoader(const std::filesystem::path& path) {
     config.entrypoint = (void*)0x10'0000;
 
     emulator = std::make_unique<Emulator>(config);
-    state = emulator->GetTestState();
+    state = ThreadState::Get();
 }
 
 FEXTestLoader::~FEXTestLoader() {
     for (auto& ptr : munmap_me) {
         munmap(ptr.first, ptr.second);
     }
+
+    ThreadState* state = (ThreadState*)pthread_getspecific(g_thread_state_key);
+    ASSERT(state);
+    g_thread_states.remove(state); // TODO: this and the other destructor, make them a function
+    delete state;
+    pthread_setspecific(g_thread_state_key, nullptr);
 }
 
 void FEXTestLoader::Run() {
@@ -184,7 +190,7 @@ void FEXTestLoader::Run() {
         auto stuff = mmap((void*)address, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
         munmap_me.push_back({stuff, size});
     }
-    emulator->GetTestState()->SetGpr(X86_REF_RSP, 0xC000'0000 + 4096);
+    state->SetGpr(X86_REF_RSP, 0xC000'0000 + 4096);
     emulator->Run();
     Validate();
 }

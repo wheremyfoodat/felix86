@@ -5,8 +5,8 @@
 #include <Zydis/Utils.h>
 #include "Zydis/Decoder.h"
 #include "biscuit/assembler.hpp"
+#include "felix86/common/state.hpp"
 #include "felix86/common/utility.hpp"
-#include "felix86/common/x86.hpp"
 
 // 16 gprs, 5 flags, 16 xmm registers
 constexpr u64 allocated_reg_count = 16 + 5 + 16;
@@ -30,15 +30,6 @@ struct BlockMetadata {
     std::vector<u64> pending_links{};
     std::vector<std::pair<u64, u64>> instruction_spans{}; // {guest, host}
     std::array<std::vector<RegisterAccess>, allocated_reg_count> register_accesses;
-};
-
-struct VectorMemoryAccess {
-    u64 rip;
-    biscuit::Vec dest;
-    biscuit::GPR address;
-    u16 len;
-    SEW sew;
-    bool load;
 };
 
 struct Recompiler {
@@ -178,12 +169,6 @@ struct Recompiler {
 
     BlockMetadata& getBlockMetadata(u64 rip);
 
-    void registerVLE(u64 rip, SEW sew, u16 len, biscuit::Vec dst, biscuit::GPR address);
-
-    void registerVSE(u64 rip, SEW sew, u16 len, biscuit::Vec dst, biscuit::GPR address);
-
-    VectorMemoryAccess getVectorMemoryAccess(u64 rip);
-
     void vrgather(biscuit::Vec dst, biscuit::Vec src, biscuit::Vec iota, VecMask mask = VecMask::No);
 
     bool blockExists(u64 rip);
@@ -197,6 +182,16 @@ struct Recompiler {
     auto& getBlockMap() {
         return block_metadata;
     }
+
+    void* getCompiledBlock(u64 rip);
+
+    void pushCalltrace();
+
+    void popCalltrace();
+
+    void tryFastReturn(biscuit::GPR rip);
+
+    void readBitstring(biscuit::GPR dest, ZydisDecodedOperand* operand, biscuit::GPR shift);
 
 private:
     struct RegisterMetadata {
@@ -261,9 +256,7 @@ private:
 
     std::array<std::vector<FlagAccess>, 6> flag_access_cpazso{};
 
-    std::unordered_map<u64, VectorMemoryAccess> vector_memory_access{};
-
-    BlockMetadata* current_block_metadata;
+    BlockMetadata* current_block_metadata{};
     HandlerMetadata* current_meta{};
     SEW current_sew = SEW::E1024;
     u8 current_vlen = 0;

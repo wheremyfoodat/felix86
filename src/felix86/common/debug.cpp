@@ -47,39 +47,47 @@ void MemoryMetadata::AddInterpreterRegion(u64 start, u64 end) {
 }
 
 std::string MemoryMetadata::GetRegionName(u64 address) {
+    std::string name = "Unknown";
     for (const Region& region : regions) {
         if (address >= region.start && address < region.end) {
-            return region.name;
+            name = region.name;
+            break;
         }
     }
-    return "Unknown";
+    return name;
 }
 
 u64 MemoryMetadata::GetOffset(u64 address) {
+    u64 offset = 0;
     for (const Region& region : regions) {
         if (address >= region.start && address < region.end) {
-            return address - region.start;
+            offset = address - region.start;
+            break;
         }
     }
-    return 0;
+    return offset;
 }
 
 bool MemoryMetadata::IsInInterpreterRegion(u64 address) {
+    bool found = false;
     for (const Region& region : regions) {
         if (address >= region.start && address < region.end && region.is_interpreter) {
-            return true;
+            found = true;
+            break;
         }
     }
-    return false;
+    return found;
 }
 
 std::pair<u64, u64> MemoryMetadata::GetRegionByName(const std::string& name) {
+    std::pair<u64, u64> result = {0, 0};
     for (const Region& region : regions) {
         if (region.name == name) {
-            return {region.start, region.end};
+            result = {region.start, region.end};
+            break;
         }
     }
-    return {0, 0};
+    return result;
 }
 
 void MemoryMetadata::AddDeferredBreakpoint(const std::string& name, u64 offset) {

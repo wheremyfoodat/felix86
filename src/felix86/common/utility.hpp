@@ -34,19 +34,32 @@ void felix86_divu128(struct ThreadState* state, u64 divisor);
 u64 sext(u64 value, u8 size);
 u64 sext_if_64(u64 value, u8 size_e);
 
-void flush_icache();
+void flush_icache(void* start, void* end);
 
 int guest_breakpoint(const char* name, u64 address);
 
 int clear_breakpoints();
+
+void print_address(u64 address);
 
 void felix86_fxsave(struct ThreadState* state, u64 address, bool fxsave64);
 
 void felix86_fxrstor(struct ThreadState* state, u64 address, bool fxrstor64);
 
 void felix86_packuswb(u8* dst, u8* src);
+void felix86_packusdw(u16* dst, u8* src);
+void felix86_packsswb(u8* dst, u8* src);
+void felix86_packssdw(u16* dst, u8* src);
+void felix86_pmaddwd(i16* dst, i16* src);
+
+void push_calltrace(ThreadState* state);
+
+void pop_calltrace(ThreadState* state);
 
 void dump_states();
 
 namespace biscuit {}
 using namespace biscuit;
+
+#define FELIX86_LOCK ASSERT(sem_wait(g_semaphore) == 0)
+#define FELIX86_UNLOCK ASSERT(sem_post(g_semaphore) == 0)
