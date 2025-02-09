@@ -10,6 +10,8 @@
         FEXTestLoader::RunTest("ASM/H0F38/" #opcode ".asm");                                                                                         \
     }
 
+H0F3A_TEST(66_0A)
+H0F3A_TEST(66_0B)
 H0F3A_TEST(66_0C)
 H0F3A_TEST(66_0D)
 // H0F3A_TEST(66_0E) needs crc32
@@ -22,11 +24,15 @@ H0F3A_TEST(66_20_1)
 H0F3A_TEST(66_22)
 H0F3A_TEST(66_22_1)
 H0F3A_TEST(0_66_0F)
+
 H0F38_TEST(66_00)
 H0F38_TEST(66_00_2)
 H0F38_TEST(66_28)
+H0F38_TEST(66_29)
+H0F38_TEST(66_2A)
 H0F38_TEST(66_2B)
 H0F38_TEST(66_32)
+H0F38_TEST(66_37)
 H0F38_TEST(66_38)
 H0F38_TEST(66_39)
 H0F38_TEST(66_3A)

@@ -3,6 +3,7 @@
 #include <string>
 #include <stdbool.h>
 #include <stdint.h>
+#include "biscuit/isa.hpp"
 
 using u64 = uint64_t;
 using u32 = uint32_t;
@@ -63,3 +64,35 @@ using namespace biscuit;
 
 #define FELIX86_LOCK ASSERT(sem_wait(g_semaphore) == 0)
 #define FELIX86_UNLOCK ASSERT(sem_post(g_semaphore) == 0)
+
+enum class x86RoundingMode { Nearest = 0, Down = 1, Up = 2, Truncate = 3 };
+
+inline RMode rounding_mode(x86RoundingMode mode) {
+    switch (mode) {
+    case x86RoundingMode::Nearest:
+        return RMode::RNE;
+    case x86RoundingMode::Down:
+        return RMode::RDN;
+    case x86RoundingMode::Up:
+        return RMode::RUP;
+    case x86RoundingMode::Truncate:
+        return RMode::RTZ;
+    }
+
+    printf("how did we get here\n");
+    exit(1);
+    return RMode::RNE;
+}
+
+typedef struct {
+    uint16_t signExp;
+    uint64_t significand;
+} Float80;
+
+Float80 f64_to_80(double);
+double f80_to_64(Float80);
+
+bool felix86_bts(u64 address, i64 offset);
+bool felix86_btr(u64 address, i64 offset);
+bool felix86_btc(u64 address, i64 offset);
+bool felix86_bt(u64 address, i64 offset);

@@ -521,6 +521,37 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
         }
         break;
     }
+    case SIGSEGV: {
+        switch (info->si_code) {
+        case SEGV_ACCERR: {
+            // Most likely self modifying code, check if the write is in one of our translated pages
+            if (is_in_jit_code(current_state, pc)) {
+                u64 write_address = (u64)info->si_addr;
+                bool found = false;
+                for (auto page : current_state->recompiler->getProtectedPages()) {
+                    auto start = page.first;
+                    auto end = page.second;
+                    if (write_address >= start && write_address < end) {
+                        found = true;
+                        ERROR("Self modifying code caught");
+                        break;
+                    }
+                }
+
+                if (!found) {
+                    ERROR("Unhandled SIGSEGV SEGV_ACCERR, not in protected page");
+                }
+            } else {
+                ERROR("Unhandled SIGSEGV SEGV_ACCERR, not in JIT code");
+            }
+            break;
+        }
+        default: {
+            goto check_guest_signal;
+        }
+        }
+        break;
+    }
     case SIGILL: {
         bool found = false;
         if (is_in_jit_code(current_state, pc)) {
@@ -532,7 +563,7 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
                 for (u64 location : bp.second) {
                     if (location == pc) {
                         // Skip the breakpoint and continue
-                        printf("Guest breakpoint %016lx hit at %016lx\n", bp.first, pc);
+                        printf("Guest breakpoint %016lx hit at %016lx, continuing...\n", bp.first, pc);
                         context->uc_mcontext.__gregs[REG_PC] = pc + 4;
                         found = true;
                         break;
@@ -564,6 +595,8 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
         if (g_strace) {
             STRACE("------- Guest signal %s -------", strsignal(sig));
         }
+
+        WARN("Executing signal handler for %s", strsignal(sig));
 
         // TODO: this could cause issues if it never jumps back to the dispatcher
         if (current_state->signals_disabled) {

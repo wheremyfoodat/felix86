@@ -19,12 +19,19 @@ bool g_dont_link = false;
 bool g_extensions_manually_specified = false;
 bool g_dont_validate_exe_path = false;
 bool g_calltrace = false;
+bool g_use_block_cache = true;
+bool g_single_step = false;
+bool g_is_chrooted = false;
+bool g_dont_protect_pages = true; // true until we implement smc stuff
+bool g_print_all_calls = false;
+u64 g_initial_brk = 0;
 u64 g_current_brk = 0;
 sem_t* g_semaphore = nullptr;
 u64 g_dispatcher_exit_count = 0;
 std::list<ThreadState*> g_thread_states{};
 std::unordered_map<u64, std::vector<u64>> g_breakpoints{};
 std::chrono::nanoseconds g_compilation_total_time = std::chrono::nanoseconds(0);
+std::unordered_map<u64, std::string> g_symbols{};
 pthread_key_t g_thread_state_key = -1;
 
 int g_output_fd = 1;
@@ -164,6 +171,12 @@ void initialize_globals() {
         environment += "\nFELIX86_DONT_LINK";
     }
 
+    const char* dont_use_block_cache = getenv("FELIX86_DONT_USE_BLOCK_CACHE");
+    if (is_truthy(dont_use_block_cache)) {
+        g_use_block_cache = false;
+        environment += "\nFELIX86_DONT_USE_BLOCK_CACHE";
+    }
+
     const char* log_file = getenv("FELIX86_LOG_FILE");
     if (log_file) {
         int fd = open(log_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -185,6 +198,13 @@ void initialize_globals() {
     if (env_file) {
         // Handled in main
         environment += "\nFELIX86_ENV_FILE=" + std::string(env_file);
+    }
+
+    const char* single_step = getenv("FELIX86_SINGLE_STEP");
+    const char* single_stepping = getenv("FELIX86_SINGLE_STEPPING");
+    if (is_truthy(single_step) || is_truthy(single_stepping)) {
+        g_single_step = true;
+        environment += "\nFELIX86_SINGLE_STEP";
     }
 
     if (!g_quiet && !environment.empty()) {

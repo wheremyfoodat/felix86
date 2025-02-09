@@ -5,12 +5,16 @@
 #include <vector>
 #include "felix86/common/utility.hpp"
 
+constexpr u64 brk_size = 64 * 1024 * 1024;
+
 struct Elf {
     Elf(bool is_interpreter);
 
     ~Elf();
 
     void Load(const std::filesystem::path& path);
+
+    static void LoadSymbols(const std::string& name, const std::filesystem::path& path, void* base);
 
     bool Okay() const {
         return ok;

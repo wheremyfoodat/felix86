@@ -29,6 +29,7 @@ struct Emulator {
         setupMainStack(main_state);
         main_state->signal_handlers = std::make_shared<SignalHandlerTable>();
         g_current_brk = fs.GetBRK();
+        g_initial_brk = g_current_brk;
         main_state->SetRip((u64)fs.GetEntrypoint());
     }
 
@@ -65,7 +66,6 @@ struct Emulator {
 private:
     void setupMainStack(ThreadState* state);
 
-    sem_t* semaphore; // to synchronize some stuff
     Config config;
     Filesystem fs;
     bool testing = false;

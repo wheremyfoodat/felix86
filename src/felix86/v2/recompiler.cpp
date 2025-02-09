@@ -67,9 +67,6 @@ Recompiler::~Recompiler() {
 void Recompiler::emitDispatcher() {
     enter_dispatcher = (decltype(enter_dispatcher))as.GetCursorPointer();
 
-    // Give it an initial valid state
-    as.VSETIVLI(x0, SUPPORTED_VLEN / 8, SEW::E8);
-
     // Save the current register state of callee-saved registers and return address
     static_assert(sizeof(ThreadState::saved_host_gprs) == saved_gprs.size() * 8);
     as.ADDI(t0, a0, offsetof(ThreadState, saved_host_gprs));
@@ -83,13 +80,17 @@ void Recompiler::emitDispatcher() {
 
     Label exit_dispatcher_label;
 
-    // If it's not zero it has some exit reason, exit the dispatcher
+    // Set the rounding mode
+    as.LBU(t1, offsetof(ThreadState, rmode), threadStatePointer());
+    as.FSRM(t1);
     as.MV(a0, threadStatePointer());
-    as.LBU(t0, offsetof(ThreadState, exit_reason), threadStatePointer());
-    as.BNEZ(t0, &exit_dispatcher_label);
+    // If it's not zero it has some exit reason, exit the dispatcher
+    as.LBU(t2, offsetof(ThreadState, exit_reason), threadStatePointer());
+    as.BNEZ(t2, &exit_dispatcher_label);
     as.LI(t0, (u64)Emulator::CompileNext);
     as.JALR(t0); // returns the function pointer to the compiled function
-    as.JR(a0);   // jump to the compiled function
+    restoreRoundingMode();
+    as.JR(a0); // jump to the compiled function
 
     as.Bind(&exit_dispatcher_label);
 
@@ -119,12 +120,20 @@ void* Recompiler::emitSigreturnThunk() {
     return here;
 }
 
+void Recompiler::clearCodeCache() {
+    WARN("Clearing cache on thread %u", gettid());
+    as.GetCodeBuffer().RewindCursor();
+    block_metadata.clear();
+    std::fill(std::begin(block_cache), std::end(block_cache), BlockCacheEntry{});
+
+    emitDispatcher();
+    emitSigreturnThunk();
+}
+
 void* Recompiler::compile(u64 rip) {
     size_t remaining_size = code_cache_size - (as.GetCursorPointer() - as.GetCodeBuffer().GetOffsetPointer(0));
     if (remaining_size < 100'000) { // less than ~100KB left, clear cache
-        WARN("Clearing cache on thread %u", gettid());
-        as.GetCodeBuffer().RewindCursor();
-        block_metadata.clear();
+        clearCodeCache();
     }
 
     void* start = as.GetCursorPointer();
@@ -133,22 +142,74 @@ void* Recompiler::compile(u64 rip) {
     block_metadata[rip].address = start;
 
     // A sequence of code. This is so that we can also call it recursively later.
-    compileSequence(rip);
+    u64 end_rip = compileSequence(rip);
 
     expirePendingLinks(rip);
+
+    // Mark the page as read-only to catch self-modifying code
+    markPagesAsReadOnly(rip, end_rip);
 
     return start;
 }
 
-void* Recompiler::getCompiledBlock(u64 rip) {
-    if (blockExists(rip)) {
-        return block_metadata[rip].address;
+void Recompiler::markPagesAsReadOnly(u64 start, u64 end) {
+    if (g_dont_protect_pages) {
+        return;
     }
 
+    u64 start_page = start & ~0xFFF;
+    u64 end_page = (end + 0xFFF) & ~0xFFF;
+
+    for (auto& pair : read_only_pages) {
+        // Check if our region overlaps with any in the list, to merge them
+        u64 old_start = pair.first;
+        u64 old_end = pair.second;
+
+        if (old_start <= start_page && old_end >= end_page) {
+            // These pages are already marked as read-only
+            return;
+        }
+
+        // New pages intersect with old ones, merge them
+        if (start_page <= old_end && end_page >= old_start) {
+            pair.first = std::min(start_page, old_start);
+            pair.second = std::max(end_page, old_end);
+            mprotect((void*)pair.first, pair.second - pair.first, PROT_READ);
+            return;
+        }
+    }
+
+    // No intersection, add a new entry
+    read_only_pages.push_back({start_page, end_page});
+    mprotect((void*)start_page, end_page - start_page, PROT_READ);
+}
+
+void* Recompiler::getCompiledBlock(u64 rip) {
+    if (g_use_block_cache) {
+        BlockCacheEntry& entry = block_cache[rip & ((1 << block_cache_bits) - 1)];
+        if (entry.guest == rip) {
+            return (void*)entry.host;
+        } else if (blockExists(rip)) {
+            u64 host = (u64)block_metadata[rip].address;
+            entry.guest = rip;
+            entry.host = host;
+            return (void*)host;
+        } else {
+            return compile(rip);
+        }
+    } else {
+        if (blockExists(rip)) {
+            return block_metadata[rip].address;
+        } else {
+            return compile(rip);
+        }
+    }
+
+    UNREACHABLE();
     return nullptr;
 }
 
-void Recompiler::compileSequence(u64 rip) {
+u64 Recompiler::compileSequence(u64 rip) {
     compiling = true;
     scanFlagUsageAhead(rip);
     HandlerMetadata meta = {rip, rip};
@@ -163,9 +224,9 @@ void Recompiler::compileSequence(u64 rip) {
     while (compiling) {
         resetScratch();
 
-        if (g_breakpoints.find(rip) != g_breakpoints.end()) {
+        if (g_breakpoints.find(meta.rip) != g_breakpoints.end()) {
             u64 current_address = (u64)as.GetCursorPointer();
-            g_breakpoints[rip].push_back(current_address);
+            g_breakpoints[meta.rip].push_back(current_address);
             as.GetCodeBuffer().Emit32(0); // UNIMP instruction
         }
 
@@ -191,18 +252,30 @@ void Recompiler::compileSequence(u64 rip) {
         }
 
         // When we want to print all instructions used
-        // static std::unordered_set<ZydisMnemonic> seen;
-        // static bool start = true;
+        // static std::unordered_map<std::string, bool> seen;
 
-        // if (rip == 0x401690) {
+        // static bool start = false;
+
+        // if (rip == 0x103863) {
         //     start = true;
         // }
 
-        // if (start && seen.find(mnemonic) == seen.end()) {
-        //     seen.insert(mnemonic);
+        // if (rip == 0x10386C) {
         //     fflush(stdout);
-        //     printf("Instruction %s\n", ZydisMnemonicGetString(mnemonic));
-        //     fflush(stdout);
+        //     raise(SIGTRAP);
+        //     exit(1);
+        // }
+
+        // if (start) {
+        //     ZydisDisassembledInstruction disassembled;
+        //     ZydisDisassembleIntel(ZYDIS_MACHINE_MODE_LONG_64, meta.rip, (u8*)meta.rip, 15, &disassembled);
+        //     std::string instr = disassembled.text;
+        //     if (seen.find(instr) == seen.end()) {
+        //         seen[instr] = true;
+        //         fflush(stdout);
+        //         PLAIN("%s", instr.c_str());
+        //         fflush(stdout);
+        //     }
         // }
 
         // Checks that we didn't forget to emulate any flags
@@ -244,6 +317,16 @@ void Recompiler::compileSequence(u64 rip) {
         // }
 
         meta.rip += instruction.length;
+
+        if (g_single_step && compiling) {
+            resetScratch();
+            biscuit::GPR rip_after = scratch();
+            as.LI(rip_after, meta.rip);
+            setRip(rip_after);
+            writebackDirtyState();
+            backToDispatcher();
+            stopCompiling();
+        }
     }
 
     current_block_metadata->address_end = as.GetCursorPointer();
@@ -251,6 +334,8 @@ void Recompiler::compileSequence(u64 rip) {
 
     current_block_metadata = nullptr;
     current_meta = nullptr;
+
+    return meta.rip;
 }
 
 biscuit::GPR Recompiler::allocatedGPR(x86_ref_e reg) {
@@ -405,16 +490,24 @@ biscuit::GPR Recompiler::scratch() {
 biscuit::Vec Recompiler::scratchVec() {
     switch (vector_scratch_index++) {
     case 0:
-        return v26;
+        return v22;
     case 1:
-        return v27;
+        return v23;
     case 2:
-        return v28;
+        return v24;
     case 3:
-        return v29;
+        return v25;
     case 4:
-        return v30;
+        return v26;
     case 5:
+        return v27;
+    case 6:
+        return v28;
+    case 7:
+        return v29;
+    case 8:
+        return v30;
+    case 9:
         return v31;
     default:
         ERROR("Tried to use more than 6 scratch registers");
@@ -1378,6 +1471,14 @@ void Recompiler::writebackDirtyState() {
     current_sew = SEW::E1024;
     current_vlen = 0;
     current_grouping = LMUL::M1;
+    rounding_mode_set = false;
+}
+
+void Recompiler::restoreRoundingMode() {
+    biscuit::GPR rm = scratch();
+    as.LBU(rm, offsetof(ThreadState, rmode), threadStatePointer());
+    as.FSRM(rm);
+    popScratch();
 }
 
 void Recompiler::backToDispatcher() {
@@ -1631,7 +1732,7 @@ void Recompiler::jumpAndLink(u64 rip) {
                 Assembler tempas((u8*)&mem, 4);
                 tempas.J(offset);
 
-                // TODO: remove atomic stuff
+                // TODO: remove atomic stuff, no longer needed
                 // Atomically replace the NOP with a J instruction
                 // The instructions after that J can stay as they are
                 __atomic_store_n((u32*)as.GetCursorPointer(), mem, __ATOMIC_SEQ_CST);
@@ -1952,17 +2053,14 @@ x86_size_e Recompiler::zydisToSize(ZyanU8 size) {
     }
 }
 
-void Recompiler::repPrologue(Label* loop_end) {
+void Recompiler::repPrologue(Label* loop_end, biscuit::GPR rcx) {
     // Signal handling would get tricky if we had to account for this looping mess of an instruction
     disableSignals();
-    biscuit::GPR rcx = getRefGPR(X86_REF_RCX, X86_SIZE_QWORD);
     as.BEQZ(rcx, loop_end);
 }
 
-void Recompiler::repEpilogue(Label* loop_body) {
-    biscuit::GPR rcx = getRefGPR(X86_REF_RCX, X86_SIZE_QWORD);
+void Recompiler::repEpilogue(Label* loop_body, biscuit::GPR rcx) {
     as.ADDI(rcx, rcx, -1);
-    setRefGPR(X86_REF_RCX, X86_SIZE_QWORD, rcx);
     as.BNEZ(rcx, loop_body);
     enableSignals();
 }
@@ -1995,6 +2093,10 @@ void Recompiler::sext(biscuit::GPR dst, biscuit::GPR src, x86_size_e size) {
     }
     case X86_SIZE_DWORD: {
         as.ADDIW(dst, src, 0);
+        break;
+    }
+    case X86_SIZE_QWORD: {
+        as.MV(dst, src);
         break;
     }
     default: {
@@ -2046,7 +2148,8 @@ biscuit::GPR Recompiler::getFlags() {
     as.SLLI(temp, pf, 2);
     as.OR(reg, reg, temp);
     as.OR(reg, reg, cf);
-    as.ORI(reg, reg, 0b10); // bit 1 always set in flags
+    as.ORI(reg, reg, 0b10);  // bit 1 always set in flags
+    as.ORI(reg, reg, 0x200); // IE bit
     popScratch();
     return reg;
 }
@@ -2060,50 +2163,4 @@ void Recompiler::disableSignals() {
 
 void Recompiler::enableSignals() {
     as.SB(x0, offsetof(ThreadState, signals_disabled), threadStatePointer());
-}
-
-void Recompiler::readBitstring(biscuit::GPR dest, ZydisDecodedOperand* operand, biscuit::GPR bit) {
-    biscuit::GPR shift = scratch();
-    biscuit::GPR address = lea(operand);
-
-    u8 shr = 0;
-    u8 shl = 0;
-    switch (operands[0].size) {
-    case 16:
-        shr = 4;
-        shl = 1;
-        break;
-    case 32:
-        shr = 5;
-        shl = 2;
-        break;
-    case 64:
-        shr = 6;
-        shl = 3;
-        break;
-    default:
-        UNREACHABLE();
-    }
-
-    // Point to the exact word in memory
-    Label gtzero;
-    as.BGEZ(bit, &gtzero);
-
-    // If the shift is less than zero, this is possible but we don't handle it yet so let's panic
-    as.LI(shift, EXIT_REASON_NEGATIVE_BITSTRING);
-    as.SB(shift, offsetof(ThreadState, exit_reason), threadStatePointer());
-    as.LI(shift, (u64)exit_dispatcher);
-    as.JR(shift);
-
-    as.Bind(&gtzero);
-    as.SRLI(shift, bit, shr);
-    as.SLLI(shift, shift, shl);
-    as.ADD(address, address, shift);
-    readMemory(dest, address, 0, zydisToSize(operands[0].size));
-    popScratch();
-    popScratch();
-}
-
-void Recompiler::tryFastReturn(biscuit::GPR rip) {
-    // Implement me
 }

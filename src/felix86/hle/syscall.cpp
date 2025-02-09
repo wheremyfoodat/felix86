@@ -75,22 +75,118 @@ const char* print_syscall_name(u64 syscall_number) {
 
 bool detecting_memory_region = false;
 std::string name = {};
+std::filesystem::path region_path = {};
 u64 min_address = ULONG_MAX;
 u64 max_address = 0;
 
-class ParanoidSpinLock {
-    std::atomic_flag locked = ATOMIC_FLAG_INIT;
+bool try_strace_ioctl(int rdi, u64 rsi, u64 rdx, u64 result) {
+    if (!g_strace) {
+        return false;
+    }
 
-public:
-    void lock() {
-        while (locked.test_and_set(std::memory_order_acquire)) {
-            ;
+    switch (rsi) {
+    case TCGETS:
+    case TCSETS:
+    case TCSETSW: {
+        termios term = *(termios*)rdx;
+        std::string name;
+        std::string c_iflag, c_oflag, c_cflag, c_lflag;
+#define ADD(name, flag)                                                                                                                              \
+    if (term.c_##name & flag) {                                                                                                                      \
+        c_##name += #flag "|";                                                                                                                       \
+        term.c_##name &= ~flag;                                                                                                                      \
+    }
+        ADD(iflag, IGNBRK);
+        ADD(iflag, BRKINT);
+        ADD(iflag, IGNPAR);
+        ADD(iflag, PARMRK);
+        ADD(iflag, INPCK);
+        ADD(iflag, ISTRIP);
+        ADD(iflag, INLCR);
+        ADD(iflag, IGNCR);
+        ADD(iflag, ICRNL);
+        ADD(iflag, IUCLC);
+        ADD(iflag, IXON);
+        ADD(iflag, IXANY);
+        ADD(iflag, IXOFF);
+        ADD(iflag, IMAXBEL);
+        ADD(iflag, IUTF8);
+
+        if (!c_iflag.empty()) {
+            c_iflag.pop_back();
         }
+
+        if (term.c_iflag != 0) {
+            c_iflag += fmt::format("0x{:x}", term.c_iflag);
+        }
+
+        ADD(oflag, OPOST);
+        ADD(oflag, OLCUC);
+        ADD(oflag, ONLCR);
+        ADD(oflag, OCRNL);
+        ADD(oflag, ONOCR);
+        ADD(oflag, ONLRET);
+        ADD(oflag, OFILL);
+        ADD(oflag, OFDEL);
+
+        if (!c_oflag.empty()) {
+            c_oflag.pop_back();
+        }
+
+        if (term.c_oflag != 0) {
+            c_oflag += fmt::format("0x{:x}|", term.c_oflag);
+        }
+
+        ADD(cflag, CSIZE);
+        ADD(cflag, CSTOPB);
+        ADD(cflag, CREAD);
+        ADD(cflag, PARENB);
+        ADD(cflag, PARODD);
+        ADD(cflag, HUPCL);
+        ADD(cflag, CLOCAL);
+
+        if (!c_cflag.empty()) {
+            c_cflag.pop_back();
+        }
+
+        if (term.c_cflag != 0) {
+            c_cflag += fmt::format("0x{:x}|", term.c_cflag);
+        }
+
+        ADD(lflag, ISIG);
+        ADD(lflag, ICANON);
+        ADD(lflag, ECHO);
+        ADD(lflag, ECHOE);
+        ADD(lflag, ECHOK);
+        ADD(lflag, ECHONL);
+        ADD(lflag, NOFLSH);
+        ADD(lflag, TOSTOP);
+
+        if (!c_lflag.empty()) {
+            c_lflag.pop_back();
+        }
+
+        if (term.c_lflag != 0) {
+            c_lflag += fmt::format("0x{:x}", term.c_lflag);
+        }
+#undef ADD
+
+#define CHECK_NAME(id)                                                                                                                               \
+    if (rsi == id)                                                                                                                                   \
+        name = #id;
+        CHECK_NAME(TCGETS);
+        CHECK_NAME(TCSETS);
+        CHECK_NAME(TCSETSW);
+#undef CHECK_NAME
+
+        STRACE("ioctl(%d, %s, {c_iflag=%s, c_oflag=%s, c_cflag=%s, c_lflag=%s}) = %d", rdi, name.c_str(), c_iflag.c_str(), c_oflag.c_str(),
+               c_cflag.c_str(), c_lflag.c_str(), (int)result);
+        return true;
     }
-    void unlock() {
-        locked.clear(std::memory_order_release);
     }
-};
+
+    return false;
+}
 
 void felix86_syscall(ThreadState* state) {
     u64 syscall_number = state->GetGpr(X86_REF_RAX);
@@ -135,6 +231,12 @@ void felix86_syscall(ThreadState* state) {
             __atomic_store_n(&g_current_brk, rdi, __ATOMIC_SEQ_CST);
             result = rdi;
         }
+
+        if (result > g_initial_brk + brk_size) {
+            WARN("BRK out of memory on thread %d", gettid());
+            result = -ENOMEM;
+        }
+
         STRACE("brk(%p) = %p", (void*)rdi, (void*)result);
         break;
     }
@@ -216,18 +318,27 @@ void felix86_syscall(ThreadState* state) {
         // Don't close our stdout
         // TODO: better implementation where it closes an emulated stdout instead
         if (rdi != 1 && rdi != 2) {
-            result = HOST_SYSCALL(close, rdi);
+            result = fs.Close(rdi);
         } else {
             result = 0;
         }
         STRACE("close(%d) = %d", (int)rdi, (int)result);
         FELIX86_LOCK;
+        std::string name_copy = name;
+        u64 min_address_copy = min_address;
+        std::filesystem::path path_copy = region_path;
+        bool added_region = false;
         if (detecting_memory_region && MemoryMetadata::IsInInterpreterRegion(state->rip)) {
             detecting_memory_region = false;
+            added_region = true;
             ASSERT(result != -1);
-            MemoryMetadata::AddRegion(name, min_address, max_address);
+            MemoryMetadata::AddRegion(name_copy, min_address, max_address);
         }
         FELIX86_UNLOCK;
+
+        if (added_region && !(path_copy.empty() || name_copy.empty())) {
+            Elf::LoadSymbols(name_copy, path_copy, (void*)min_address_copy);
+        }
         break;
     }
     case felix86_x86_64_shutdown: {
@@ -288,6 +399,47 @@ void felix86_syscall(ThreadState* state) {
     case felix86_x86_64_getcwd: {
         result = fs.GetCwd((char*)rdi, rsi);
         STRACE("getcwd(%p, %d) = %d", (void*)rdi, (int)rsi, (int)result);
+        break;
+    }
+    case felix86_x86_64_rename: {
+        auto oldpath = fs.AtPath(AT_FDCWD, (const char*)rdi);
+        auto newpath = fs.AtPath(AT_FDCWD, (const char*)rsi);
+
+        if (!oldpath || !newpath) {
+            result = -EACCES;
+            STRACE("rename(%s, %s) = %d", (const char*)rdi, (const char*)rsi, (int)result);
+            break;
+        }
+
+        result = rename(oldpath->c_str(), newpath->c_str());
+        STRACE("rename(%s, %s) = %d", oldpath->c_str(), newpath->c_str(), (int)result);
+        break;
+    }
+    case felix86_x86_64_chmod: {
+        auto path = fs.AtPath(AT_FDCWD, (const char*)rdi);
+
+        if (!path) {
+            result = -EACCES;
+            STRACE("chmod(%s, %d) = %d", (const char*)rdi, (int)rsi, (int)result);
+            break;
+        }
+
+        result = chmod(path->c_str(), rsi);
+        STRACE("chmod(%s, %d) = %d", path->c_str(), (int)rsi, (int)result);
+        break;
+    }
+    case felix86_x86_64_symlink: {
+        auto oldpath = fs.AtPath(AT_FDCWD, (const char*)rdi);
+        auto newpath = fs.AtPath(AT_FDCWD, (const char*)rsi);
+
+        if (!oldpath || !newpath) {
+            result = -EACCES;
+            STRACE("symlink(%s, %s) = %d", (const char*)rdi, (const char*)rsi, (int)result);
+            break;
+        }
+
+        result = symlink(oldpath->c_str(), newpath->c_str());
+        STRACE("symlink(%s, %s) = %d", oldpath->c_str(), newpath->c_str(), (int)result);
         break;
     }
     case felix86_x86_64_poll: {
@@ -400,6 +552,24 @@ void felix86_syscall(ThreadState* state) {
         STRACE("chdir(%s) = %d", (const char*)rdi, (int)result);
         break;
     }
+    case felix86_x86_64_fchown: {
+        result = HOST_SYSCALL(fchown, rdi, rsi, rdx);
+        STRACE("fchown(%d, %d, %d) = %d", (int)rdi, (int)rsi, (int)rdx, (int)result);
+        break;
+    }
+    case felix86_x86_64_unlinkat: {
+        auto path = fs.AtPath(rdi, (const char*)rsi);
+
+        if (!path) {
+            result = -EACCES;
+            STRACE("unlinkat(%d, %s, %d) = %d", (int)rdi, (const char*)rsi, (int)rdx, (int)result);
+            break;
+        }
+
+        result = HOST_SYSCALL(unlinkat, rdi, path->c_str(), rdx);
+        STRACE("unlinkat(%d, %s, %d) = %d", (int)rdi, (const char*)rsi, (int)rdx, (int)result);
+        break;
+    }
     case felix86_x86_64_fchdir: {
         result = HOST_SYSCALL(fchdir, rdi);
         STRACE("fchdir(%d) = %d", (int)rdi, (int)result);
@@ -431,7 +601,10 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_ioctl: {
         result = HOST_SYSCALL(ioctl, rdi, rsi, rdx);
-        STRACE("ioctl(%d, %016lx, %016lx) = %016lx", (int)rdi, rsi, rdx, (u64)result);
+
+        if (!try_strace_ioctl(rdi, rsi, rdx, result)) {
+            STRACE("ioctl(%d, %016lx, %016lx) = %016lx", (int)rdi, rsi, rdx, (u64)result);
+        }
         break;
     }
     case felix86_x86_64_write: {
@@ -507,6 +680,19 @@ void felix86_syscall(ThreadState* state) {
         STRACE("mkdir(%s, %d) = %d", (char*)rdi, (int)rsi, (int)result);
         break;
     }
+    case felix86_x86_64_lgetxattr: {
+        auto path = fs.AtPath(AT_FDCWD, (const char*)rdi);
+
+        if (!path) {
+            STRACE("lgetxattr(%s, %s, %p, %d) = %d", (char*)rdi, (char*)rsi, (void*)rdx, (int)r10, -EACCES);
+            result = -EACCES;
+            break;
+        }
+
+        result = HOST_SYSCALL(lgetxattr, path->c_str(), (const char*)rsi, (void*)rdx, r10);
+        STRACE("lgetxattr(%s, %s, %p, %d) = %d", (char*)rdi, (char*)rsi, (void*)rdx, (int)r10, (int)result);
+        break;
+    }
     case felix86_x86_64_pwrite64: {
         result = HOST_SYSCALL(pwrite64, rdi, rsi, rdx, r10);
         STRACE("pwrite64(%d, %p, %d, %d) = %d", (int)rdi, (void*)rsi, (int)rdx, (int)r10, (int)result);
@@ -524,6 +710,7 @@ void felix86_syscall(ThreadState* state) {
         FELIX86_LOCK;
         if (MemoryMetadata::IsInInterpreterRegion(state->rip)) {
             name = std::filesystem::path((const char*)rsi).filename().string();
+            region_path = fs.AtPath(rdi, (const char*)rsi).value_or(std::filesystem::path());
 
             if (name.find(".so") != std::string::npos) {
                 detecting_memory_region = true;
@@ -531,6 +718,7 @@ void felix86_syscall(ThreadState* state) {
                 max_address = 0;
             } else {
                 name = {};
+                region_path.clear();
             }
         }
         FELIX86_UNLOCK;
@@ -573,16 +761,8 @@ void felix86_syscall(ThreadState* state) {
         break;
     }
     case felix86_x86_64_utimensat: {
-        auto path = fs.AtPath(rdi, (const char*)rsi);
-
-        if (!path) {
-            STRACE("utimensat(%d, %s, %p, %d) = %d", (int)rdi, (char*)rsi, (void*)rdx, (int)r10, -EACCES);
-            result = -EACCES;
-            break;
-        }
-
-        result = HOST_SYSCALL(utimensat, rdi, path->c_str(), (struct timespec*)rdx, r10);
-        STRACE("utimensat(%d, %s, %p, %d) = %d", (int)rdi, path->c_str(), (void*)rdx, (int)r10, (int)result);
+        result = HOST_SYSCALL(utimensat, rdi, (const char*)rsi, (struct timespec*)rdx, r10);
+        STRACE("utimensat(%d, %s, %p, %d) = %d", (int)rdi, (const char*)rsi, (void*)rdx, (int)r10, (int)result);
         break;
     }
     case felix86_x86_64_getgid: {
@@ -781,6 +961,17 @@ void felix86_syscall(ThreadState* state) {
 
         result = 0;
         STRACE("rt_sigaction(%d, %p, %p) = %d", (int)rdi, (void*)rsi, (void*)r10, (int)result);
+        break;
+    }
+    case felix86_x86_64_rt_sigtimedwait: {
+        result = HOST_SYSCALL(rt_sigtimedwait, rdi, rsi, rdx, r10);
+        STRACE("rt_sigtimedwait(%p, %p, %p, %d, %d) = %d", (void*)rdi, (void*)rsi, (void*)rdx, (int)r10, (int)r8, (int)result);
+        WARN_ONCE("This program uses rt_sigtimedwait");
+        break;
+    }
+    case felix86_x86_64_sched_yield: {
+        result = HOST_SYSCALL(sched_yield);
+        STRACE("sched_yield() = %d", (int)result);
         break;
     }
     case felix86_x86_64_sigaltstack: {

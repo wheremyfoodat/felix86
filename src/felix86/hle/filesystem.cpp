@@ -57,30 +57,40 @@ bool Filesystem::LoadRootFS(const std::filesystem::path& path) {
 }
 
 std::optional<std::filesystem::path> Filesystem::AtPath(int dirfd, const char* pathname) {
-    // Check if it starts with /dev
-    constexpr static const char* dev = "/dev";
-    if (strncmp(pathname, dev, strlen(dev)) == 0) {
-        return std::filesystem::path(pathname);
+    if (pathname) {
+        // Check if it starts with /dev
+        constexpr static const char* dev = "/dev";
+        if (strncmp(pathname, dev, strlen(dev)) == 0) {
+            return std::filesystem::path(pathname);
+        }
+
+        // Check if it starts with /run/user/1000
+        constexpr static const char* run_user_1000 = "/run/user/1000";
+        if (strncmp(pathname, run_user_1000, strlen(run_user_1000)) == 0) {
+            return std::filesystem::path(pathname);
+        }
+
+        // Check if it starts with /sys
+        constexpr static const char* sys = "/sys";
+        if (strncmp(pathname, sys, strlen(sys)) == 0) {
+            return std::filesystem::path(pathname);
+        }
+
+        // Check if it starts with /proc
+        constexpr static const char* proc = "/proc";
+        if (strncmp(pathname, proc, strlen(proc)) == 0) {
+            return std::filesystem::path(pathname);
+        }
+
+        if (std::string(pathname) == proc_self_exe) { // TODO: remove this, AtPath should handle this
+            return executable_path;                   // TODO: remove the rootfs from this path
+        }
     }
 
-    // Check if it starts with /run/user/1000
-    constexpr static const char* run_user_1000 = "/run/user/1000";
-    if (strncmp(pathname, run_user_1000, strlen(run_user_1000)) == 0) {
-        return std::filesystem::path(pathname);
-    }
-
-    // Check if it starts with /sys/dev
-    constexpr static const char* sys_dev = "/sys/dev";
-    if (strncmp(pathname, sys_dev, strlen(sys_dev)) == 0) {
-        return std::filesystem::path(pathname);
-    }
-
-    if (std::string(pathname) == proc_self_exe) { // TODO: remove this, AtPath should handle this
-        return executable_path;                   // TODO: remove the rootfs from this path
-    }
-
-    std::filesystem::path path = pathname;
-    if (path.is_relative()) {
+    std::filesystem::path path;
+    if (pathname)
+        path = pathname;
+    if ((pathname && path.is_relative()) || !pathname) {
         if (dirfd == AT_FDCWD) {
             FELIX86_LOCK;
             path = cwd_path / path;
@@ -89,27 +99,35 @@ std::optional<std::filesystem::path> Filesystem::AtPath(int dirfd, const char* p
             struct stat dirfd_stat;
             fstat(dirfd, &dirfd_stat);
 
-            bool is_dir = S_ISDIR(dirfd_stat.st_mode);
-            if (!is_dir) {
-                WARN("dirfd is not a directory");
-                error = -ENOTDIR;
-                return std::nullopt;
-            }
-
             // This is not POSIX portable but should work on Linux which is what we're targeting
             char dirfd_path[PATH_MAX];
+            char buffer[PATH_MAX];
+            std::filesystem::path result_path;
             snprintf(dirfd_path, sizeof(dirfd_path), "/proc/self/fd/%d", dirfd);
-            char result_path[PATH_MAX];
-            ssize_t res = readlink(result_path, dirfd_path, sizeof(dirfd_path));
+            memset(buffer, 0, sizeof(buffer));
+            ssize_t res = readlink(buffer, dirfd_path, sizeof(buffer));
             if (res == -1) {
-                WARN("Failed to readlink dirfd");
+                // Likely the fd is a directory. We need to use a different method then.
+                FELIX86_LOCK;
+                auto it = fd_to_path.find(dirfd);
+                if (it == fd_to_path.end()) {
+                    WARN("dirfd is not a directory and could not be readlink'd");
+                    error = -ENOTDIR;
+                    return std::nullopt;
+                }
+                FELIX86_UNLOCK;
+                result_path = it->second;
+            } else {
+                result_path = std::filesystem::path(buffer);
+            }
+
+            struct stat result_path_stat;
+            res = stat(result_path.c_str(), &result_path_stat);
+            if (res == -1) {
+                WARN("Failed to stat dirfd");
                 error = -ENOENT;
                 return std::nullopt;
             }
-            result_path[res] = '\0';
-
-            struct stat result_path_stat;
-            stat(result_path, &result_path_stat);
 
             // Sanity check that the directory was not moved or something
             if (result_path_stat.st_dev != dirfd_stat.st_dev || result_path_stat.st_ino != dirfd_stat.st_ino) {
@@ -145,7 +163,7 @@ ssize_t Filesystem::ReadLinkAt(int dirfd, const char* pathname, char* buf, u32 b
     if (std::string(pathname) == proc_self_exe) { // TODO: remove this, AtPath should handle this
         std::string executable_path_string = executable_path.string();
         // readlink does not append a null terminator
-        size_t written_size = std::min(executable_path_string.size() - 1, (size_t)bufsiz);
+        size_t written_size = std::min(executable_path_string.size(), (size_t)bufsiz);
         memcpy(buf, executable_path_string.c_str(), written_size);
         return written_size;
     }
@@ -194,7 +212,13 @@ int Filesystem::OpenAt(int dirfd, const char* pathname, int flags, int mode) {
     }
 
     std::filesystem::path path = path_opt.value();
-    return openat(AT_FDCWD, path.c_str(), flags, mode);
+    int fd = openat(AT_FDCWD, path.c_str(), flags, mode);
+    if (fd != -1) {
+        FELIX86_LOCK;
+        fd_to_path[fd] = path;
+        FELIX86_UNLOCK;
+    }
+    return fd;
 }
 
 bool Filesystem::validatePath(const std::filesystem::path& path) {
@@ -254,7 +278,14 @@ int Filesystem::GetCwd(char* buf, u32 bufsiz) {
         cwd_string = "/" + cwd_string;
     }
 
-    size_t written_size = std::min(cwd_string.size(), (size_t)bufsiz);
-    memcpy(buf, cwd_string.c_str(), written_size);
+    size_t written_size = std::min(cwd_string.size() + 1 /*+1 for null terminator*/, (size_t)bufsiz);
+    strncpy(buf, cwd_string.c_str(), written_size);
     return written_size;
+}
+
+int Filesystem::Close(int fd) {
+    FELIX86_LOCK;
+    fd_to_path.erase(fd);
+    FELIX86_UNLOCK;
+    return close(fd);
 }

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <unordered_map>
+#include <unordered_set>
 #include <Zydis/Utils.h>
 #include "Zydis/Decoder.h"
 #include "biscuit/assembler.hpp"
@@ -11,9 +12,15 @@
 // 16 gprs, 5 flags, 16 xmm registers
 constexpr u64 allocated_reg_count = 16 + 5 + 16;
 
+constexpr int block_cache_bits = 16;
+
 struct HandlerMetadata {
     u64 rip;
     u64 block_start;
+};
+
+struct BlockCacheEntry {
+    u64 host = 0, guest = 0;
 };
 
 // This struct is for indicating within a block at which points a register contains a value of a guest register,
@@ -79,6 +86,8 @@ struct Recompiler {
     void setExitReason(ExitReason reason);
 
     void writebackDirtyState();
+
+    void restoreRoundingMode();
 
     void backToDispatcher();
 
@@ -159,9 +168,9 @@ struct Recompiler {
 
     void writeMemory(biscuit::GPR src, biscuit::GPR address, i64 offset, x86_size_e size);
 
-    void repPrologue(Label* loop_end);
+    void repPrologue(Label* loop_end, biscuit::GPR rcx);
 
-    void repEpilogue(Label* loop_body);
+    void repEpilogue(Label* loop_body, biscuit::GPR rcx);
 
     void repzEpilogue(Label* loop_body, bool is_repz);
 
@@ -189,9 +198,9 @@ struct Recompiler {
 
     void popCalltrace();
 
-    void tryFastReturn(biscuit::GPR rip);
-
-    void readBitstring(biscuit::GPR dest, ZydisDecodedOperand* operand, biscuit::GPR shift);
+    std::vector<std::pair<u64, u64>>& getProtectedPages() {
+        return read_only_pages;
+    }
 
 private:
     struct RegisterMetadata {
@@ -206,7 +215,7 @@ private:
         u64 position;
     };
 
-    void compileSequence(u64 rip);
+    u64 compileSequence(u64 rip);
 
     // Get the register and load the value into it if needed
     biscuit::GPR gpr(ZydisRegister reg);
@@ -231,9 +240,15 @@ private:
 
     void addRegisterAccess(x86_ref_e ref, bool is_load);
 
+    void clearCodeCache();
+
+    void markPagesAsReadOnly(u64 start, u64 end);
+
     u8* code_cache{};
     biscuit::Assembler as{};
     ZydisDecoder decoder{};
+
+    std::array<BlockCacheEntry, 1 << block_cache_bits> block_cache{};
 
     ZydisDecodedInstruction instruction{};
     ZydisDecodedOperand operands[10]{};
@@ -256,10 +271,13 @@ private:
 
     std::array<std::vector<FlagAccess>, 6> flag_access_cpazso{};
 
+    std::vector<std::pair<u64, u64>> read_only_pages{};
+
     BlockMetadata* current_block_metadata{};
     HandlerMetadata* current_meta{};
     SEW current_sew = SEW::E1024;
     u8 current_vlen = 0;
     LMUL current_grouping = LMUL::M1;
     u16 max_vlen = 128;
+    bool rounding_mode_set = false;
 };
