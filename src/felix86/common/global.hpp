@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <list>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 #include <semaphore.h>
@@ -19,13 +20,21 @@ extern bool g_dont_validate_exe_path;
 extern bool g_paranoid;
 extern bool g_is_chrooted;
 extern bool g_dont_link;
+extern bool g_dont_inline_syscalls;
 extern bool g_use_block_cache;
 extern bool g_single_step;
 extern bool g_log_instructions;
 extern bool g_dont_protect_pages;
 extern bool g_print_all_calls;
+extern bool g_no_sse2;
+extern bool g_no_sse3;
+extern bool g_no_ssse3;
+extern bool g_no_sse4_1;
+extern bool g_no_sse4_2;
+extern bool g_print_all_insts;
 extern u64 g_initial_brk;
 extern u64 g_current_brk;
+extern u64 g_current_brk_size;
 extern u64 g_dispatcher_exit_count;
 extern std::chrono::nanoseconds g_compilation_total_time;
 extern int g_output_fd;
@@ -42,6 +51,7 @@ extern sem_t* g_semaphore;
 extern pthread_key_t g_thread_state_key;
 extern std::list<struct ThreadState*> g_thread_states;
 extern std::unordered_map<u64, std::string> g_symbols;
+extern std::vector<const char*> g_host_argv;
 
 bool parse_extensions(const char* ext);
 void initialize_globals();

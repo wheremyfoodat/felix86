@@ -2,13 +2,13 @@
 #include <cstring>
 #include <string>
 #include <fcntl.h>
+#include <sys/mman.h>
 #include "biscuit/cpuinfo.hpp"
 #include "felix86/common/global.hpp"
 #include "felix86/common/log.hpp"
 #include "felix86/common/state.hpp"
 #include "felix86/emulator.hpp"
 #include "fmt/format.h"
-#include "version.hpp"
 
 bool g_paranoid = false;
 bool g_verbose = false;
@@ -22,16 +22,25 @@ bool g_calltrace = false;
 bool g_use_block_cache = true;
 bool g_single_step = false;
 bool g_is_chrooted = false;
-bool g_dont_protect_pages = true; // true until we implement smc stuff
+bool g_dont_protect_pages = false;
 bool g_print_all_calls = false;
+bool g_no_sse2 = false;
+bool g_no_sse3 = false;
+bool g_no_ssse3 = false;
+bool g_no_sse4_1 = false;
+bool g_no_sse4_2 = false;
+bool g_print_all_insts = false;
+bool g_dont_inline_syscalls = false;
 u64 g_initial_brk = 0;
 u64 g_current_brk = 0;
+u64 g_current_brk_size = 0;
 sem_t* g_semaphore = nullptr;
 u64 g_dispatcher_exit_count = 0;
 std::list<ThreadState*> g_thread_states{};
 std::unordered_map<u64, std::vector<u64>> g_breakpoints{};
 std::chrono::nanoseconds g_compilation_total_time = std::chrono::nanoseconds(0);
 std::unordered_map<u64, std::string> g_symbols{};
+std::vector<const char*> g_host_argv{};
 pthread_key_t g_thread_state_key = -1;
 
 int g_output_fd = 1;
@@ -58,7 +67,7 @@ void Extensions::Clear() {
 }
 
 const char* get_version_full() {
-    static std::string version = "felix86 " FELIX86_VERSION "." + std::string(g_git_hash);
+    static std::string version = "felix86 0.1.0." + std::string(g_git_hash);
     return version.c_str();
 }
 
@@ -171,6 +180,12 @@ void initialize_globals() {
         environment += "\nFELIX86_DONT_LINK";
     }
 
+    const char* dont_protect_pages = getenv("FELIX86_DONT_PROTECT_PAGES");
+    if (is_truthy(dont_protect_pages)) {
+        g_dont_protect_pages = true;
+        environment += "\nFELIX86_DONT_PROTECT_PAGES";
+    }
+
     const char* dont_use_block_cache = getenv("FELIX86_DONT_USE_BLOCK_CACHE");
     if (is_truthy(dont_use_block_cache)) {
         g_use_block_cache = false;
@@ -186,6 +201,36 @@ void initialize_globals() {
             g_output_fd = fd;
             environment += "\nFELIX86_LOG_FILE=" + std::string(log_file);
         }
+    }
+
+    const char* no_sse2_env = getenv("FELIX86_NO_SSE2");
+    if (is_truthy(no_sse2_env)) {
+        g_no_sse2 = true;
+        environment += "\nFELIX86_NO_SSE2";
+    }
+
+    const char* no_sse3_env = getenv("FELIX86_NO_SSE3");
+    if (is_truthy(no_sse3_env)) {
+        g_no_sse3 = true;
+        environment += "\nFELIX86_NO_SSE3";
+    }
+
+    const char* no_ssse3_env = getenv("FELIX86_NO_SSSE3");
+    if (is_truthy(no_ssse3_env)) {
+        g_no_ssse3 = true;
+        environment += "\nFELIX86_NO_SSSE3";
+    }
+
+    const char* no_sse4_1_env = getenv("FELIX86_NO_SSE4_1");
+    if (is_truthy(no_sse4_1_env)) {
+        g_no_sse4_1 = true;
+        environment += "\nFELIX86_NO_SSE4_1";
+    }
+
+    const char* no_sse4_2_env = getenv("FELIX86_NO_SSE4_2");
+    if (is_truthy(no_sse4_2_env)) {
+        g_no_sse4_2 = true;
+        environment += "\nFELIX86_NO_SSE4_2";
     }
 
     const char* dont_validate_exe_path = getenv("FELIX86_DONT_VALIDATE_EXE_PATH");
@@ -300,13 +345,19 @@ bool parse_extensions(const char* arg) {
 void initialize_semaphore() {
     if (!g_semaphore) {
         g_semaphore = sem_open("/felix86_semaphore", O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP, 1);
+        if (g_semaphore == SEM_FAILED) {
+            const char* is_execve = getenv("__FELIX86_EXECVE");
+            if (!is_execve) {
+                ERROR("Failed to create semaphore: %s", strerror(errno));
+            }
+            g_semaphore = sem_open("/felix86_semaphore", 0);
+        }
     } else {
         g_semaphore = sem_open("/felix86_semaphore", 0);
     }
 
     if (g_semaphore == SEM_FAILED) {
         ERROR("Failed to create semaphore: %s", strerror(errno));
-        exit(1);
     }
 }
 

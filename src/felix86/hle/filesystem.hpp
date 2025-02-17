@@ -1,7 +1,6 @@
 #pragma once
 
 #include <filesystem>
-#include <mutex>
 #include <optional>
 #include <linux/limits.h>
 #include "felix86/common/elf.hpp"
@@ -51,6 +50,10 @@ struct Filesystem {
             }
         }
 
+        FELIX86_LOCK;
+        cwd_path = executable_path.parent_path();
+        FELIX86_UNLOCK;
+
         return true;
     }
 
@@ -91,10 +94,6 @@ struct Filesystem {
 
     std::shared_ptr<Elf> GetInterpreter() {
         return interpreter;
-    }
-
-    u64 GetBRK() {
-        return elf->GetBRK();
     }
 
     int Error() {

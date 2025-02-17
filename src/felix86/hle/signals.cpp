@@ -1,9 +1,10 @@
 #include <array>
+#include <sys/mman.h>
+#include "felix86/common/state.hpp"
 #include "felix86/emulator.hpp"
 #include "felix86/hle/filesystem.hpp"
 #include "felix86/hle/signals.hpp"
-
-using VectorState = std::array<XmmReg, 32>;
+#include "felix86/v2/recompiler.hpp"
 
 bool is_in_jit_code(ThreadState* state, uintptr_t ptr) {
     CodeBuffer& buffer = state->recompiler->getAssembler().GetCodeBuffer();
@@ -91,7 +92,7 @@ struct x64_rt_sigframe {
 static_assert(sizeof(siginfo_t) == 128);
 static_assert(sizeof(x64_rt_sigframe) == 1120);
 
-void reconstruct_state(ThreadState* state, BlockMetadata* current_block, u64 rip, u64* host_gprs, std::optional<VectorState>& host_vecs) {
+void reconstruct_state(ThreadState* state, BlockMetadata* current_block, u64 rip, const u64* gprs, const XmmReg* xmms) {
     // We were in the middle of a basic block when the signal hit
     // We need to fixup our state and get the correct values that may not have been written back to the state struct
     // First, for the GPRS
@@ -107,12 +108,12 @@ void reconstruct_state(ThreadState* state, BlockMetadata* current_block, u64 rip
         // effectively doing a writeback to state.
         if (needs_copy) {
             int allocated_host_gpr = Recompiler::allocatedGPR((x86_ref_e)(X86_REF_RAX + i)).Index();
-            state->SetGpr((x86_ref_e)(X86_REF_RAX + i), host_gprs[allocated_host_gpr]);
+            state->SetGpr((x86_ref_e)(X86_REF_RAX + i), gprs[allocated_host_gpr]);
         }
     }
 
     // Do the same for XMMs
-    if (host_vecs) {
+    if (xmms) {
         for (int i = 0; i < 16; i++) {
             bool needs_copy = false;
             // TODO: again get rid of magic number 16 + 5
@@ -123,7 +124,7 @@ void reconstruct_state(ThreadState* state, BlockMetadata* current_block, u64 rip
             }
 
             if (needs_copy) {
-                state->SetXmmReg((x86_ref_e)(X86_REF_XMM0 + i), host_vecs->at(i));
+                state->SetXmmReg((x86_ref_e)(X86_REF_XMM0 + i), xmms[i]);
             }
         }
     } else {
@@ -146,7 +147,7 @@ void reconstruct_state(ThreadState* state, BlockMetadata* current_block, u64 rip
 
         if (needs_copy) {
             int allocated_host_gpr = Recompiler::allocatedGPR(X86_REF_CF).Index();
-            state->SetFlag(X86_REF_CF, host_gprs[allocated_host_gpr] & 1);
+            state->SetFlag(X86_REF_CF, gprs[allocated_host_gpr] & 1);
         }
     }
 
@@ -161,7 +162,7 @@ void reconstruct_state(ThreadState* state, BlockMetadata* current_block, u64 rip
 
         if (needs_copy) {
             int allocated_host_gpr = Recompiler::allocatedGPR(X86_REF_AF).Index();
-            state->SetFlag(X86_REF_AF, host_gprs[allocated_host_gpr] & 1);
+            state->SetFlag(X86_REF_AF, gprs[allocated_host_gpr] & 1);
         }
     }
 
@@ -176,7 +177,7 @@ void reconstruct_state(ThreadState* state, BlockMetadata* current_block, u64 rip
 
         if (needs_copy) {
             int allocated_host_gpr = Recompiler::allocatedGPR(X86_REF_ZF).Index();
-            state->SetFlag(X86_REF_ZF, host_gprs[allocated_host_gpr] & 1);
+            state->SetFlag(X86_REF_ZF, gprs[allocated_host_gpr] & 1);
         }
     }
 
@@ -191,7 +192,7 @@ void reconstruct_state(ThreadState* state, BlockMetadata* current_block, u64 rip
 
         if (needs_copy) {
             int allocated_host_gpr = Recompiler::allocatedGPR(X86_REF_SF).Index();
-            state->SetFlag(X86_REF_SF, host_gprs[allocated_host_gpr] & 1);
+            state->SetFlag(X86_REF_SF, gprs[allocated_host_gpr] & 1);
         }
     }
 
@@ -206,7 +207,7 @@ void reconstruct_state(ThreadState* state, BlockMetadata* current_block, u64 rip
 
         if (needs_copy) {
             int allocated_host_gpr = Recompiler::allocatedGPR(X86_REF_OF).Index();
-            state->SetFlag(X86_REF_OF, host_gprs[allocated_host_gpr] & 1);
+            state->SetFlag(X86_REF_OF, gprs[allocated_host_gpr] & 1);
         }
     }
 
@@ -215,8 +216,8 @@ void reconstruct_state(ThreadState* state, BlockMetadata* current_block, u64 rip
 }
 
 // arch/x86/kernel/signal.c, get_sigframe function prepares the signal frame
-void setup(BlockMetadata* current_block, u64 rip, ThreadState* state, sigset_t new_mask, u64* host_gprs, std::optional<VectorState>& host_vecs,
-           bool use_altstack, bool in_jit_code) {
+void Signals::setupFrame(BlockMetadata* current_block, u64 rip, ThreadState* state, sigset_t new_mask, const u64* host_gprs, const XmmReg* host_vecs,
+                         bool use_altstack, bool in_jit_code) {
     u64 rsp = use_altstack ? (u64)state->alt_stack.ss_sp : state->GetGpr(X86_REF_RSP);
     rsp -= 128; // red zone
 
@@ -247,6 +248,7 @@ void setup(BlockMetadata* current_block, u64 rip, ThreadState* state, sigset_t n
 
     if (in_jit_code) {
         // We were in the middle of executing a basic block, the state up to that point needs to be written back to the state struct
+        ASSERT(current_block);
         reconstruct_state(state, current_block, rip, host_gprs, host_vecs);
     } else {
         // State reconstruction isn't necessary, the state should be in some stable form
@@ -411,7 +413,7 @@ riscv_v_state* get_riscv_vector_state(void* ctx) {
 
     // Normally the glibc should have better support for this, but this will be fine for now
     if (reserved[1] != 0x53465457) { // RISC-V V extension magic number that indicates the presence of vector state
-        return nullptr;
+        return nullptr;              // old kernel version, unsupported, we can't get the vector state and the vector regs are gonna be unstable
     }
 
     void* after_fpregs = reserved + 3;
@@ -419,7 +421,8 @@ riscv_v_state* get_riscv_vector_state(void* ctx) {
     return v_state;
 }
 
-std::optional<VectorState> get_vector_state(void* ctx) {
+// Gets the vector state from the frame, only for recentish Linux kernels
+std::optional<std::array<XmmReg, 32>> get_vector_state(void* ctx) {
     riscv_v_state* v_state = get_riscv_vector_state(ctx);
     if (!v_state) {
         return std::nullopt;
@@ -447,7 +450,10 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
     case SIGBUS: {
         switch (info->si_code) {
         case BUS_ADRALN: {
-            ASSERT(is_in_jit_code(current_state, pc));
+            if (!is_in_jit_code(current_state, pc)) {
+                goto check_guest_signal;
+            }
+
             // TODO: assert it's a vector load/store
             u32 instruction = *(u32*)pc; // Read the faulting instruction
 
@@ -466,11 +472,9 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
             biscuit::GPR address = biscuit::GPR((instruction >> 15) & 0b11111);
             bool is_load = !((instruction >> 5) & 1);
 
-            // TODO: normally this needs to unlink the block, then modify, then relink to be safe
-            void* start = as.GetCursorPointer();
+            u8* cursor = as.GetCursorPointer();
+            as.SetCursorPointer((u8*)(pc - 4)); // go to vsetivli
 
-            ptrdiff_t cursor = as.GetCodeBuffer().GetCursorOffset();
-            as.RewindBuffer(pc - as.GetCodeBuffer().GetOffsetAddress(0) - 4); // go to vsetivli
             u32 vsetivli = *(u32*)(pc - 4);
             ASSERT(((vsetivli & 0b1111111) == 0b1010111) || vsetivli == 0b0010011); // vsetivli or nop
             switch (sew) {
@@ -505,14 +509,13 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
                 break;
             }
             default: {
-                UNREACHABLE();
+                ERROR("Unhandled SEW %d during SIGBUS handler", (int)sew);
                 break;
             }
             }
-            void* end = as.GetCursorPointer();
 
-            as.AdvanceBuffer(cursor);
-            flush_icache(start, end);
+            as.SetCursorPointer(cursor);
+            flush_icache();
             break;
         }
         default: {
@@ -527,20 +530,42 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
             // Most likely self modifying code, check if the write is in one of our translated pages
             if (is_in_jit_code(current_state, pc)) {
                 u64 write_address = (u64)info->si_addr;
-                bool found = false;
-                for (auto page : current_state->recompiler->getProtectedPages()) {
-                    auto start = page.first;
-                    auto end = page.second;
-                    if (write_address >= start && write_address < end) {
-                        found = true;
-                        ERROR("Self modifying code caught");
-                        break;
+
+                u64 write_page_start = write_address & ~0xFFF;
+                u64 write_page_end = write_page_start + 0x1000;
+
+                // At this point, we found self-modifying code. This means that we need to go through
+                // all the thread states, and all their blocks, check if this address is part of **any** block,
+                // and unlink those blocks.
+                WARN("Handling self-modifying code at %016lx", write_address);
+
+                // Need to lock g_thread_states access
+                FELIX86_LOCK; // fine to lock, SIGSEGV happened in jit code, no need to worry about deadlocks
+                              // shouldn't be locked during compilation, so no double lock deadlock potential either
+
+                // TODO: This is extremely slow, please optimize me
+                for (auto& thread_state : g_thread_states) {
+                    auto lock = thread_state->recompiler->lock();
+                    auto& block_map = thread_state->recompiler->getBlockMap();
+                    std::vector<BlockMetadata*> to_invalidate;
+                    for (auto& block : block_map) {
+                        // Check if block intersects with this page
+                        if (write_page_start <= block.second.guest_address_end && block.second.guest_address <= write_page_end) {
+                            // This protected page falls between the guest address range of this block!!
+                            to_invalidate.push_back(&block.second);
+                        }
+                    }
+
+                    for (auto block : to_invalidate) {
+                        thread_state->recompiler->invalidateBlock(block);
                     }
                 }
 
-                if (!found) {
-                    ERROR("Unhandled SIGSEGV SEGV_ACCERR, not in protected page");
-                }
+                FELIX86_UNLOCK;
+
+                // Now that everything was unlinked we can unprotect the page so the write can be performed
+                mprotect((void*)write_page_start, 0x1000, PROT_READ | PROT_WRITE);
+                break;
             } else {
                 ERROR("Unhandled SIGSEGV SEGV_ACCERR, not in JIT code");
             }
@@ -584,7 +609,6 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
     }
     default: {
     check_guest_signal:
-        // First we need to find the current ThreadState object
         SignalHandlerTable& handlers = *current_state->signal_handlers;
         RegisteredSignal& handler = handlers[sig - 1];
         if (!handler.func) {
@@ -592,57 +616,64 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
         }
 
         ASSERT(handler.func != SIG_IGN); // TODO: what does that even mean?
+
+        bool jit_code = is_in_jit_code(current_state, pc);
+        if (!jit_code || current_state->signals_disabled) {
+            WARN("Deferring signal %d", sig);
+            current_state->pending_signals |= 1 << (sig - 1);
+
+            // Unlink the current block, making it jump back to the dispatcher at the end
+            // This will ensure that the pending signal is eventually handled if we are stuck in a loop
+            // For example, if a block is in a loop that also had a host function call and this signal was triggered
+            // during the function call
+            g_emulator->UnlinkBlock(current_state, current_state->GetRip());
+            return;
+        }
+
+        // It should be safe past this point to use stuff like printf, since this code is guaranteed to be jit code
         if (g_strace) {
             STRACE("------- Guest signal %s -------", strsignal(sig));
         }
 
-        WARN("Executing signal handler for %s", strsignal(sig));
+        WARN("Executing signal handler for \"%s\"", strsignal(sig));
 
-        // TODO: this could cause issues if it never jumps back to the dispatcher
-        if (current_state->signals_disabled) {
-            ERROR("Signal %d hit while signals are disabled", sig);
+        XmmReg* xmms;
 
-            // Signals are disabled! This might be because we are currently executing a disabled region of code, such as a rep instruction or an
-            // atomic instruction that uses lr/sc. We need to queue the signal to be handled later.
-            current_state->pending_signals.push(sig);
-
-            // Also check that there's no more than 1000 signals in the queue. Arbitrary number, but the only case where this realistically happens
-            // is when the signal keeps hitting over and over, which means it is a synchronous signal. We don't want to deadlock the thread and eat up
-            // all the memory.
-            if (current_state->pending_signals.size() > 1000) {
-                ERROR("Too many pending signals, something is wrong");
-            }
-            return;
+        u64* gprs = (u64*)context->uc_mcontext.__gregs;
+        auto host_vecs = get_vector_state(ctx);
+        if (host_vecs) {
+            // Xmms start at the first allocated register, xmm0-xmm15 are allocated to sequential host registers so we are fine
+            xmms = &(*host_vecs)[Recompiler::allocatedVec(X86_REF_XMM0).Index()];
+        } else {
+            // In the chance that this is an old kernel and we couldn't get the vector state in the signal handler, let's at least
+            // get the most recent state we are aware of
+            xmms = current_state->xmm;
         }
 
-        bool jit_code = is_in_jit_code(current_state, pc);
-        auto vecs = get_vector_state(ctx);
         bool use_altstack = handler.flags & SA_ONSTACK;
 
         sigset_t mask_during_signal;
         mask_during_signal = handler.mask;
-#ifndef SA_NODEFER
-#define SA_NODEFER 0x40000000
-#endif
+
         if (!(handler.flags & SA_NODEFER)) {
             sigaddset(&mask_during_signal, sig);
         }
 
-        BlockMetadata* metadata = nullptr;
-        u64 actual_rip = current_state->GetRip();
-        if (jit_code) {
-            metadata = get_block_metadata(current_state, pc);
-            actual_rip = get_actual_rip(*metadata, pc);
-        }
+        BlockMetadata* metadata = get_block_metadata(current_state, pc);
+        u64 actual_rip = get_actual_rip(*metadata, pc);
 
         // Prepares everything necessary to run the signal handler when we return from the host signal handler.
         // The stack is switched if necessary and filled with the frame that the signal handler expects.
-        setup(metadata, actual_rip, current_state, mask_during_signal, (u64*)context->uc_mcontext.__gregs, vecs, use_altstack, jit_code);
+        Signals::setupFrame(metadata, actual_rip, current_state, mask_during_signal, gprs, xmms, use_altstack, jit_code);
 
         current_state->SetGpr(X86_REF_RDI, sig);
 
         // Now we just need to set RIP to the handler function
         current_state->SetRip((u64)handler.func);
+
+        if (sig == SIGCHLD) {
+            WARN("SIGCHLD, are we copying siginfo correctly?");
+        }
 
         // Block the signals specified in the sa_mask until the signal handler returns
         sigset_t new_mask;
@@ -653,10 +684,8 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
             handler.func = nullptr;
         }
 
-        if (jit_code) {
-            // If in jit code, make it jump to the dispatcher immediately. If it's not in jit code, just let it naturally go to the dispatcher.
-            context->uc_mcontext.__gregs[REG_PC] = (u64)recompiler.getCompileNext();
-        }
+        // Make it jump to the dispatcher immediately after returning
+        context->uc_mcontext.__gregs[REG_PC] = (u64)recompiler.getCompileNext();
         break;
     }
     }
@@ -671,11 +700,13 @@ void Signals::initialize() {
 
     sigaction(SIGILL, &sa, nullptr);
     sigaction(SIGBUS, &sa, nullptr);
+    sigaction(SIGSEGV, &sa, nullptr);
 }
 
 void Signals::registerSignalHandler(ThreadState* state, int sig, void* handler, sigset_t mask, int flags) {
     ASSERT(sig >= 1 && sig <= 64);
-    // TODO: atomic!!
+
+    // Hopefully externally synchronized, no need for locks :cluegi: (TODO: add mutex to signal_handlers)
     (*state->signal_handlers)[sig - 1] = {handler, mask, flags};
 
     // Start capturing at the first register of a signal handler and don't stop capturing even if it is disabled
@@ -690,6 +721,5 @@ void Signals::registerSignalHandler(ThreadState* state, int sig, void* handler, 
 
 RegisteredSignal Signals::getSignalHandler(ThreadState* state, int sig) {
     ASSERT(sig >= 1 && sig <= 64);
-    // TODO: atomic!!
     return (*state->signal_handlers)[sig - 1];
 }

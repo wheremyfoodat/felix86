@@ -1,11 +1,8 @@
 #include <stdbool.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include "felix86/common/debug.hpp"
 #include "felix86/common/exit.hpp"
 #include "felix86/common/global.hpp"
-#include "felix86/common/utility.hpp"
 
 #define ANSI_COLOR_RED "\x1b[31m"
 #define ANSI_COLOR_GREEN "\x1b[32m"
@@ -73,8 +70,9 @@
 
 #define ASSERT(condition)                                                                                                                            \
     do {                                                                                                                                             \
-        if (!(condition))                                                                                                                            \
-            UNREACHABLE();                                                                                                                           \
+        if (!(condition)) {                                                                                                                          \
+            ERROR("Assertion failed: %s", #condition);                                                                                               \
+        }                                                                                                                                            \
     } while (false)
 
 #define ASSERT_MSG(condition, format, ...)                                                                                                           \

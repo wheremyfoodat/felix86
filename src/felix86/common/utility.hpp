@@ -1,6 +1,6 @@
 #pragma once
 
-#include <string>
+#include <cstddef>
 #include <stdbool.h>
 #include <stdint.h>
 #include "biscuit/isa.hpp"
@@ -14,8 +14,6 @@ using i64 = int64_t;
 using i32 = int32_t;
 using i16 = int16_t;
 using i8 = int8_t;
-
-std::string GetNameString(u32 name);
 
 [[nodiscard]] constexpr bool IsValidSigned12BitImm(i64 value) {
     return value >= -2048 && value <= 2047;
@@ -35,7 +33,7 @@ void felix86_divu128(struct ThreadState* state, u64 divisor);
 u64 sext(u64 value, u8 size);
 u64 sext_if_64(u64 value, u8 size_e);
 
-void flush_icache(void* start, void* end);
+void flush_icache();
 
 int guest_breakpoint(const char* name, u64 address);
 
@@ -49,8 +47,6 @@ void felix86_fxrstor(struct ThreadState* state, u64 address, bool fxrstor64);
 
 void felix86_packuswb(u8* dst, u8* src);
 void felix86_packusdw(u16* dst, u8* src);
-void felix86_packsswb(u8* dst, u8* src);
-void felix86_packssdw(u16* dst, u8* src);
 void felix86_pmaddwd(i16* dst, i16* src);
 
 void push_calltrace(ThreadState* state);
@@ -78,10 +74,7 @@ inline RMode rounding_mode(x86RoundingMode mode) {
     case x86RoundingMode::Truncate:
         return RMode::RTZ;
     }
-
-    printf("how did we get here\n");
-    exit(1);
-    return RMode::RNE;
+    __builtin_unreachable();
 }
 
 typedef struct {
@@ -96,3 +89,6 @@ bool felix86_bts(u64 address, i64 offset);
 bool felix86_btr(u64 address, i64 offset);
 bool felix86_btc(u64 address, i64 offset);
 bool felix86_bt(u64 address, i64 offset);
+void felix86_psadbw(u8* dst, u8* src);
+
+const char* print_exit_reason(int reason);

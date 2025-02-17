@@ -1,8 +1,8 @@
 #pragma once
 
 #include <array>
+#include <mutex>
 #include <unordered_map>
-#include <unordered_set>
 #include <Zydis/Utils.h>
 #include "Zydis/Decoder.h"
 #include "biscuit/assembler.hpp"
@@ -34,7 +34,10 @@ struct RegisterAccess {
 struct BlockMetadata {
     void* address{};
     void* address_end{};
-    std::vector<u64> pending_links{};
+    u64 guest_address{};
+    u64 guest_address_end{};
+    std::vector<u8*> pending_links{};
+    std::vector<u8*> links{};                             // where this block was linked to, used for unlinking it
     std::vector<std::pair<u64, u64>> instruction_spans{}; // {guest, host}
     std::array<std::vector<RegisterAccess>, allocated_reg_count> register_accesses;
 };
@@ -57,9 +60,25 @@ struct Recompiler {
 
     biscuit::Vec scratchVec();
 
+    biscuit::FPR scratchFPR();
+
     void popScratch();
 
     void popScratchVec();
+
+    void popScratchFPR();
+
+    biscuit::GPR getTOP();
+
+    void pushST(biscuit::GPR top, biscuit::FPR st);
+
+    void setTOP(biscuit::GPR top);
+
+    biscuit::FPR getST(biscuit::GPR top, int index);
+
+    biscuit::FPR getST(biscuit::GPR top, ZydisDecodedOperand* operand);
+
+    void setST(biscuit::GPR top, int index, biscuit::FPR value);
 
     biscuit::GPR getOperandGPR(ZydisDecodedOperand* operand);
 
@@ -133,6 +152,8 @@ struct Recompiler {
 
     void jumpAndLinkConditional(biscuit::GPR condition, biscuit::GPR gpr_true, biscuit::GPR gpr_false, u64 rip_true, u64 rip_false);
 
+    void invalidateBlock(BlockMetadata* block);
+
     constexpr static biscuit::GPR threadStatePointer() {
         return x27; // saved register so that when we exit VM we don't have to save it
     }
@@ -145,10 +166,140 @@ struct Recompiler {
 
     x86_size_e zydisToSize(ZyanU8 size);
 
-    // Get the allocated register for the given register reference
-    static biscuit::GPR allocatedGPR(x86_ref_e reg);
+    std::lock_guard<std::mutex> lock() {
+        return std::lock_guard{block_map_mutex};
+    }
 
-    static biscuit::Vec allocatedVec(x86_ref_e reg);
+    // Get the allocated register for the given register reference
+    static constexpr biscuit::GPR allocatedGPR(x86_ref_e reg) {
+        // RDI, RSI, RDX, R10, R8, R9 are allocated to a0, a1, a2, a3, a4, a5 to match the syscall abi and save some swapping instructions
+        switch (reg) {
+        case X86_REF_RAX: {
+            return biscuit::x5;
+        }
+        case X86_REF_RCX: {
+            return biscuit::x26;
+        }
+        case X86_REF_RDX: {
+            return biscuit::x12; // a2
+        }
+        case X86_REF_RBX: {
+            return biscuit::x8;
+        }
+        case X86_REF_RSP: {
+            return biscuit::x9;
+        }
+        case X86_REF_RBP: {
+            return biscuit::x18;
+        }
+        case X86_REF_RSI: {
+            return biscuit::x11; // a1
+        }
+        case X86_REF_RDI: {
+            return biscuit::x10; // a0
+        }
+        case X86_REF_R8: {
+            return biscuit::x14; // a5
+        }
+        case X86_REF_R9: {
+            return biscuit::x15; // a4
+        }
+        case X86_REF_R10: {
+            return biscuit::x13; // a3
+        }
+        case X86_REF_R11: {
+            return biscuit::x16;
+        }
+        case X86_REF_R12: {
+            return biscuit::x17;
+        }
+        case X86_REF_R13: {
+            return biscuit::x22;
+        }
+        case X86_REF_R14: {
+            return biscuit::x19;
+        }
+        case X86_REF_R15: {
+            return biscuit::x20;
+        }
+        case X86_REF_CF: {
+            return biscuit::x21;
+        }
+        case X86_REF_AF: {
+            return biscuit::x7;
+        }
+        case X86_REF_ZF: {
+            return biscuit::x23;
+        }
+        case X86_REF_SF: {
+            return biscuit::x24;
+        }
+        case X86_REF_OF: {
+            return biscuit::x25;
+        }
+        default: {
+            UNREACHABLE();
+            return x0;
+        }
+        }
+    }
+
+    static constexpr biscuit::Vec allocatedVec(x86_ref_e reg) {
+        switch (reg) {
+        case X86_REF_XMM0: {
+            return biscuit::v1;
+        }
+        case X86_REF_XMM1: {
+            return biscuit::v2;
+        }
+        case X86_REF_XMM2: {
+            return biscuit::v3;
+        }
+        case X86_REF_XMM3: {
+            return biscuit::v4;
+        }
+        case X86_REF_XMM4: {
+            return biscuit::v5;
+        }
+        case X86_REF_XMM5: {
+            return biscuit::v6;
+        }
+        case X86_REF_XMM6: {
+            return biscuit::v7;
+        }
+        case X86_REF_XMM7: {
+            return biscuit::v8;
+        }
+        case X86_REF_XMM8: {
+            return biscuit::v9;
+        }
+        case X86_REF_XMM9: {
+            return biscuit::v10;
+        }
+        case X86_REF_XMM10: {
+            return biscuit::v11;
+        }
+        case X86_REF_XMM11: {
+            return biscuit::v12;
+        }
+        case X86_REF_XMM12: {
+            return biscuit::v13;
+        }
+        case X86_REF_XMM13: {
+            return biscuit::v14;
+        }
+        case X86_REF_XMM14: {
+            return biscuit::v15;
+        }
+        case X86_REF_XMM15: {
+            return biscuit::v16;
+        }
+        default: {
+            UNREACHABLE();
+            return v0;
+        }
+        }
+    }
 
     bool setVectorState(SEW sew, int elem_count, LMUL grouping = LMUL::M1);
 
@@ -172,7 +323,7 @@ struct Recompiler {
 
     void repEpilogue(Label* loop_body, biscuit::GPR rcx);
 
-    void repzEpilogue(Label* loop_body, bool is_repz);
+    void repzEpilogue(Label* loop_body, Label* loop_end, biscuit::GPR rcx, bool is_repz);
 
     bool isGPR(ZydisRegister reg);
 
@@ -188,6 +339,8 @@ struct Recompiler {
 
     void* emitSigreturnThunk();
 
+    void* emitF80ToF64Function();
+
     auto& getBlockMap() {
         return block_metadata;
     }
@@ -198,9 +351,11 @@ struct Recompiler {
 
     void popCalltrace();
 
-    std::vector<std::pair<u64, u64>>& getProtectedPages() {
-        return read_only_pages;
-    }
+    void unlinkBlock(ThreadState* state, u64 rip);
+
+    bool tryInlineSyscall();
+
+    void checkModifiesRax(ZydisDecodedInstruction& instruction, ZydisDecodedOperand* operands);
 
 private:
     struct RegisterMetadata {
@@ -244,6 +399,10 @@ private:
 
     void markPagesAsReadOnly(u64 start, u64 end);
 
+    void inlineSyscall(int sysno, int argcount);
+
+    void unlinkAt(u8* address_of_jump);
+
     u8* code_cache{};
     biscuit::Assembler as{};
     ZydisDecoder decoder{};
@@ -261,6 +420,9 @@ private:
 
     std::array<RegisterMetadata, 16 + 5 + 16> metadata{};
 
+    // This may be locked by a different thread on a signal handler to unlink a block
+    std::mutex block_map_mutex{};
+
     std::unordered_map<u64, BlockMetadata> block_metadata{};
 
     bool compiling{};
@@ -269,9 +431,11 @@ private:
 
     int vector_scratch_index = 0;
 
-    std::array<std::vector<FlagAccess>, 6> flag_access_cpazso{};
+    int fpu_scratch_index = 0;
 
-    std::vector<std::pair<u64, u64>> read_only_pages{};
+    int rax_value = -1;
+
+    std::array<std::vector<FlagAccess>, 6> flag_access_cpazso{};
 
     BlockMetadata* current_block_metadata{};
     HandlerMetadata* current_meta{};

@@ -6,6 +6,7 @@
 #include <poll.h>
 #include <sched.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/utsname.h>
@@ -30,36 +31,6 @@
 #define felix86_x86_64_ARCH_GET_GS 0x1004
 
 #define HOST_SYSCALL(name, ...) (syscall(match_host(felix86_x86_64_##name), ##__VA_ARGS__))
-
-enum {
-
-#define X(name, id) felix86_x86_64_##name = id,
-#include "felix86/hle/syscalls_x86_64.inc"
-#undef X
-};
-
-enum {
-
-#define X(name, id) felix86_riscv64_##name = id,
-#include "felix86/hle/syscalls_riscv64.inc"
-#undef X
-};
-
-consteval int match_host(int syscall) {
-#define X(name)                                                                                                                                      \
-    case felix86_x86_64_##name:                                                                                                                      \
-        return felix86_riscv64_##name;
-    switch (syscall) {
-#include "felix86/hle/syscalls_common.inc"
-#undef X
-    default:
-        ERROR("Host syscall not found: %d", syscall);
-        return -1;
-    }
-#undef X
-}
-
-static_assert(match_host(felix86_x86_64_setxattr) == felix86_riscv64_setxattr);
 
 const char* print_syscall_name(u64 syscall_number) {
     switch (syscall_number) {
@@ -216,7 +187,7 @@ void felix86_syscall(ThreadState* state) {
         }
 
     private:
-        ssize_t inner;
+        ssize_t inner = -1;
     };
 
     Result result;
@@ -225,17 +196,28 @@ void felix86_syscall(ThreadState* state) {
 
     switch (syscall_number) {
     case felix86_x86_64_brk: {
+        // Theoritically this should be externally synchronized by guest glibc...
+        // Still, we'll lock to avoid any potential issues
+        FELIX86_LOCK;
+
         if (rdi == 0) {
-            result = __atomic_load_n(&g_current_brk, __ATOMIC_SEQ_CST);
+            result = g_current_brk;
         } else {
-            __atomic_store_n(&g_current_brk, rdi, __ATOMIC_SEQ_CST);
+            g_current_brk = rdi;
             result = rdi;
         }
 
-        if (result > g_initial_brk + brk_size) {
-            WARN("BRK out of memory on thread %d", gettid());
-            result = -ENOMEM;
+        if (result > g_initial_brk + g_current_brk_size) {
+            u64 new_size = (result - g_initial_brk) * 2;
+            void* new_map = mremap((void*)g_initial_brk, brk_size, new_size, 0);
+            if ((u64)new_map != g_initial_brk) {
+                ERROR("Failed to remap brk with new size: %lx", new_size);
+            }
+            WARN("Resized BRK to %lx", new_size);
+            g_current_brk_size = new_size;
         }
+
+        FELIX86_UNLOCK;
 
         STRACE("brk(%p) = %p", (void*)rdi, (void*)result);
         break;
@@ -332,6 +314,7 @@ void felix86_syscall(ThreadState* state) {
             detecting_memory_region = false;
             added_region = true;
             ASSERT(result != -1);
+            // TODO: this whole thing is hacky. Can we use file descriptors to get memory mappings?
             MemoryMetadata::AddRegion(name_copy, min_address, max_address);
         }
         FELIX86_UNLOCK;
@@ -457,6 +440,11 @@ void felix86_syscall(ThreadState* state) {
         STRACE("sched_getscheduler(%d) = %d", (int)rdi, (int)result);
         break;
     }
+    case felix86_x86_64_sched_getparam: {
+        result = HOST_SYSCALL(sched_getparam, rdi, (struct sched_param*)rsi);
+        STRACE("sched_getparam(%d, %p) = %d", (int)rdi, (void*)rsi, (int)result);
+        break;
+    }
     case felix86_x86_64_clock_gettime: {
         result = HOST_SYSCALL(clock_gettime, rdi, (struct timespec*)rsi);
         STRACE("clock_gettime(%d, %p) = %d", (int)rdi, (void*)rsi, (int)result);
@@ -505,6 +493,39 @@ void felix86_syscall(ThreadState* state) {
         if (result >= 0) {
             *guest_stat = host_stat;
         }
+        break;
+    }
+    case felix86_x86_64_lstat: {
+        auto path = fs.AtPath(AT_FDCWD, (const char*)rdi);
+
+        if (!path) {
+            result = -EACCES;
+            STRACE("lstat(%s, %p) = %d", (const char*)rdi, (void*)rsi, (int)result);
+            break;
+        }
+
+        x64Stat* guest_stat = (x64Stat*)rsi;
+        struct stat host_stat;
+        result = lstat(path->c_str(), &host_stat);
+        STRACE("lstat(%s, %p) = %d", path->c_str(), (void*)rsi, (int)result);
+        if (result >= 0) {
+            *guest_stat = host_stat;
+        }
+        break;
+    }
+    case felix86_x86_64_fsync: {
+        result = HOST_SYSCALL(fsync, rdi);
+        STRACE("fsync(%d) = %d", (int)rdi, (int)result);
+        break;
+    }
+    case felix86_x86_64_sync: {
+        result = HOST_SYSCALL(sync);
+        STRACE("sync() = %d", (int)result);
+        break;
+    }
+    case felix86_x86_64_syncfs: {
+        result = HOST_SYSCALL(syncfs, rdi);
+        STRACE("syncfs(%d) = %d", (int)rdi, (int)result);
         break;
     }
     case felix86_x86_64_sendmmsg: {
@@ -621,9 +642,10 @@ void felix86_syscall(ThreadState* state) {
         break;
     }
     case felix86_x86_64_exit_group: {
-        VERBOSE("Emulator called exit_group(%d)", (int)rdi);
         STRACE("exit_group(%d)", (int)rdi);
-        result = HOST_SYSCALL(exit_group, rdi);
+        state->exit_reason = EXIT_REASON_EXIT_GROUP_SYSCALL;
+        g_emulator->CleanExit(state);
+        result = 0; // for the warning
         break;
     }
     case felix86_x86_64_access: {
@@ -707,11 +729,12 @@ void felix86_syscall(ThreadState* state) {
         result = fs.OpenAt(rdi, (const char*)rsi, rdx, r10);
         STRACE("openat(%d, %s, %d, %d) = %d", (int)rdi, (const char*)rsi, (int)rdx, (int)r10, (int)result);
 
-        FELIX86_LOCK;
+        std::filesystem::path path = fs.AtPath(rdi, (const char*)rsi).value_or(std::filesystem::path());
+
+        FELIX86_LOCK; // TODO: get rid of this stuff, see close syscall comment
         if (MemoryMetadata::IsInInterpreterRegion(state->rip)) {
             name = std::filesystem::path((const char*)rsi).filename().string();
-            region_path = fs.AtPath(rdi, (const char*)rsi).value_or(std::filesystem::path());
-
+            region_path = path;
             if (name.find(".so") != std::string::npos) {
                 detecting_memory_region = true;
                 min_address = ULONG_MAX;
@@ -722,6 +745,16 @@ void felix86_syscall(ThreadState* state) {
             }
         }
         FELIX86_UNLOCK;
+        break;
+    }
+    case felix86_x86_64_tgkill: {
+        STRACE("tgkill(%d, %d, %d) = %d", (int)rdi, (int)rsi, (int)rdx, (int)result);
+        result = HOST_SYSCALL(tgkill, rdi, rsi, rdx);
+        break;
+    }
+    case felix86_x86_64_kill: {
+        STRACE("kill(%d, %d) = %d", (int)rdi, (int)rsi, (int)result);
+        result = HOST_SYSCALL(kill, rdi, rsi);
         break;
     }
     case felix86_x86_64_mmap: {
@@ -748,6 +781,11 @@ void felix86_syscall(ThreadState* state) {
     case felix86_x86_64_getuid: {
         result = HOST_SYSCALL(getuid);
         STRACE("getuid() = %d", (int)result);
+        break;
+    }
+    case felix86_x86_64_fdatasync: {
+        result = HOST_SYSCALL(fdatasync, rdi);
+        STRACE("fdatasync(%d) = %d", (int)rdi, (int)result);
         break;
     }
     case felix86_x86_64_geteuid: {
@@ -886,6 +924,24 @@ void felix86_syscall(ThreadState* state) {
         STRACE("statfs(%s, %p) = %d", path->c_str(), (void*)rsi, (int)result);
         break;
     }
+    case felix86_x86_64_stat: {
+        std::optional<std::filesystem::path> path = fs.AtPath(AT_FDCWD, (const char*)rdi);
+
+        if (!path) {
+            STRACE("stat(%s, %p) = %d", (char*)rdi, (void*)rsi, -EACCES);
+            result = -EACCES;
+            break;
+        }
+
+        x64Stat* guest_stat = (x64Stat*)rsi;
+        struct stat host_stat;
+        result = stat(path->c_str(), &host_stat);
+        STRACE("stat(%s, %p) = %d", path->c_str(), (void*)rsi, (int)result);
+        if (result >= 0) {
+            *guest_stat = host_stat;
+        }
+        break;
+    }
     case felix86_x86_64_fstatfs: {
         result = HOST_SYSCALL(fstatfs, rdi, (struct statfs*)rsi);
         STRACE("fstatfs(%d, %p) = %d", (int)rdi, (void*)rsi, (int)result);
@@ -905,7 +961,7 @@ void felix86_syscall(ThreadState* state) {
         STRACE("exit(%d)", (int)rdi);
         state->exit_reason = ExitReason::EXIT_REASON_EXIT_SYSCALL;
         g_emulator->CleanExit(state);
-        result = 0;
+        result = 0; // for the warning
         break;
     }
     case felix86_x86_64_eventfd2: {
@@ -1047,6 +1103,21 @@ void felix86_syscall(ThreadState* state) {
         result = HOST_SYSCALL(futex, rdi, rsi, rdx, r10, r8, r9);
         break;
     }
+    case felix86_x86_64_inotify_init1: {
+        result = HOST_SYSCALL(inotify_init1, rdi);
+        STRACE("inotify_init1(%d) = %d", (int)rdi, (int)result);
+        break;
+    }
+    case felix86_x86_64_inotify_add_watch: {
+        result = HOST_SYSCALL(inotify_add_watch, rdi, (const char*)rsi, rdx);
+        STRACE("inotify_add_watch(%d, %s, %d) = %d", (int)rdi, (const char*)rsi, (int)rdx, (int)result);
+        break;
+    }
+    case felix86_x86_64_inotify_rm_watch: {
+        result = HOST_SYSCALL(inotify_rm_watch, rdi, rsi);
+        STRACE("inotify_rm_watch(%d, %d) = %d", (int)rdi, (int)rsi, (int)result);
+        break;
+    }
     case felix86_x86_64_fallocate: {
         result = HOST_SYSCALL(fallocate, rdi, rsi, rdx, r10);
         STRACE("fallocate(%d, %d, %d, %d) = %d", (int)rdi, (int)rsi, (int)rdx, (int)r10, (int)result);
@@ -1111,19 +1182,70 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
 
-        WARN("execve has bad support currently");
-        result = HOST_SYSCALL(execve, path->c_str(), (char**)rsi, (char**)rdx);
-        STRACE("execve(%s, %p, %p) = %d", path->c_str(), (void*)rsi, (void*)rdx, (int)result);
-
-        if (result == 0) {
-            // A successful call to execve(2) removes any existing alternate signal stack
-            state->alt_stack = {};
+        if (!rsi || !rdx) {
+            // Technically legal for programs to call execve with NULL args or env, but we don't support it
+            WARN("execve called with NULL args or env");
+            result = -EFAULT;
+            break;
         }
+
+        std::string spath = path->string();
+        std::vector<const char*> args = g_host_argv;
+        const char** guest_argv = (const char**)rsi;
+        // Skip first argument, which is the path
+        guest_argv++;
+        args.push_back(spath.c_str());
+        if (guest_argv) {
+            while (*guest_argv) {
+                args.push_back(*guest_argv);
+                guest_argv++;
+            }
+        }
+        args.push_back(nullptr);
+
+        std::vector<const char*> env;
+        const char** guest_env = (const char**)rdx;
+        while (*guest_env) {
+            env.push_back(*guest_env);
+            guest_env++;
+        }
+        env.push_back("__FELIX86_EXECVE=1"); // tell the new emulator instance that we're in execve
+        env.push_back(nullptr);
+
+        std::string log;
+        log += "execve(";
+        for (const char* arg : args) {
+            log += arg;
+            log += " ";
+        }
+        log.pop_back();
+        log += ")";
+        LOG("%s", log.c_str());
+
+        // execve, there's no going back
+        result = execve("/proc/self/exe", (char* const*)args.data(), (char* const*)env.data());
+
+        // if we're here, execve failed
+        WARN("execve(%s, %p, %p) failed: %s", (const char*)rdi, (void*)rsi, (void*)rdx, strerror(errno));
         break;
     }
     case felix86_x86_64_umask: {
         result = HOST_SYSCALL(umask, rdi);
         STRACE("umask(%d) = %d", (int)rdi, (int)result);
+        break;
+    }
+    case felix86_x86_64_linkat: {
+        auto oldpath = fs.AtPath(rdi, (const char*)rsi);
+        auto newpath = fs.AtPath(rdx, (const char*)r10);
+
+        if (!oldpath || !newpath) {
+            STRACE("linkat(%d, %s, %d, %s, %d) = %d", (int)rdi, (char*)rsi, (int)rdx, (char*)r10, (int)r8, -EACCES);
+            result = -EACCES;
+            break;
+        }
+
+        result = linkat(rdi, oldpath->c_str(), rdx, newpath->c_str(), r8);
+        STRACE("linkat(%d, %s, %d, %s, %d) = %d", (int)rdi, oldpath->c_str(), (int)rdx, newpath->c_str(), (int)r8, (int)result);
         break;
     }
     case felix86_x86_64_unlink: {

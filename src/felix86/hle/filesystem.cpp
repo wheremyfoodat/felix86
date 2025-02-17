@@ -49,10 +49,6 @@ bool Filesystem::LoadRootFS(const std::filesystem::path& path) {
         }
     }
 
-    FELIX86_LOCK;
-    cwd_path = rootfs_path;
-    FELIX86_UNLOCK;
-
     return true;
 }
 
@@ -76,14 +72,24 @@ std::optional<std::filesystem::path> Filesystem::AtPath(int dirfd, const char* p
             return std::filesystem::path(pathname);
         }
 
+        if (std::string(pathname) == proc_self_exe) {
+            std::string executable_path_string = executable_path.string();
+            if (strncmp(executable_path_string.c_str(), rootfs_path_string.c_str(), rootfs_path_string.size()) == 0) {
+                executable_path_string = executable_path_string.substr(rootfs_path_string.size());
+            }
+
+            ASSERT(executable_path_string.size() > 0);
+            if (executable_path_string[0] != '/') {
+                executable_path_string = "/" + executable_path_string;
+            }
+
+            return std::filesystem::path(executable_path_string);
+        }
+
         // Check if it starts with /proc
         constexpr static const char* proc = "/proc";
         if (strncmp(pathname, proc, strlen(proc)) == 0) {
             return std::filesystem::path(pathname);
-        }
-
-        if (std::string(pathname) == proc_self_exe) { // TODO: remove this, AtPath should handle this
-            return executable_path;                   // TODO: remove the rootfs from this path
         }
     }
 
@@ -162,6 +168,14 @@ std::optional<std::filesystem::path> Filesystem::AtPath(int dirfd, const char* p
 ssize_t Filesystem::ReadLinkAt(int dirfd, const char* pathname, char* buf, u32 bufsiz) {
     if (std::string(pathname) == proc_self_exe) { // TODO: remove this, AtPath should handle this
         std::string executable_path_string = executable_path.string();
+        if (strncmp(executable_path_string.c_str(), rootfs_path_string.c_str(), rootfs_path_string.size()) == 0) {
+            executable_path_string = executable_path_string.substr(rootfs_path_string.size());
+        }
+
+        if (executable_path_string[0] != '/') {
+            executable_path_string = "/" + executable_path_string;
+        }
+
         // readlink does not append a null terminator
         size_t written_size = std::min(executable_path_string.size(), (size_t)bufsiz);
         memcpy(buf, executable_path_string.c_str(), written_size);
@@ -240,14 +254,12 @@ bool Filesystem::validatePath(const std::filesystem::path& path) {
 
 int Filesystem::Chdir(const char* path) {
     std::filesystem::path new_cwd = path;
-    new_cwd = new_cwd.lexically_normal();
     if (new_cwd.is_relative()) {
         FELIX86_LOCK;
         new_cwd = cwd_path / new_cwd;
         FELIX86_UNLOCK;
-    } else {
-        new_cwd = rootfs_path / new_cwd.relative_path();
     }
+    new_cwd = new_cwd.lexically_normal();
 
     if (!validatePath(new_cwd)) {
         return -ENOENT;
@@ -256,6 +268,7 @@ int Filesystem::Chdir(const char* path) {
     FELIX86_LOCK;
     cwd_path = new_cwd;
     FELIX86_UNLOCK;
+
     return 0;
 }
 

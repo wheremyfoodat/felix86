@@ -14,6 +14,54 @@ void felix86_cpuid(ThreadState* state);
 
 #define HAS_REP (instruction.attributes & (ZYDIS_ATTRIB_HAS_REP | ZYDIS_ATTRIB_HAS_REPZ | ZYDIS_ATTRIB_HAS_REPNZ))
 
+void SetCmpFlags(const HandlerMetadata& meta, Recompiler& rec, biscuit::GPR dst, biscuit::GPR src, biscuit::GPR result, x86_size_e size,
+                 bool zext_src) {
+    u64 sign_mask = rec.getSignMask(size);
+
+    if (rec.shouldEmitFlag(meta.rip, X86_REF_CF)) {
+        biscuit::GPR cf = rec.flagW(X86_REF_CF);
+        if (zext_src) {
+            rec.zext(cf, src, size);
+            AS.SLTU(cf, dst, cf);
+        } else {
+            AS.SLTU(cf, dst, src);
+        }
+    }
+
+    if (rec.shouldEmitFlag(meta.rip, X86_REF_PF)) {
+        rec.updateParity(result);
+    }
+
+    if (rec.shouldEmitFlag(meta.rip, X86_REF_AF)) {
+        biscuit::GPR af = rec.flagW(X86_REF_AF);
+        biscuit::GPR scratch = rec.scratch();
+        AS.ANDI(af, src, 0xF);
+        AS.ANDI(scratch, dst, 0xF);
+        AS.SLTU(af, scratch, af);
+        rec.popScratch();
+    }
+
+    if (rec.shouldEmitFlag(meta.rip, X86_REF_ZF)) {
+        rec.updateZero(result, size);
+    }
+
+    if (rec.shouldEmitFlag(meta.rip, X86_REF_SF)) {
+        rec.updateSign(result, size);
+    }
+
+    if (rec.shouldEmitFlag(meta.rip, X86_REF_OF)) {
+        biscuit::GPR scratch = rec.scratch();
+        biscuit::GPR of = rec.flagW(X86_REF_OF);
+        AS.XOR(scratch, dst, src);
+        AS.XOR(of, dst, result);
+        AS.AND(of, of, scratch);
+        AS.LI(scratch, sign_mask);
+        AS.AND(of, of, scratch);
+        AS.SNEZ(of, of);
+        rec.popScratch();
+    }
+}
+
 enum CmpPredicate {
     EQ_OQ = 0x00,
     LT_OS = 0x01,
@@ -75,17 +123,8 @@ void VEC_function(Recompiler& rec, const HandlerMetadata& meta, ZydisDecodedInst
     rec.restoreRoundingMode();
 }
 
-void is_overflow_sub(Recompiler& rec, biscuit::GPR of, biscuit::GPR lhs, biscuit::GPR rhs, biscuit::GPR result, u64 sign_mask) {
-    biscuit::GPR scratch = rec.scratch();
-    AS.XOR(scratch, lhs, rhs);
-    AS.XOR(of, lhs, result);
-    AS.AND(of, of, scratch);
-    AS.LI(scratch, sign_mask);
-    AS.AND(of, of, scratch);
-    AS.SNEZ(of, of);
-}
-
 void is_overflow_add(Recompiler& rec, biscuit::GPR of, biscuit::GPR lhs, biscuit::GPR rhs, biscuit::GPR result, u64 sign_mask) {
+    // TODO: replace with is_overflow_adc, I think it works in this case too
     biscuit::GPR scratch = rec.scratch();
     AS.XOR(scratch, result, lhs);
     AS.XOR(of, result, rhs);
@@ -93,6 +132,37 @@ void is_overflow_add(Recompiler& rec, biscuit::GPR of, biscuit::GPR lhs, biscuit
     AS.LI(scratch, sign_mask);
     AS.AND(of, of, scratch);
     AS.SNEZ(of, of);
+    rec.popScratch();
+}
+
+// ((s & d) | ((~res) & (s | d))), xor top 2 bits
+void is_overflow_adc(Recompiler& rec, biscuit::GPR of, biscuit::GPR lhs, biscuit::GPR rhs, biscuit::GPR result, int size) {
+    biscuit::GPR scratch = rec.scratch();
+    AS.OR(of, lhs, rhs);
+    AS.NOT(scratch, result);
+    AS.AND(of, scratch, of);
+    AS.AND(scratch, lhs, rhs);
+    AS.OR(of, of, scratch);
+    AS.SRLI(scratch, of, size - 2);
+    AS.SRLI(of, of, size - 1);
+    AS.XOR(of, of, scratch);
+    AS.ANDI(of, of, 1);
+    rec.popScratch();
+}
+
+// (res & (~d | s)) | (~d & s), xor top 2 bits
+void is_overflow_sub(Recompiler& rec, biscuit::GPR of, biscuit::GPR lhs, biscuit::GPR rhs, biscuit::GPR result, int size) {
+    biscuit::GPR scratch = rec.scratch();
+    AS.NOT(scratch, lhs);
+    AS.OR(of, scratch, rhs);
+    AS.AND(of, of, result);
+    AS.AND(scratch, scratch, rhs);
+    AS.OR(of, of, scratch);
+    AS.SRLI(scratch, of, size - 2);
+    AS.SRLI(of, of, size - 1);
+    AS.XOR(of, of, scratch);
+    AS.ANDI(of, of, 1);
+    rec.popScratch();
 }
 
 FAST_HANDLE(MOV) {
@@ -140,7 +210,6 @@ FAST_HANDLE(ADD) {
     if (rec.shouldEmitFlag(meta.rip, X86_REF_OF)) {
         biscuit::GPR of = rec.flagW(X86_REF_OF);
         is_overflow_add(rec, of, dst, src, result, sign_mask);
-        rec.popScratch();
     }
 
     rec.setOperandGPR(&operands[0], result);
@@ -154,7 +223,6 @@ FAST_HANDLE(SUB) {
     AS.SUB(result, dst, src);
 
     x86_size_e size = rec.getOperandSize(&operands[0]);
-    u64 sign_mask = rec.getSignMask(size);
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_CF)) {
         biscuit::GPR cf = rec.flagW(X86_REF_CF);
@@ -189,8 +257,7 @@ FAST_HANDLE(SUB) {
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_OF)) {
         biscuit::GPR of = rec.flagW(X86_REF_OF);
-        is_overflow_sub(rec, of, dst, src, result, sign_mask);
-        rec.popScratch();
+        is_overflow_sub(rec, of, dst, src, result, rec.getBitSize(size));
     }
 
     rec.setOperandGPR(&operands[0], result);
@@ -278,7 +345,6 @@ FAST_HANDLE(ADC) {
     biscuit::GPR dst = rec.getOperandGPR(&operands[0]);
     biscuit::GPR cf = rec.flag(X86_REF_CF);
     x86_size_e size = rec.getOperandSize(&operands[0]);
-    u64 sign_mask = rec.getSignMask(size);
 
     AS.ADD(result, dst, src);
     AS.ADD(result_2, result, cf);
@@ -294,30 +360,14 @@ FAST_HANDLE(ADC) {
         AS.ANDI(scratch, dst, 0xF);
         AS.SLTU(af, af, scratch);
         AS.ANDI(scratch, result_2, 0xF);
-        AS.SEQZ(scratch, scratch);
+        AS.SLTU(scratch, scratch, cf);
         AS.OR(af, af, scratch);
         rec.popScratch();
     }
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_OF)) {
-        biscuit::GPR scratch = rec.scratch();
-        biscuit::GPR scratch2 = rec.scratch();
         biscuit::GPR of = rec.flagW(X86_REF_OF);
-        AS.XOR(scratch, result, dst);
-        AS.XOR(of, result, src);
-        AS.AND(of, of, scratch);
-        AS.LI(scratch, sign_mask);
-        AS.AND(of, of, scratch);
-        AS.SNEZ(of, of);
-        AS.XOR(scratch2, result_2, cf);
-        AS.XOR(scratch, result_2, result);
-        AS.AND(scratch, scratch, scratch2);
-        AS.LI(scratch2, sign_mask);
-        AS.AND(scratch, scratch, scratch2);
-        AS.SNEZ(scratch, scratch);
-        AS.OR(of, of, scratch);
-        rec.popScratch();
-        rec.popScratch();
+        is_overflow_adc(rec, of, dst, src, result_2, rec.getBitSize(size));
     }
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_CF)) {
@@ -352,50 +402,8 @@ FAST_HANDLE(CMP) {
     AS.SUB(result, dst, src);
 
     x86_size_e size = rec.getOperandSize(&operands[0]);
-    u64 sign_mask = rec.getSignMask(size);
 
-    if (rec.shouldEmitFlag(meta.rip, X86_REF_CF)) {
-        biscuit::GPR cf = rec.flagW(X86_REF_CF);
-        if (operands[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE && size != X86_SIZE_QWORD) {
-            rec.zext(cf, src, size);
-            AS.SLTU(cf, dst, cf);
-        } else {
-            AS.SLTU(cf, dst, src);
-        }
-    }
-
-    if (rec.shouldEmitFlag(meta.rip, X86_REF_PF)) {
-        rec.updateParity(result);
-    }
-
-    if (rec.shouldEmitFlag(meta.rip, X86_REF_AF)) {
-        biscuit::GPR af = rec.flagW(X86_REF_AF);
-        biscuit::GPR scratch = rec.scratch();
-        AS.ANDI(af, src, 0xF);
-        AS.ANDI(scratch, dst, 0xF);
-        AS.SLTU(af, scratch, af);
-        rec.popScratch();
-    }
-
-    if (rec.shouldEmitFlag(meta.rip, X86_REF_ZF)) {
-        rec.updateZero(result, size);
-    }
-
-    if (rec.shouldEmitFlag(meta.rip, X86_REF_SF)) {
-        rec.updateSign(result, size);
-    }
-
-    if (rec.shouldEmitFlag(meta.rip, X86_REF_OF)) {
-        biscuit::GPR scratch = rec.scratch();
-        biscuit::GPR of = rec.flagW(X86_REF_OF);
-        AS.XOR(scratch, dst, src);
-        AS.XOR(of, dst, result);
-        AS.AND(of, of, scratch);
-        AS.LI(scratch, sign_mask);
-        AS.AND(of, of, scratch);
-        AS.SNEZ(of, of);
-        rec.popScratch();
-    }
+    SetCmpFlags(meta, rec, dst, src, result, size, operands[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE && size != X86_SIZE_QWORD);
 }
 
 FAST_HANDLE(OR) {
@@ -623,14 +631,15 @@ FAST_HANDLE(PUSH) {
     biscuit::GPR src = rec.getOperandGPR(&operands[0]);
     biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, X86_SIZE_QWORD);
     int imm = instruction.operand_width == 16 ? -2 : -8;
-    AS.ADDI(rsp, rsp, imm);
-    rec.setRefGPR(X86_REF_RSP, X86_SIZE_QWORD, rsp);
 
     if (instruction.operand_width == 16) {
-        AS.SH(src, 0, rsp);
+        AS.SH(src, imm, rsp);
     } else {
-        AS.SD(src, 0, rsp);
+        AS.SD(src, imm, rsp);
     }
+
+    AS.ADDI(rsp, rsp, imm);
+    rec.setRefGPR(X86_REF_RSP, X86_SIZE_QWORD, rsp);
 }
 
 FAST_HANDLE(POP) {
@@ -645,8 +654,15 @@ FAST_HANDLE(POP) {
 
     int imm = instruction.operand_width == 16 ? 2 : 8;
     rec.setOperandGPR(&operands[0], result);
-    AS.ADDI(rsp, rsp, imm);
-    rec.setRefGPR(X86_REF_RSP, X86_SIZE_QWORD, rsp);
+
+    x86_ref_e ref = rec.zydisToRef(operands[0].reg.value);
+    if (ref == X86_REF_RSP) {
+        // pop rsp special case
+        rec.setRefGPR(X86_REF_RSP, X86_SIZE_QWORD, result);
+    } else {
+        AS.ADDI(rsp, rsp, imm);
+        rec.setRefGPR(X86_REF_RSP, X86_SIZE_QWORD, rsp);
+    }
 }
 
 FAST_HANDLE(NOP) {}
@@ -688,9 +704,9 @@ FAST_HANDLE(SHL) {
     if (rec.shouldEmitFlag(meta.rip, X86_REF_SF))
         rec.flag(X86_REF_SF);
 
-    AS.BEQZ(count, &zero_source);
-
     AS.SLL(result, dst, count);
+
+    AS.BEQZ(count, &zero_source);
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_PF)) {
         rec.updateParity(result);
@@ -719,9 +735,9 @@ FAST_HANDLE(SHL) {
         AS.XOR(of, of, rec.flag(X86_REF_CF));
     }
 
-    rec.setOperandGPR(&operands[0], result);
-
     AS.Bind(&zero_source);
+
+    rec.setOperandGPR(&operands[0], result);
 }
 
 FAST_HANDLE(SHR) {
@@ -751,9 +767,9 @@ FAST_HANDLE(SHR) {
     if (rec.shouldEmitFlag(meta.rip, X86_REF_SF))
         rec.flag(X86_REF_SF);
 
-    AS.BEQZ(count, &zero_source);
-
     AS.SRL(result, dst, count);
+
+    AS.BEQZ(count, &zero_source);
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_PF)) {
         rec.updateParity(result);
@@ -780,9 +796,9 @@ FAST_HANDLE(SHR) {
         AS.ANDI(of, of, 1);
     }
 
-    rec.setOperandGPR(&operands[0], result);
-
     AS.Bind(&zero_source);
+
+    rec.setOperandGPR(&operands[0], result);
 }
 
 FAST_HANDLE(SAR) {
@@ -812,8 +828,6 @@ FAST_HANDLE(SAR) {
     if (rec.shouldEmitFlag(meta.rip, X86_REF_SF))
         rec.flag(X86_REF_SF);
 
-    AS.BEQZ(count, &zero_source);
-
     switch (size) {
     case X86_SIZE_BYTE: {
         AS.SLLI(result, dst, 56);
@@ -841,6 +855,8 @@ FAST_HANDLE(SAR) {
     }
     }
 
+    AS.BEQZ(count, &zero_source);
+
     if (rec.shouldEmitFlag(meta.rip, X86_REF_PF)) {
         rec.updateParity(result);
     }
@@ -865,9 +881,9 @@ FAST_HANDLE(SAR) {
         AS.MV(of, x0);
     }
 
-    rec.setOperandGPR(&operands[0], result);
-
     AS.Bind(&zero_source);
+
+    rec.setOperandGPR(&operands[0], result);
 }
 
 FAST_HANDLE(MOVQ) {
@@ -1074,8 +1090,8 @@ FAST_HANDLE(DIV) {
 
         biscuit::GPR address = rec.scratch();
         AS.LI(address, (u64)&felix86_divu128);
-        AS.MV(a0, rec.threadStatePointer());
         AS.MV(a1, src);
+        AS.MV(a0, rec.threadStatePointer());
         AS.JALR(address);
         rec.restoreRoundingMode();
         break;
@@ -1153,8 +1169,8 @@ FAST_HANDLE(IDIV) {
 
         biscuit::GPR address = rec.scratch();
         AS.LI(address, (u64)&felix86_div128);
-        AS.MV(a0, rec.threadStatePointer());
         AS.MV(a1, src);
+        AS.MV(a0, rec.threadStatePointer());
         AS.JALR(address);
         rec.restoreRoundingMode();
         break;
@@ -1251,7 +1267,6 @@ FAST_HANDLE(INC) {
         AS.LI(one, 1);
         is_overflow_add(rec, of, dst, one, res, sign_mask);
         rec.popScratch();
-        rec.popScratch();
     }
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_PF)) {
@@ -1311,10 +1326,8 @@ FAST_HANDLE(DEC) {
     if (rec.shouldEmitFlag(meta.rip, X86_REF_OF)) {
         biscuit::GPR of = rec.flagW(X86_REF_OF);
         biscuit::GPR one = rec.scratch();
-        u64 sign_mask = rec.getSignMask(size);
         AS.LI(one, 1);
-        is_overflow_sub(rec, of, dst, one, res, sign_mask);
-        rec.popScratch();
+        is_overflow_sub(rec, of, dst, one, res, rec.getBitSize(size));
         rec.popScratch();
     }
 
@@ -1453,7 +1466,7 @@ FAST_HANDLE(STC) {
 
 FAST_HANDLE(CBW) {
     biscuit::GPR al = rec.getRefGPR(X86_REF_RAX, X86_SIZE_BYTE);
-    rec.sextb(al, al);
+    rec.sextb(al, al); // al is a scratch already
     rec.setRefGPR(X86_REF_RAX, X86_SIZE_WORD, al);
 }
 
@@ -2176,13 +2189,18 @@ FAST_HANDLE(CPUID) {
 }
 
 FAST_HANDLE(SYSCALL) {
-    biscuit::GPR rcx = rec.getRefGPR(X86_REF_RCX, X86_SIZE_QWORD);
+    if (!g_strace && !g_dont_inline_syscalls) {
+        bool inlined = rec.tryInlineSyscall();
+        if (inlined) {
+            return;
+        }
+    }
+
+    biscuit::GPR rcx = rec.allocatedGPR(X86_REF_RCX);
     AS.LI(rcx, meta.rip + instruction.length);
     rec.setRefGPR(X86_REF_RCX, X86_SIZE_QWORD, rcx);
-    biscuit::GPR flags = rec.getFlags();
-    rec.setRefGPR(X86_REF_R11, X86_SIZE_QWORD, flags);
 
-    // Normally IA32_FMASK masks the RFLAGS but surely we don't have to do anything here :cluegi:
+    // Normally the syscall instruction also writes the flags to R11 but we don't need them in our syscall handler
 
     rec.writebackDirtyState();
 
@@ -2797,18 +2815,7 @@ FAST_HANDLE(RSQRTPS) {
     rec.setOperandVec(&operands[0], dst);
 }
 
-void print_args(ThreadState* state) {
-    printf("movsb, rdi: %lx, rsi: %lx, rcx: %lx\n", state->gprs[X86_REF_RDI], state->gprs[X86_REF_RSI], state->gprs[X86_REF_RCX]);
-}
-
 FAST_HANDLE(MOVSB) {
-#if 0
-    rec.writebackDirtyState();
-    AS.LI(t0, (u64)print_args);
-    AS.MV(a0, rec.threadStatePointer());
-    AS.JALR(t0);
-#endif
-
     u8 width = instruction.operand_width;
     biscuit::GPR rdi = rec.getRefGPR(X86_REF_RDI, X86_SIZE_QWORD);
     biscuit::GPR rsi = rec.getRefGPR(X86_REF_RSI, X86_SIZE_QWORD);
@@ -2884,6 +2891,116 @@ FAST_HANDLE(MOVSD) {
 
 FAST_HANDLE(MOVSQ) {
     fast_MOVSB(rec, meta, instruction, operands);
+}
+
+FAST_HANDLE(CMPSB) {
+    u8 width = instruction.operand_width;
+    biscuit::GPR rdi = rec.getRefGPR(X86_REF_RDI, X86_SIZE_QWORD);
+    biscuit::GPR rsi = rec.getRefGPR(X86_REF_RSI, X86_SIZE_QWORD);
+    biscuit::GPR rcx = rec.getRefGPR(X86_REF_RCX, X86_SIZE_QWORD);
+    biscuit::GPR temp = rec.scratch();
+    biscuit::GPR src1 = rec.scratch();
+    biscuit::GPR src2 = rec.scratch();
+    biscuit::GPR result = rec.scratch();
+    biscuit::GPR df = rec.scratch();
+    AS.LBU(df, offsetof(ThreadState, df), rec.threadStatePointer());
+    x86_size_e size = rec.zydisToSize(width);
+
+    Label end;
+    AS.LI(temp, -width / 8);
+    AS.BNEZ(df, &end);
+    AS.LI(temp, width / 8);
+    AS.Bind(&end);
+
+    Label loop_end, loop_body;
+    if (HAS_REP) {
+        rec.repPrologue(&loop_end, rcx);
+        AS.Bind(&loop_body);
+    }
+
+    rec.readMemory(src1, rsi, 0, size);
+    rec.readMemory(src2, rdi, 0, size);
+
+    AS.SUB(result, src1, src2);
+
+    SetCmpFlags(meta, rec, src1, src2, result, size, false);
+
+    AS.ADD(rdi, rdi, temp);
+    AS.ADD(rsi, rsi, temp);
+
+    if (HAS_REP) {
+        rec.repzEpilogue(&loop_body, &loop_end, rcx, instruction.attributes & ZYDIS_ATTRIB_HAS_REPZ);
+        AS.Bind(&loop_end);
+    }
+
+    rec.setRefGPR(X86_REF_RDI, X86_SIZE_QWORD, rdi);
+    rec.setRefGPR(X86_REF_RSI, X86_SIZE_QWORD, rsi);
+    rec.setRefGPR(X86_REF_RCX, X86_SIZE_QWORD, rcx);
+}
+
+FAST_HANDLE(CMPSW) {
+    fast_CMPSB(rec, meta, instruction, operands);
+}
+
+FAST_HANDLE(CMPSD_string) {
+    fast_CMPSB(rec, meta, instruction, operands);
+}
+
+FAST_HANDLE(CMPSQ) {
+    fast_CMPSB(rec, meta, instruction, operands);
+}
+
+FAST_HANDLE(SCASB) {
+    u8 width = instruction.operand_width;
+    x86_size_e size = rec.zydisToSize(width);
+    biscuit::GPR rax = rec.getRefGPR(X86_REF_RAX, size);
+    biscuit::GPR rdi = rec.getRefGPR(X86_REF_RDI, X86_SIZE_QWORD);
+    biscuit::GPR rcx = rec.getRefGPR(X86_REF_RCX, X86_SIZE_QWORD);
+    biscuit::GPR temp = rec.scratch();
+    biscuit::GPR src2 = rec.scratch();
+    biscuit::GPR result = rec.scratch();
+    biscuit::GPR df = rec.scratch();
+    AS.LBU(df, offsetof(ThreadState, df), rec.threadStatePointer());
+
+    Label end;
+    AS.LI(temp, -width / 8);
+    AS.BNEZ(df, &end);
+    AS.LI(temp, width / 8);
+    AS.Bind(&end);
+
+    Label loop_end, loop_body;
+    if (HAS_REP) {
+        rec.repPrologue(&loop_end, rcx);
+        AS.Bind(&loop_body);
+    }
+
+    rec.readMemory(src2, rdi, 0, size);
+
+    AS.SUB(result, rax, src2);
+
+    SetCmpFlags(meta, rec, rax, src2, result, size, false);
+
+    AS.ADD(rdi, rdi, temp);
+
+    if (HAS_REP) {
+        rec.repzEpilogue(&loop_body, &loop_end, rcx, instruction.attributes & ZYDIS_ATTRIB_HAS_REPZ);
+        AS.Bind(&loop_end);
+    }
+
+    rec.setRefGPR(X86_REF_RDI, X86_SIZE_QWORD, rdi);
+    rec.setRefGPR(X86_REF_RCX, X86_SIZE_QWORD, rcx);
+}
+
+FAST_HANDLE(SCASW) {
+    fast_SCASB(rec, meta, instruction, operands);
+}
+
+FAST_HANDLE(SCASD) {
+    fast_SCASB(rec, meta, instruction, operands);
+}
+
+FAST_HANDLE(SCASQ) {
+    fast_SCASB(rec, meta, instruction, operands);
 }
 
 FAST_HANDLE(STOSB) {
@@ -3080,7 +3197,7 @@ FAST_HANDLE(NEG) {
     x86_size_e size = rec.getOperandSize(&operands[0]);
     biscuit::GPR result = rec.scratch();
     biscuit::GPR dst = rec.getOperandGPR(&operands[0]);
-    if (size == X86_SIZE_BYTE) {
+    if (size == X86_SIZE_BYTE || size == X86_SIZE_BYTE_HIGH) {
         rec.sextb(result, dst);
         AS.NEG(result, result);
     } else if (size == X86_SIZE_WORD) {
@@ -3105,7 +3222,7 @@ FAST_HANDLE(NEG) {
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_OF)) {
         biscuit::GPR of = rec.flagW(X86_REF_OF);
-        is_overflow_sub(rec, of, x0, dst, result, size);
+        is_overflow_sub(rec, of, x0, dst, result, rec.getBitSize(size));
     }
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_SF)) {
@@ -3125,7 +3242,11 @@ FAST_HANDLE(NEG) {
     rec.setOperandGPR(&operands[0], result);
 }
 
-FAST_HANDLE(PACKUSWB) { // Fuzzed
+FAST_HANDLE(PACKUSWB) { // TODO: vectorize
+    // There is no single instruction that can saturate a signed value into an unsigned destination. A sequence of two vector instructions that
+    // rst removes negative numbers by performing a max against 0 using vmax then clips the resulting unsigned value into the destination
+    // using vnclipu can be used if setting vxsat value for negative numbers is not required. A vsetvli is required inbetween these two
+    // instructions to change SEW.
     VEC_function(rec, meta, instruction, operands, (u64)&felix86_packuswb);
 }
 
@@ -3134,11 +3255,41 @@ FAST_HANDLE(PACKUSDW) {
 }
 
 FAST_HANDLE(PACKSSWB) {
-    VEC_function(rec, meta, instruction, operands, (u64)&felix86_packsswb);
+    biscuit::Vec result1 = rec.scratchVec();
+    biscuit::Vec result2 = rec.scratchVec();
+    biscuit::Vec result2_up = rec.scratchVec();
+    biscuit::Vec result = rec.scratchVec();
+    biscuit::Vec dst = rec.getOperandVec(&operands[0]);
+    biscuit::Vec src = rec.getOperandVec(&operands[1]);
+
+    // Use half the register group so we don't run into overlapping problems
+    rec.setVectorState(SEW::E8, 8, LMUL::MF2);
+    AS.VNCLIP(result1, dst, 0);
+    AS.VNCLIP(result2, src, 0);
+    rec.setVectorState(SEW::E64, rec.maxVlen() / 64);
+    AS.VMV(v0, 0b10);
+    AS.VSLIDEUP(result2_up, result2, 1);
+    AS.VMERGE(result, result1, result2_up);
+    rec.setOperandVec(&operands[0], result);
 }
 
 FAST_HANDLE(PACKSSDW) {
-    VEC_function(rec, meta, instruction, operands, (u64)&felix86_packssdw);
+    biscuit::Vec result1 = rec.scratchVec();
+    biscuit::Vec result2 = rec.scratchVec();
+    biscuit::Vec result2_up = rec.scratchVec();
+    biscuit::Vec result = rec.scratchVec();
+    biscuit::Vec dst = rec.getOperandVec(&operands[0]);
+    biscuit::Vec src = rec.getOperandVec(&operands[1]);
+
+    // Use half the register group so we don't run into overlapping problems
+    rec.setVectorState(SEW::E16, 4, LMUL::MF2);
+    AS.VNCLIP(result1, dst, 0);
+    AS.VNCLIP(result2, src, 0);
+    rec.setVectorState(SEW::E64, rec.maxVlen() / 64);
+    AS.VMV(v0, 0b10);
+    AS.VSLIDEUP(result2_up, result2, 1);
+    AS.VMERGE(result, result1, result2_up);
+    rec.setOperandVec(&operands[0], result);
 }
 
 void ROUND(Recompiler& rec, const HandlerMetadata& meta, ZydisDecodedInstruction& instruction, ZydisDecodedOperand* operands, SEW sew, u8 vlen) {
@@ -3215,7 +3366,7 @@ FAST_HANDLE(PMOVMSKB) {
 FAST_HANDLE(MOVMSKPS) {
     biscuit::Vec mask = rec.scratchVec();
     biscuit::Vec src = rec.getOperandVec(&operands[1]);
-    biscuit::GPR dst = rec.getOperandGPR(&operands[0]);
+    biscuit::GPR dst = rec.scratch();
 
     rec.setVectorState(SEW::E32, rec.maxVlen() / 32);
     AS.VMSLT(mask, src, x0);
@@ -3227,9 +3378,9 @@ FAST_HANDLE(MOVMSKPS) {
 FAST_HANDLE(MOVMSKPD) {
     biscuit::Vec mask = rec.scratchVec();
     biscuit::Vec src = rec.getOperandVec(&operands[1]);
-    biscuit::GPR dst = rec.getOperandGPR(&operands[0]);
+    biscuit::GPR dst = rec.scratch();
 
-    rec.setVectorState(SEW::E64, rec.maxVlen() / 32);
+    rec.setVectorState(SEW::E64, rec.maxVlen() / 64);
     AS.VMSLT(mask, src, x0);
     AS.VMV_XS(dst, mask);
     AS.ANDI(dst, dst, 0b11);
@@ -3390,28 +3541,23 @@ FAST_HANDLE(CMPPD) { // Fuzzed
 
 FAST_HANDLE(PSHUFD) {
     u8 imm = rec.getImmediate(&operands[2]);
-    u8 el0 = imm & 0b11;
-    u8 el1 = (imm >> 2) & 0b11;
-    u8 el2 = (imm >> 4) & 0b11;
-    u8 el3 = (imm >> 6) & 0b11;
+    u64 el0 = imm & 0b11;
+    u64 el1 = (imm >> 2) & 0b11;
+    u64 el2 = (imm >> 4) & 0b11;
+    u64 el3 = (imm >> 6) & 0b11;
 
-    biscuit::Vec iota = rec.scratchVec();
-    biscuit::Vec iota2 = rec.scratchVec();
-    biscuit::GPR temp = rec.scratch();
-    biscuit::Vec src = rec.getOperandVec(&operands[1]);
     biscuit::Vec result = rec.scratchVec();
+    biscuit::Vec iota = rec.scratchVec();
+    biscuit::Vec src = rec.getOperandVec(&operands[1]);
+
+    rec.setVectorState(SEW::E64, 1);
+    biscuit::GPR temp = rec.scratch();
+    u64 mask = (el3 << 48) | (el2 << 32) | (el1 << 16) | el0;
+    AS.LI(temp, mask);
+    AS.VMV_SX(iota, temp);
 
     rec.setVectorState(SEW::E32, rec.maxVlen() / 32);
-    AS.VMV(iota2, el3);
-    AS.LI(temp, el2);
-    AS.VSLIDE1UP(iota, iota2, temp);
-    AS.LI(temp, el1);
-    AS.VSLIDE1UP(iota2, iota, temp);
-    AS.LI(temp, el0);
-    AS.VSLIDE1UP(iota, iota2, temp);
-
-    AS.VMV(result, 0);
-    AS.VRGATHER(result, src, iota);
+    AS.VRGATHEREI16(result, src, iota);
 
     rec.setOperandVec(&operands[0], result);
 }
@@ -3480,7 +3626,7 @@ FAST_HANDLE(PBLENDW) { // Fuzzed
 }
 
 FAST_HANDLE(BLENDPS) {
-    u8 imm = rec.getImmediate(&operands[2]);
+    u8 imm = rec.getImmediate(&operands[2]) & 0b1111;
     biscuit::Vec result = rec.scratchVec();
     biscuit::Vec dst = rec.getOperandVec(&operands[0]);
     biscuit::Vec src = rec.getOperandVec(&operands[1]);
@@ -3492,14 +3638,40 @@ FAST_HANDLE(BLENDPS) {
     rec.setOperandVec(&operands[0], result);
 }
 
+FAST_HANDLE(BLENDVPS) {
+    biscuit::Vec result = rec.scratchVec();
+    biscuit::Vec dst = rec.getOperandVec(&operands[0]);
+    biscuit::Vec src = rec.getOperandVec(&operands[1]);
+    biscuit::Vec mask = rec.getRefVec(X86_REF_XMM0); // I see where VMERGE took inspiration from
+
+    rec.setVectorState(SEW::E32, rec.maxVlen() / 32);
+    AS.VMSLT(v0, mask, x0);
+    AS.VMERGE(result, dst, src);
+
+    rec.setOperandVec(&operands[0], result);
+}
+
 FAST_HANDLE(BLENDPD) {
-    u8 imm = rec.getImmediate(&operands[2]);
+    u8 imm = rec.getImmediate(&operands[2]) & 0b11;
     biscuit::Vec result = rec.scratchVec();
     biscuit::Vec dst = rec.getOperandVec(&operands[0]);
     biscuit::Vec src = rec.getOperandVec(&operands[1]);
 
     rec.setVectorState(SEW::E64, rec.maxVlen() / 64);
     AS.VMV(v0, imm);
+    AS.VMERGE(result, dst, src);
+
+    rec.setOperandVec(&operands[0], result);
+}
+
+FAST_HANDLE(BLENDVPD) {
+    biscuit::Vec result = rec.scratchVec();
+    biscuit::Vec dst = rec.getOperandVec(&operands[0]);
+    biscuit::Vec src = rec.getOperandVec(&operands[1]);
+    biscuit::Vec mask = rec.getRefVec(X86_REF_XMM0);
+
+    rec.setVectorState(SEW::E64, rec.maxVlen() / 64);
+    AS.VMSLT(v0, mask, x0);
     AS.VMERGE(result, dst, src);
 
     rec.setOperandVec(&operands[0], result);
@@ -3661,8 +3833,8 @@ void BITSTRING_func(Recompiler& rec, const HandlerMetadata& meta, ZydisDecodedIn
     biscuit::GPR base = rec.lea(&operands[0]);
     biscuit::GPR bit = rec.getOperandGPR(&operands[1]);
     rec.writebackDirtyState();
-    AS.MV(a0, base);
     rec.sext(a1, bit, rec.zydisToSize(operands[1].size));
+    AS.MV(a0, base);
     AS.LI(t0, func);
     AS.JALR(t0);
 
@@ -3788,12 +3960,12 @@ FAST_HANDLE(BLSR) {
     WARN("BLSR is broken, check BLSR_flags");
     biscuit::GPR src = rec.getOperandGPR(&operands[1]);
     biscuit::GPR result = rec.scratch();
-    biscuit::GPR cf = rec.flagW(X86_REF_CF);
 
     AS.ADDI(result, src, -1);
     AS.AND(result, src, result);
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_CF)) {
+        biscuit::GPR cf = rec.flagW(X86_REF_CF);
         AS.SEQZ(cf, src);
     }
 
@@ -3862,6 +4034,7 @@ FAST_HANDLE(BSWAP) {
 
 FAST_HANDLE(MOVLPS) {
     if (operands[0].type == ZYDIS_OPERAND_TYPE_REGISTER) {
+        ASSERT(operands[1].type == ZYDIS_OPERAND_TYPE_MEMORY);
         biscuit::Vec dst = rec.getOperandVec(&operands[0]);
         biscuit::Vec src = rec.getOperandVec(&operands[1]);
 
@@ -3996,6 +4169,7 @@ FAST_HANDLE(PSLLW) {
         AS.LI(shift, val);
     } else {
         biscuit::Vec src = rec.getOperandVec(&operands[1]);
+        rec.setVectorState(SEW::E64, rec.maxVlen() / 64);
         AS.VMV_XS(shift, src);
     }
     rec.setVectorState(SEW::E16, rec.maxVlen() / 16);
@@ -4016,6 +4190,7 @@ FAST_HANDLE(PSLLQ) {
         AS.LI(shift, val);
     } else {
         biscuit::Vec src = rec.getOperandVec(&operands[1]);
+        rec.setVectorState(SEW::E64, rec.maxVlen() / 64);
         AS.VMV_XS(shift, src);
     }
     biscuit::Vec dst = rec.getOperandVec(&operands[0]);
@@ -4038,6 +4213,7 @@ FAST_HANDLE(PSLLD) { // Fuzzed
         AS.LI(shift, val);
     } else {
         biscuit::Vec src = rec.getOperandVec(&operands[1]);
+        rec.setVectorState(SEW::E64, rec.maxVlen() / 64);
         AS.VMV_XS(shift, src);
     }
     rec.setVectorState(SEW::E32, rec.maxVlen() / 32);
@@ -4059,6 +4235,7 @@ FAST_HANDLE(PSRLD) {
         AS.LI(shift, val);
     } else {
         biscuit::Vec src = rec.getOperandVec(&operands[1]);
+        rec.setVectorState(SEW::E64, rec.maxVlen() / 64);
         AS.VMV_XS(shift, src);
     }
     rec.setVectorState(SEW::E32, rec.maxVlen() / 32);
@@ -4080,12 +4257,35 @@ FAST_HANDLE(PSRLW) {
         AS.LI(shift, val);
     } else {
         biscuit::Vec src = rec.getOperandVec(&operands[1]);
+        rec.setVectorState(SEW::E64, rec.maxVlen() / 64);
         AS.VMV_XS(shift, src);
     }
     rec.setVectorState(SEW::E16, rec.maxVlen() / 16);
     biscuit::GPR max = rec.scratch();
     biscuit::Label dont_zero;
     AS.LI(max, 16);
+    AS.BLTU(shift, max, &dont_zero);
+    AS.VMV(dst, 0);
+    AS.Bind(&dont_zero);
+    AS.VSRL(dst, dst, shift);
+    rec.setOperandVec(&operands[0], dst);
+}
+
+FAST_HANDLE(PSRLQ) {
+    biscuit::GPR shift = rec.scratch();
+    if (operands[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
+        u8 val = rec.getImmediate(&operands[1]);
+        AS.LI(shift, val);
+    } else {
+        biscuit::Vec src = rec.getOperandVec(&operands[1]);
+        rec.setVectorState(SEW::E64, rec.maxVlen() / 64);
+        AS.VMV_XS(shift, src);
+    }
+    biscuit::Vec dst = rec.getOperandVec(&operands[0]);
+    rec.setVectorState(SEW::E64, rec.maxVlen() / 64);
+    biscuit::GPR max = rec.scratch();
+    biscuit::Label dont_zero;
+    AS.LI(max, 64);
     AS.BLTU(shift, max, &dont_zero);
     AS.VMV(dst, 0);
     AS.Bind(&dont_zero);
@@ -4113,37 +4313,16 @@ FAST_HANDLE(PSRAD) {
     rec.setOperandVec(&operands[0], dst);
 }
 
-FAST_HANDLE(PSRLQ) {
-    biscuit::GPR shift = rec.scratch();
-    if (operands[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
-        u8 val = rec.getImmediate(&operands[1]);
-        AS.LI(shift, val);
-    } else {
-        biscuit::Vec src = rec.getOperandVec(&operands[1]);
-        AS.VMV_XS(shift, src);
-    }
-    biscuit::Vec dst = rec.getOperandVec(&operands[0]);
-    rec.setVectorState(SEW::E64, rec.maxVlen() / 64);
-    biscuit::GPR max = rec.scratch();
-    biscuit::Label dont_zero;
-    AS.LI(max, 64);
-    AS.BLTU(shift, max, &dont_zero);
-    AS.VMV(dst, 0);
-    AS.Bind(&dont_zero);
-    AS.VSRL(dst, dst, shift);
-    rec.setOperandVec(&operands[0], dst);
-}
-
 FAST_HANDLE(SFENCE) {
-    AS.FENCE(); // just make a full fence for now, TODO: we can optimize this some day
+    AS.FENCETSO(); // just make a full fence for now, TODO: we can optimize this some day
 }
 
 FAST_HANDLE(LFENCE) {
-    AS.FENCE(); // just make a full fence for now, TODO: we can optimize this some day
+    AS.FENCETSO(); // just make a full fence for now, TODO: we can optimize this some day
 }
 
 FAST_HANDLE(MFENCE) {
-    AS.FENCE(); // just make a full fence for now, TODO: we can optimize this some day
+    AS.FENCETSO(); // just make a full fence for now, TODO: we can optimize this some day
 }
 
 FAST_HANDLE(MOVSX) {
@@ -4352,45 +4531,58 @@ FAST_HANDLE(PINSRQ) {
     rec.setOperandVec(&operands[0], result);
 }
 
+FAST_HANDLE(PEXTRB) {
+    biscuit::Vec temp = rec.scratchVec();
+    biscuit::GPR result = rec.scratch();
+    biscuit::Vec src = rec.getOperandVec(&operands[1]);
+    u8 imm = rec.getImmediate(&operands[2]) & 0b1111;
+
+    rec.setVectorState(SEW::E8, rec.maxVlen() / 8);
+    AS.VSLIDEDOWN(temp, src, imm);
+    AS.VMV_XS(result, temp);
+    rec.zext(result, result, X86_SIZE_BYTE);
+
+    rec.setOperandGPR(&operands[0], result);
+}
+
 FAST_HANDLE(PEXTRW) {
     biscuit::Vec temp = rec.scratchVec();
     biscuit::GPR result = rec.scratch();
     biscuit::Vec src = rec.getOperandVec(&operands[1]);
-    biscuit::GPR dst = rec.getOperandGPR(&operands[0]);
     u8 imm = rec.getImmediate(&operands[2]) & 0b111;
 
     rec.setVectorState(SEW::E16, rec.maxVlen() / 16);
     AS.VSLIDEDOWN(temp, src, imm);
     AS.VMV_XS(result, temp);
-    rec.zext(dst, result, X86_SIZE_WORD);
+    rec.zext(result, result, X86_SIZE_WORD);
 
-    rec.setOperandGPR(&operands[0], dst);
+    rec.setOperandGPR(&operands[0], result);
 }
 
 FAST_HANDLE(PEXTRD) {
     biscuit::Vec temp = rec.scratchVec();
     biscuit::Vec src = rec.getOperandVec(&operands[1]);
-    biscuit::GPR dst = rec.getOperandGPR(&operands[0]);
+    biscuit::GPR result = rec.scratch();
     u8 imm = rec.getImmediate(&operands[2]) & 0b11;
 
     rec.setVectorState(SEW::E32, rec.maxVlen() / 32);
     AS.VSLIDEDOWN(temp, src, imm);
-    AS.VMV_XS(dst, temp);
+    AS.VMV_XS(result, temp);
 
-    rec.setOperandGPR(&operands[0], dst);
+    rec.setOperandGPR(&operands[0], result);
 }
 
 FAST_HANDLE(PEXTRQ) {
     biscuit::Vec temp = rec.scratchVec();
     biscuit::Vec src = rec.getOperandVec(&operands[1]);
-    biscuit::GPR dst = rec.getOperandGPR(&operands[0]);
+    biscuit::GPR result = rec.scratch();
     u8 imm = rec.getImmediate(&operands[2]) & 0b1;
 
     rec.setVectorState(SEW::E64, rec.maxVlen() / 64);
     AS.VSLIDEDOWN(temp, src, imm);
-    AS.VMV_XS(dst, temp);
+    AS.VMV_XS(result, temp);
 
-    rec.setOperandGPR(&operands[0], dst);
+    rec.setOperandGPR(&operands[0], result);
 }
 
 FAST_HANDLE(CMPXCHG_lock) {
@@ -4465,15 +4657,7 @@ FAST_HANDLE(CMPXCHG_lock) {
     }
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_OF)) {
-        biscuit::GPR scratch = rec.scratch();
-        u64 sign_mask = rec.getSignMask(size);
-        AS.XOR(scratch, dst, rax);
-        AS.XOR(of, dst, result);
-        AS.AND(of, of, scratch);
-        AS.LI(scratch, sign_mask);
-        AS.AND(of, of, scratch);
-        AS.SNEZ(of, of);
-        rec.popScratch();
+        is_overflow_sub(rec, of, rax, dst, result, rec.getBitSize(size));
     }
 
     biscuit::Label end, equal;
@@ -4535,15 +4719,7 @@ FAST_HANDLE(CMPXCHG) {
     }
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_OF)) {
-        biscuit::GPR scratch = rec.scratch();
-        u64 sign_mask = rec.getSignMask(size);
-        AS.XOR(scratch, dst, rax);
-        AS.XOR(of, dst, result);
-        AS.AND(of, of, scratch);
-        AS.LI(scratch, sign_mask);
-        AS.AND(of, of, scratch);
-        AS.SNEZ(of, of);
-        rec.popScratch();
+        is_overflow_sub(rec, of, rax, dst, result, rec.getBitSize(size));
     }
 
     AS.BEQ(dst, rax, &equal);
@@ -4638,7 +4814,7 @@ FAST_HANDLE(MULSD) {
     SCALAR(rec, meta, instruction, operands, SEW::E64, 1, &Assembler::VFMUL);
 }
 
-FAST_HANDLE(MINSS) {
+FAST_HANDLE(MINSS) { // TODO: NaN handling
     SCALAR(rec, meta, instruction, operands, SEW::E32, 1, &Assembler::VFMIN);
 }
 
@@ -4736,43 +4912,23 @@ FAST_HANDLE(CVTTSD2SI) {
 
 FAST_HANDLE(CVTPD2PS) {
     biscuit::Vec result = rec.scratchVec();
-    biscuit::Vec temp = rec.scratchVec();
     biscuit::Vec src = rec.getOperandVec(&operands[1]);
 
-    rec.setVectorState(SEW::E64, 2);
-    // Yeah good luck figuring out narrowing operations
-    // EMUL = 2 * LMUL... so what, when I wanna convert 2 E64 to 2 E32 it's impossible or what?
-    // Just use normal FPU conversions for now
-    AS.VFMV_FS(ft8, src);
-    AS.VSLIDEDOWN(temp, src, 1);
-    AS.VFMV_FS(ft9, temp);
-    AS.FCVT_S_D(ft10, ft8);
-    AS.FCVT_S_D(ft11, ft9);
+    rec.setVectorState(SEW::E32, rec.maxVlen() / 32, LMUL::MF2);
+    AS.VFNCVT_F_F(result, src);
 
-    rec.setVectorState(SEW::E32, rec.maxVlen() / 32);
-    AS.VMV(result, 0);
-    AS.VFSLIDE1UP(temp, result, ft11);
-    AS.VFSLIDE1UP(result, temp, ft10);
+    AS.VMV(v0, 0b1100);
+    AS.VAND(result, result, 0, VecMask::Yes);
 
     rec.setOperandVec(&operands[0], result);
 }
 
 FAST_HANDLE(CVTPS2PD) { // Fuzzed, inaccuracies with NaNs
     biscuit::Vec result = rec.scratchVec();
-    biscuit::Vec temp = rec.scratchVec();
     biscuit::Vec src = rec.getOperandVec(&operands[1]);
 
-    rec.setVectorState(SEW::E32, 2);
-    AS.VFMV_FS(ft8, src);
-    AS.VSLIDEDOWN(temp, src, 1);
-    AS.VFMV_FS(ft9, temp);
-    AS.FCVT_D_S(ft10, ft8);
-    AS.FCVT_D_S(ft11, ft9);
-
-    rec.setVectorState(SEW::E64, rec.maxVlen() / 32);
-    AS.VMV(result, 0);
-    AS.VFSLIDE1UP(temp, result, ft11);
-    AS.VFSLIDE1UP(result, temp, ft10);
+    rec.setVectorState(SEW::E32, rec.maxVlen() / 32, LMUL::MF2);
+    AS.VFWCVT_F_F(result, src);
 
     rec.setOperandVec(&operands[0], result);
 }
@@ -4798,47 +4954,27 @@ FAST_HANDLE(CVTPS2DQ) {
 }
 
 FAST_HANDLE(CVTTPD2DQ) { // Fuzzed, same problem as cvttps2dq
-    biscuit::GPR low = rec.scratch();
-    biscuit::GPR high = rec.scratch();
     biscuit::Vec result = rec.scratchVec();
     biscuit::Vec src = rec.getOperandVec(&operands[1]);
-    biscuit::Vec temp = rec.scratchVec();
 
-    rec.setVectorState(SEW::E64, rec.maxVlen() / 64);
-    AS.VFMV_FS(ft8, src);
-    AS.VSLIDEDOWN(temp, src, 1);
-    AS.VFMV_FS(ft9, temp);
+    rec.setVectorState(SEW::E32, rec.maxVlen() / 32, LMUL::MF2);
+    AS.VFNCVT_RTZ_X_F(result, src);
 
-    rec.setVectorState(SEW::E32, rec.maxVlen() / 32);
-    AS.FCVT_W_D(low, ft8, RMode::RTZ);
-    AS.FCVT_W_D(high, ft9, RMode::RTZ);
-
-    AS.VMV(result, 0);
-    AS.VSLIDE1UP(temp, result, high);
-    AS.VSLIDE1UP(result, temp, low);
+    AS.VMV(v0, 0b1100);
+    AS.VAND(result, result, 0, VecMask::Yes);
 
     rec.setOperandVec(&operands[0], result);
 }
 
 FAST_HANDLE(CVTPD2DQ) {
-    biscuit::GPR low = rec.scratch();
-    biscuit::GPR high = rec.scratch();
     biscuit::Vec result = rec.scratchVec();
     biscuit::Vec src = rec.getOperandVec(&operands[1]);
-    biscuit::Vec temp = rec.scratchVec();
 
-    rec.setVectorState(SEW::E64, rec.maxVlen() / 64);
-    AS.VFMV_FS(ft8, src);
-    AS.VSLIDEDOWN(temp, src, 1);
-    AS.VFMV_FS(ft9, temp);
+    rec.setVectorState(SEW::E32, rec.maxVlen() / 32, LMUL::MF2);
+    AS.VFNCVT_X_F(result, src);
 
-    rec.setVectorState(SEW::E32, rec.maxVlen() / 32);
-    AS.FCVT_W_D(low, ft8);
-    AS.FCVT_W_D(high, ft9);
-
-    AS.VMV(result, 0);
-    AS.VSLIDE1UP(temp, result, high);
-    AS.VSLIDE1UP(result, temp, low);
+    AS.VMV(v0, 0b1100);
+    AS.VAND(result, result, 0, VecMask::Yes);
 
     rec.setOperandVec(&operands[0], result);
 }
@@ -4988,7 +5124,7 @@ FAST_HANDLE(RSQRTSS) {
     rec.setOperandVec(&operands[0], result);
 }
 
-FAST_HANDLE(MOVLHPS) {
+FAST_HANDLE(MOVLHPS) { // TODO: vmerge
     biscuit::Vec temp = rec.scratchVec();
     biscuit::Vec iota = rec.scratchVec();
     biscuit::Vec dst = rec.getOperandVec(&operands[0]);
@@ -5147,7 +5283,6 @@ FAST_HANDLE(XADD) {
     if (rec.shouldEmitFlag(meta.rip, X86_REF_OF)) {
         biscuit::GPR of = rec.flagW(X86_REF_OF);
         is_overflow_add(rec, of, dst, src, result, sign_mask);
-        rec.popScratch();
     }
 
     // In this case we also need to writeback the result, otherwise amoadd will do it for us
@@ -5341,9 +5476,7 @@ FAST_HANDLE(CMPSS) { // Fuzzed
         rec.popScratch();
         rec.popScratch();
 
-        // After checking if either are nan, also check if they are equal
-        AS.FLT_S(nan, ft8, ft9);
-        AS.XORI(nan, nan, 1);
+        AS.FLE_S(nan, ft9, ft8);
         AS.OR(result, result, nan);
         break;
     }
@@ -5360,8 +5493,7 @@ FAST_HANDLE(CMPSS) { // Fuzzed
         rec.popScratch();
 
         // After checking if either are nan, also check if they are equal
-        AS.FLE_S(nan, ft8, ft9);
-        AS.XORI(nan, nan, 1);
+        AS.FLT_S(nan, ft9, ft8);
         AS.OR(result, result, nan);
         break;
     }
@@ -5395,8 +5527,10 @@ FAST_HANDLE(CMPSS) { // Fuzzed
 FAST_HANDLE(CMPSD) {
     if (instruction.meta.isa_set == ZYDIS_ISA_SET_SSE2) {
         fast_CMPSD_sse(rec, meta, instruction, operands);
+    } else if (instruction.meta.isa_set == ZYDIS_ISA_SET_I386) {
+        fast_CMPSD_string(rec, meta, instruction, operands);
     } else {
-        ERROR("Unimplemented: cmpsd (the string one)");
+        UNREACHABLE();
     }
 }
 
@@ -5633,6 +5767,7 @@ FAST_HANDLE(FLDCW) {
 FAST_HANDLE(STMXCSR) {
     biscuit::GPR mxcsr = rec.scratch();
     biscuit::GPR address = rec.scratch();
+    // TODO: are overflow/inexact/underflow etc flags set in fcsr? if then we need to copy them over
     AS.ADDI(address, rec.threadStatePointer(), offsetof(ThreadState, mxcsr));
     AS.LWU(mxcsr, 0, address);
     rec.setOperandGPR(&operands[0], mxcsr);
@@ -5659,7 +5794,7 @@ FAST_HANDLE(LDMXCSR) {
     AS.LI(temp, 0b01111000);
     AS.SRL(temp, temp, rc);
     AS.ANDI(temp, temp, 0b11);
-    AS.FSRM(temp); // load the equivalent RISC-V rounding mode
+    AS.FSRM(x0, temp); // load the equivalent RISC-V rounding mode
 
     // Also save the converted rounding mode for quick access
     AS.ADDI(address, rec.threadStatePointer(), offsetof(ThreadState, rmode));
@@ -5673,11 +5808,9 @@ FAST_HANDLE(CVTDQ2PD) {
     biscuit::Vec scratch = rec.scratchVec();
     biscuit::Vec src = rec.getOperandVec(&operands[1]);
 
-    rec.setVectorState(SEW::E32, 2);
-    AS.VMV(v0, 0b11);
-    AS.VFWCVT_F_X(scratch, src, VecMask::Yes); // Illegal instruction signal
+    rec.setVectorState(SEW::E32, rec.maxVlen() / 32, LMUL::MF2);
+    AS.VFWCVT_F_X(scratch, src);
 
-    rec.setVectorState(SEW::E64, 2);
     rec.setOperandVec(&operands[0], scratch);
 }
 
@@ -5702,6 +5835,46 @@ FAST_HANDLE(EXTRACTPS) {
     AS.VMV_XS(dst, tmp);
 
     rec.setOperandGPR(&operands[0], dst);
+}
+
+FAST_HANDLE(INSERTPS) {
+    ERROR("INSERTPS is not implemented");
+    u8 immediate = rec.getImmediate(&operands[2]);
+    biscuit::Vec dst = rec.getOperandVec(&operands[0]);
+    biscuit::Vec src = rec.getOperandVec(&operands[1]);
+    biscuit::Vec tmp = rec.scratchVec();
+    biscuit::Vec tmp2 = rec.scratchVec();
+    biscuit::Vec result = rec.scratchVec();
+    biscuit::Vec result_masked = rec.scratchVec();
+
+    u8 count_s = 0;
+    u8 count_d = (immediate >> 4) & 0b11;
+    u8 zmask = immediate & 0b1111;
+    if (operands[1].type == ZYDIS_OPERAND_TYPE_REGISTER) {
+        count_s = (immediate >> 6) & 0b11;
+    }
+
+    rec.setVectorState(SEW::E32, rec.maxVlen() / 32);
+    if (count_s != 0) {
+        AS.VSLIDEDOWN(tmp, src, count_s);
+    } else {
+        AS.VMV(tmp, src);
+    }
+
+    if (count_d != 0) {
+        AS.VSLIDEUP(tmp2, tmp, count_d);
+    } else {
+        AS.VMV(tmp2, tmp);
+    }
+
+    u8 mask = 1 << count_d;
+    AS.VMV(v0, mask);
+    AS.VMERGE(result, dst, tmp2);
+
+    AS.VMV(v0, zmask);
+    AS.VXOR(result_masked, result, result, VecMask::Yes);
+
+    rec.setOperandVec(&operands[0], result_masked);
 }
 
 FAST_HANDLE(PREFETCHT0) {
@@ -5764,4 +5937,41 @@ FAST_HANDLE(POPFQ) {
 
     AS.SRLI(of, flags, 11);
     AS.ANDI(of, of, 1);
+
+    // CPUID bit may have been modified, which we need to emulate because this is how some programs detect CPUID support
+    AS.SRLI(temp, flags, 21);
+    AS.ANDI(temp, temp, 1);
+    AS.SB(temp, offsetof(ThreadState, cpuid_bit), rec.threadStatePointer());
+}
+
+FAST_HANDLE(MOVDDUP) {
+    biscuit::Vec result = rec.scratchVec();
+    biscuit::Vec iota = rec.scratchVec();
+    biscuit::Vec src = rec.getOperandVec(&operands[1]);
+
+    rec.setVectorState(SEW::E64, rec.maxVlen() / 64);
+    AS.VMV(iota, 0);
+    AS.VRGATHER(result, src, iota);
+
+    rec.setOperandVec(&operands[0], result);
+}
+
+FAST_HANDLE(PSADBW) {
+    VEC_function(rec, meta, instruction, operands, (u64)&felix86_psadbw);
+}
+
+FAST_HANDLE(PAVGB) {
+    biscuit::Vec dst = rec.getOperandVec(&operands[0]);
+    biscuit::Vec src = rec.getOperandVec(&operands[1]);
+    rec.setVectorState(SEW::E8, rec.maxVlen() / 8);
+    AS.VAADDU(dst, dst, src);
+    rec.setOperandVec(&operands[0], dst);
+}
+
+FAST_HANDLE(PAVGW) {
+    biscuit::Vec dst = rec.getOperandVec(&operands[0]);
+    biscuit::Vec src = rec.getOperandVec(&operands[1]);
+    rec.setVectorState(SEW::E16, rec.maxVlen() / 16);
+    AS.VAADDU(dst, dst, src);
+    rec.setOperandVec(&operands[0], dst);
 }

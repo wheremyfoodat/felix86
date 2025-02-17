@@ -9,16 +9,19 @@ endif()
 
 CheckGitSetup()
 
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+cmake_policy(SET CMP0083 NEW)
+include(CheckPIESupported)
+check_pie_supported()
 set(BISCUIT_CODE_BUFFER_MMAP ON)
 set(BUILD_TESTING OFF)
 add_subdirectory(external/biscuit)
 add_subdirectory(external/Catch2)
-add_subdirectory(external/riscv-disassembler)
 add_subdirectory(external/zydis)
 add_subdirectory(external/fmt)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=implicit-fallthrough -Werror=incompatible-pointer-types -Wall")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=implicit-fallthrough -Wall -Werror=switch")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=implicit-fallthrough -Werror=incompatible-pointer-types -Wall -fPIE")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=implicit-fallthrough -Wall -Werror=switch -fPIE")
 
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "riscv64")
     # GDB decides to tell you the perfectly fine vector instructions don't exist if you
@@ -34,7 +37,6 @@ set(CMAKE_CXX_STANDARD 20)
 
 set(FELIX86_COMMON_SOURCES
     src/felix86/common/debug.cpp
-    src/felix86/common/disk_cache.cpp
     src/felix86/common/elf.cpp
     src/felix86/common/exit.cpp
     src/felix86/common/global.cpp
@@ -55,6 +57,7 @@ set(FELIX86_HLE_SOURCES
 set(FELIX86_V2_SOURCES
     src/felix86/v2/recompiler.cpp
     src/felix86/v2/handlers.cpp
+    src/felix86/v2/handlers_x87.cpp
 )
 
 set(FELIX86_CORE_SOURCES
@@ -75,7 +78,7 @@ set(FELIX86_INCLUDES
 add_library(felix86_core STATIC)
 target_sources(felix86_core PRIVATE ${FELIX86_CORE_SOURCES})
 target_include_directories(felix86_core PUBLIC ${FELIX86_INCLUDES})
-target_link_libraries(felix86_core PUBLIC Zydis fmt biscuit rvasm git_version)
+target_link_libraries(felix86_core PUBLIC Zydis fmt biscuit git_version)
 
 add_executable(felix86)
 target_sources(felix86 PRIVATE src/felix86/main.cpp)

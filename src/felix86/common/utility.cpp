@@ -1,32 +1,35 @@
+#include <cstring>
+#include "Zydis/Decoder.h"
+#include "Zydis/Disassembler.h"
+#include "felix86/common/debug.hpp"
 #include "felix86/common/state.hpp"
-#include "felix86/emulator.hpp"
-#include "fmt/format.h"
-#include "utility.hpp"
+#include "felix86/common/utility.hpp"
 
 #ifdef __riscv
 #include <sys/cachectl.h>
 #endif
 
-namespace {
-std::string GetBlockName(u32 name) {
-    u32 block_index = name >> 20;
-    if (block_index == 0) {
-        return "Entry";
-    } else if (block_index == 1) {
-        return "Exit";
-    } else {
-        return fmt::format("{}", block_index - 2);
-    }
-}
+struct fxsave_st {
+    u8 st[10];
+    u8 reserved[6];
+};
 
-std::string ToVarName(u32 name) {
-    return std::to_string(name & ((1 << 20) - 1));
-}
-} // namespace
-
-std::string GetNameString(u32 name) {
-    return fmt::format("%{}@{}", ToVarName(name), GetBlockName(name));
-}
+struct fxsave_data {
+    u16 fcw;
+    u16 fsw;
+    u8 ftw;
+    u8 reserved;
+    u16 fop;
+    u64 fip;
+    u64 fdp;
+    u32 mxcsr;
+    u32 mxcsr_mask;
+    fxsave_st st[8];
+    XmmReg xmms[16];
+    u64 reserved_final[6];
+    u64 available[6];
+};
+static_assert(sizeof(fxsave_data) == 512);
 
 /* Libdivide LICENSE
 
@@ -202,10 +205,9 @@ u64 sext_if_64(u64 value, u8 size_e) {
 }
 
 // If you don't flush the cache the code will randomly SIGILL
-void flush_icache(void* start, void* end) {
+void flush_icache() {
 #if defined(__riscv)
-    // TODO: Code cache is local to each thread
-    __riscv_flush_icache(start, end, 0);
+    asm volatile("fence.i");
 #endif
 }
 
@@ -227,9 +229,55 @@ int guest_breakpoint(const char* region, u64 address) {
     return g_breakpoints.size();
 }
 
-int guest_breakpoint_abs(u64 address) {
+__attribute__((visibility("default"))) int guest_breakpoint_abs(u64 address) {
     g_breakpoints[address] = {};
     return g_breakpoints.size();
+}
+
+__attribute__((visibility("default"))) int guest_breakpoint_name(const char* symbol) {
+    for (auto& [address, bp] : g_symbols) {
+        if (bp == symbol) {
+            return guest_breakpoint_abs(address);
+        }
+    }
+
+    printf("Symbol %s not found\n", symbol);
+    return -1;
+}
+
+__attribute__((visibility("default"))) void disassemble_x64(u64 address) {
+    ZydisDecoder decoder;
+    ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
+
+    u64 cur = address;
+    while (true) {
+        ZydisDecodedInstruction instruction;
+        ZydisDecodedOperand operands[10];
+        ZyanStatus status = ZydisDecoderDecodeFull(&decoder, (void*)cur, 15, &instruction, operands);
+        if (!ZYAN_SUCCESS(status)) {
+            printf("Failed to decode instruction at %016lx\n", cur);
+            break;
+        }
+
+        ZydisMnemonic mnemonic = instruction.mnemonic;
+        bool is_jump = instruction.meta.branch_type != ZYDIS_BRANCH_TYPE_NONE;
+        bool is_ret = mnemonic == ZYDIS_MNEMONIC_RET;
+        bool is_call = mnemonic == ZYDIS_MNEMONIC_CALL;
+        bool is_illegal = mnemonic == ZYDIS_MNEMONIC_UD2;
+        bool is_hlt = mnemonic == ZYDIS_MNEMONIC_HLT;
+        bool stop = is_jump || is_ret || is_call || is_illegal || is_hlt;
+
+        ZydisDisassembledInstruction instr;
+        ZydisDisassembleIntel(ZYDIS_MACHINE_MODE_LONG_64, cur, (void*)cur, 15, &instr);
+
+        printf("%016lx: %s\n", cur, instr.text);
+
+        if (stop) {
+            break;
+        } else {
+            cur += instruction.length;
+        }
+    }
 }
 
 int clear_breakpoints() {
@@ -239,22 +287,47 @@ int clear_breakpoints() {
 }
 
 void felix86_fxsave(struct ThreadState* state, u64 address, bool fxsave64) {
-    if (fxsave64) {
-        memcpy((u8*)address + 160, state->xmm, 16 * 16);
-    } else {
-        memcpy((u8*)address + 160, state->xmm, 8 * 16);
+    fxsave_data* data = (fxsave_data*)address;
+    memset(data, 0, sizeof(fxsave_data));
+
+    for (int i = 0; i < 16; i++) {
+        data->xmms[i] = state->xmm[i];
     }
+
+    for (int i = 0; i < 8; i++) {
+        Float80 f = f64_to_80(state->fp[i]);
+        memcpy(&data->st[i].st[0], &f, 10);
+    }
+
+    data->fcw = state->fpu_cw;
+    data->ftw = state->fpu_tw;
+    data->fsw = state->fpu_top << 11;
+    data->mxcsr = state->mxcsr;
 }
 
 void felix86_fxrstor(struct ThreadState* state, u64 address, bool fxrstor64) {
-    if (fxrstor64) {
-        memcpy(state->xmm, (u8*)address + 160, 16 * 16);
-    } else {
-        memcpy(state->xmm, (u8*)address + 160, 8 * 16);
+    fxsave_data* data = (fxsave_data*)address;
+
+    for (int i = 0; i < 16; i++) {
+        state->xmm[i] = data->xmms[i];
     }
+
+    for (int i = 0; i < 8; i++) {
+        Float80 f;
+        memcpy(&f, &data->st[i].st[0], 10);
+        state->fp[i] = f80_to_64(f);
+    }
+
+    state->fpu_cw = data->fcw;
+    state->fpu_tw = data->ftw;
+    state->fpu_top = (data->fsw >> 11) & 7;
+    state->mxcsr = data->mxcsr;
+    state->rmode = rounding_mode((x86RoundingMode)((state->mxcsr >> 13) & 3));
 }
 
 void felix86_packuswb(u8* dst, u8* src) {
+    ASSERT(((u64)dst & 1) == 0);
+    ASSERT(((u64)src & 1) == 0);
     i16* src16 = (i16*)src;
     i16* dst16 = (i16*)dst;
     u8 temp[16];
@@ -287,6 +360,8 @@ void felix86_packuswb(u8* dst, u8* src) {
 }
 
 void felix86_packusdw(u16* dst, u8* src) {
+    ASSERT(((u64)dst & 3) == 0);
+    ASSERT(((u64)src & 3) == 0);
     i32* src32 = (i32*)src;
     i32* dst32 = (i32*)dst;
     u16 temp[8];
@@ -310,70 +385,6 @@ void felix86_packusdw(u16* dst, u8* src) {
             result = 0;
         } else if (value > 0xFFFF) {
             result = 0xFFFF;
-        } else {
-            result = (u16)value;
-        }
-        temp[i] = result;
-    }
-    memcpy(dst, temp, 16);
-}
-
-void felix86_packsswb(u8* dst, u8* src) {
-    i16* src16 = (i16*)src;
-    i16* dst16 = (i16*)dst;
-    u8 temp[16];
-    for (int i = 0; i < 8; i++) {
-        i16 value = *dst16++;
-        u8 result;
-        if (value < -128) {
-            result = 0x80;
-        } else if (value > SCHAR_MAX) {
-            result = 127;
-        } else {
-            result = (u8)value;
-        }
-        temp[i] = result;
-    }
-
-    for (int i = 8; i < 16; i++) {
-        i16 value = *src16++;
-        u8 result;
-        if (value < -128) {
-            result = 0x80;
-        } else if (value > 127) {
-            result = 127;
-        } else {
-            result = (u8)value;
-        }
-        temp[i] = result;
-    }
-    memcpy(dst, temp, 16);
-}
-
-void felix86_packssdw(u16* dst, u8* src) {
-    i32* src32 = (i32*)src;
-    i32* dst32 = (i32*)dst;
-    u16 temp[8];
-    for (int i = 0; i < 4; i++) {
-        i32 value = *dst32++;
-        u16 result;
-        if (value < -32768) {
-            result = 0x8000;
-        } else if (value > SHRT_MAX) {
-            result = SHRT_MAX;
-        } else {
-            result = (u16)value;
-        }
-        temp[i] = result;
-    }
-
-    for (int i = 4; i < 8; i++) {
-        i32 value = *src32++;
-        u16 result;
-        if (value < -32768) {
-            result = 0x8000;
-        } else if (value > SHRT_MAX) {
-            result = SHRT_MAX;
         } else {
             result = (u16)value;
         }
@@ -383,8 +394,10 @@ void felix86_packssdw(u16* dst, u8* src) {
 }
 
 void felix86_pmaddwd(i16* dst, i16* src) {
-    u32 temp[4];
-    u32 result[4];
+    ASSERT(((u64)dst & 1) == 0);
+    ASSERT(((u64)src & 1) == 0);
+    i32 temp[4];
+    i32 result[4];
 
     temp[0] = dst[0] * src[0];
     temp[1] = dst[2] * src[2];
@@ -403,6 +416,20 @@ void felix86_pmaddwd(i16* dst, i16* src) {
     dst32[3] = temp[3] + result[3];
 }
 
+void felix86_psadbw(u8* dst, u8* src) {
+    u64 result1 = 0;
+    u64 result2 = 0;
+
+    for (int i = 0; i < 8; i++) {
+        result1 += abs(dst[i] - src[i]);
+        result2 += abs(dst[i + 8] - src[i + 8]);
+    }
+
+    u64* dst64 = (u64*)dst;
+    dst64[0] = (u16)result1;
+    dst64[1] = (u16)result2;
+}
+
 void dump_states() {
     if (!g_emulator) {
         return;
@@ -411,7 +438,7 @@ void dump_states() {
     auto& states = g_thread_states;
     int i = 0;
     for (auto& state : states) {
-        dprintf(g_output_fd, ANSI_COLOR_RED "State %d" ANSI_COLOR_RESET, i);
+        dprintf(g_output_fd, ANSI_COLOR_RED "State %d (%ld): " ANSI_COLOR_RESET, i, state->tid);
         print_address(state->rip);
 
         if (g_calltrace) {
@@ -461,7 +488,6 @@ void pop_calltrace(ThreadState* state) {
 }
 
 Float80 f64_to_80(double x) {
-    // Interpret double as raw bits
     union {
         double d;
         uint64_t u;
@@ -550,4 +576,17 @@ bool felix86_btc(u64 address, i64 offset) {
     u8* ptr = (u8*)address + byte_offset - needs_correction;
     u8 old = __atomic_fetch_xor(ptr, 1 << bit_offset, __ATOMIC_SEQ_CST);
     return (old >> bit_offset) & 1;
+}
+
+const char* print_exit_reason(int reason) {
+    switch (reason) {
+    case EXIT_REASON_HLT:
+        return "Hlt instruction";
+    case EXIT_REASON_EXIT_SYSCALL:
+        return "Exit syscall";
+    case EXIT_REASON_EXIT_GROUP_SYSCALL:
+        return "Exit group syscall";
+    }
+
+    return "Unknown";
 }
