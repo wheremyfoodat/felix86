@@ -42,13 +42,15 @@ set(FELIX86_COMMON_SOURCES
     src/felix86/common/global.cpp
     src/felix86/common/log.cpp
     src/felix86/common/print.cpp
+    src/felix86/common/process_lock.cpp
+    src/felix86/common/script.cpp
+    src/felix86/common/shared_memory.cpp
     src/felix86/common/state.cpp
     src/felix86/common/utility.cpp
 )
 
 set(FELIX86_HLE_SOURCES
     src/felix86/hle/cpuid.cpp
-    src/felix86/hle/filesystem.cpp
     src/felix86/hle/signals.cpp
     src/felix86/hle/syscall.cpp
     src/felix86/hle/thread.cpp

@@ -1,8 +1,8 @@
 #pragma once
 
 #include <array>
-#include <queue>
 #include "biscuit/isa.hpp"
+#include "felix86/common/address.hpp"
 #include "felix86/common/log.hpp"
 #include "felix86/common/utility.hpp"
 #include "felix86/hle/signals.hpp"
@@ -81,10 +81,10 @@ struct XmmReg {
 static_assert(sizeof(XmmReg) == 16);
 
 struct ThreadState {
-    explicit ThreadState(ThreadState* state);
+    explicit ThreadState(ThreadState* copy_state);
 
     u64 gprs[16]{};
-    u64 rip{};
+    GuestAddress rip{0};
     u64 fp[8]{}; // we support 64-bit precision instead of 80-bit for speed and simplicity
     XmmReg xmm[16]{};
     bool cf{};
@@ -113,7 +113,7 @@ struct ThreadState {
 
     u64 pending_signals{}; // signals that were raised during an unsafe time, queued for later
 
-    std::vector<u64> calltrace{}; // used if g_calltrace is true
+    std::vector<HostAddress> calltrace{}; // used if g_calltrace is true
 
     // Two processes can share the same signal handler table
     std::shared_ptr<SignalHandlerTable> signal_handlers{};
@@ -121,7 +121,11 @@ struct ThreadState {
 
     void* compile_next_handler{};
 
-    u8 exit_reason{};
+    ExitReason exit_reason{};
+
+    u8 exit_code{}; // process exit code
+
+    bool mode32 = false; // 32-bit execution mode, changes the behavior of some instructions and the decoder
 
     std::array<u64, 16> saved_host_gprs;
 
@@ -217,11 +221,11 @@ struct ThreadState {
         xmm[ref - X86_REF_XMM0] = value;
     }
 
-    u64 GetRip() const {
+    GuestAddress GetRip() const {
         return rip;
     }
 
-    void SetRip(u64 value) {
+    void SetRip(GuestAddress value) {
         rip = value;
     }
 
@@ -242,4 +246,6 @@ struct ThreadState {
     static ThreadState* Create(ThreadState* copy_state = nullptr);
 
     static ThreadState* Get();
+
+    static void Destroy(ThreadState* state);
 };

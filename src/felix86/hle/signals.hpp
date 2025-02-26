@@ -2,6 +2,7 @@
 
 #include <array>
 #include <csignal>
+#include "felix86/common/address.hpp"
 #include "felix86/common/utility.hpp"
 
 #ifndef SA_NODEFER
@@ -9,8 +10,8 @@
 #endif
 
 struct RegisteredSignal {
-    void* func = (void*)SIG_DFL; // handler function of signal
-    sigset_t mask = {};          // blocked during execution of this handler
+    GuestAddress func = {}; // handler function of signal
+    sigset_t mask = {};     // blocked during execution of this handler
     int flags = 0;
 };
 
@@ -22,7 +23,7 @@ struct XmmReg;
 
 struct Signals {
     static void initialize();
-    static void registerSignalHandler(ThreadState* state, int sig, void* handler, sigset_t mask, int flags);
+    static void registerSignalHandler(ThreadState* state, int sig, GuestAddress handler, sigset_t mask, int flags);
     [[nodiscard]] static RegisteredSignal getSignalHandler(ThreadState* state, int sig);
 
     // To AND with a mask because these signals are necessary for the emulator to work
@@ -50,10 +51,10 @@ struct Signals {
     // We are going to make a custom mapping with this magic address pointing to our sigreturn function (well, a thunk that jumps there, initialized
     // in emitSigreturnThunk). This address uses more than 56 bits, so it's normally not a valid x86-64 address, which means it will never collide
     // with a real address.
-    static constexpr u64 magicSigreturnAddress() {
-        return 0x1F00'0000'0000'0000;
+    static constexpr HostAddress magicSigreturnAddress() {
+        return HostAddress(0x1F00'0000'0000'0000);
     }
 
-    static void setupFrame(BlockMetadata* current_block, u64 rip, ThreadState* state, sigset_t new_mask, const u64* host_gprs,
+    static void setupFrame(BlockMetadata* current_block, GuestAddress rip, ThreadState* state, sigset_t new_mask, const u64* host_gprs,
                            const XmmReg* host_vecs, bool use_altstack, bool in_jit_code);
 };

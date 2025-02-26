@@ -5,7 +5,6 @@
 #include "catch2/catch_message.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "felix86/common/print.hpp"
-#include "felix86/v2/recompiler.hpp"
 #include "fex_test_loader.hpp"
 #include "fmt/format.h"
 #include "nlohmann/json.hpp"
@@ -138,6 +137,12 @@ FEXTestLoader::FEXTestLoader(const std::filesystem::path& path) {
 #undef fill
     }
 
+    bool is_mode32 = false;
+    if (j.find("Mode") != j.end()) {
+        ASSERT(j["Mode"] == "32BIT");
+        is_mode32 = true;
+    }
+
     // 16 pages at 0xe000'0000
     memory_mappings.push_back({0xE000'0000, 16 * 4096});
 
@@ -167,11 +172,8 @@ FEXTestLoader::FEXTestLoader(const std::filesystem::path& path) {
 
     memcpy((void*)0x10'0000, buffer.data(), bytes_read);
 
-    TestConfig config = {};
-    config.entrypoint = (void*)0x10'0000;
-
-    emulator = std::make_unique<Emulator>(config);
-    state = ThreadState::Get();
+    config.entrypoint = HostAddress{0x10'0000};
+    config.mode32 = is_mode32;
 }
 
 FEXTestLoader::~FEXTestLoader() {
@@ -179,10 +181,9 @@ FEXTestLoader::~FEXTestLoader() {
         munmap(ptr.first, ptr.second);
     }
 
-    ThreadState* state = (ThreadState*)pthread_getspecific(g_thread_state_key);
+    ThreadState* state = ThreadState::Get();
     ASSERT(state);
-    g_thread_states.remove(state); // TODO: this and the other destructor, make them a function
-    delete state;
+    ThreadState::Destroy(state);
     pthread_setspecific(g_thread_state_key, nullptr);
 }
 
@@ -191,12 +192,13 @@ void FEXTestLoader::Run() {
         auto stuff = mmap((void*)address, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
         munmap_me.push_back({stuff, size});
     }
-    state->SetGpr(X86_REF_RSP, 0xC000'0000 + 4096);
-    emulator->Run();
+    GuestAddress stack{0xC000'0000 + 4096};
+    Emulator::StartTest(config, stack);
     Validate();
 }
 
 void FEXTestLoader::Validate() {
+    ThreadState* state = ThreadState::Get();
     for (size_t i = 0; i < expected_gpr.size(); i++) {
         auto& pexpected = expected_gpr[i];
         if (pexpected.has_value()) {

@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <catch2/catch_test_macros.hpp>
 #include <sys/wait.h>
+#include "common.h"
 #include "felix86/common/log.hpp"
 #include "fmt/format.h"
 
@@ -12,11 +13,14 @@ void run_test(const std::filesystem::path& felix_path, const std::filesystem::pa
         exit(1);
     }
 
+    const std::filesystem::path tmp_path = "/tmp/felix86_binary_tests";
+    const std::filesystem::path exec_path = tmp_path / path.filename();
+
     CATCH_INFO(fmt::format("Running test: {}", path.filename().string()));
 
     std::string buffer(1024 * 1024, 0);
     std::string srootfs = "FELIX86_ROOTFS=" + g_rootfs_path.string();
-    std::string spath = path.string();
+    std::string spath = exec_path;
 
     const char* argv[] = {
         felix_path.c_str(),
@@ -24,18 +28,26 @@ void run_test(const std::filesystem::path& felix_path, const std::filesystem::pa
         nullptr,
     };
 
-    const char* envp[] = {
-        srootfs.c_str(),
-        "FELIX86_DONT_VALIDATE_EXE_PATH=1",
-        nullptr,
-    };
+    std::vector<const char*> envp;
+    char** env = environ;
+    while (*env) {
+        envp.push_back(*env);
+        env++;
+    }
+    envp.push_back(srootfs.c_str());
+    envp.push_back(nullptr);
+
+    std::filesystem::create_directories(g_rootfs_path / tmp_path.relative_path());
+
+    // Copy our test binary to the temp path
+    std::filesystem::copy(path, g_rootfs_path / exec_path.relative_path(), std::filesystem::copy_options::overwrite_existing);
 
     pid_t fork_result = fork();
     if (fork_result == 0) {
         close(pipefd[0]);
         dup2(pipefd[1], 1);
         close(pipefd[1]);
-        execvpe(argv[0], (char* const*)argv, (char* const*)envp);
+        execvpe(argv[0], (char* const*)argv, (char* const*)envp.data());
         perror("execvpe");
         exit(1);
     } else {
@@ -46,7 +58,7 @@ void run_test(const std::filesystem::path& felix_path, const std::filesystem::pa
         close(pipefd[0]);
 
         CATCH_INFO(fmt::format("Output: {}", buffer.substr(0, bytes_read)));
-        CATCH_REQUIRE(WEXITSTATUS(status) == 0);
+        CATCH_REQUIRE(WEXITSTATUS(status) == FELIX86_BTEST_SUCCESS);
     }
 
     SUCCESS("Test passed: %s", path.string().c_str());
@@ -73,6 +85,14 @@ void common_loader(const std::filesystem::path& path) {
     }
 }
 
-CATCH_TEST_CASE("Signals", "[Binaries]") {
+CATCH_TEST_CASE("Signals", "[Signals]") {
     // common_loader("Signals"); // TODO: Fix the sigsegv_simple.c test to not get stuck
+}
+
+CATCH_TEST_CASE("Simple", "[Simple]") {
+    common_loader("Simple");
+}
+
+CATCH_TEST_CASE("Clone", "[Clone]") {
+    common_loader("Clone");
 }

@@ -62,6 +62,26 @@ void SetCmpFlags(const HandlerMetadata& meta, Recompiler& rec, biscuit::GPR dst,
     }
 }
 
+int size_to_bytes(int size) {
+    switch (size) {
+    case 8: {
+        return 1;
+    }
+    case 16: {
+        return 2;
+    }
+    case 32: {
+        return 4;
+    }
+    case 64: {
+        return 8;
+    }
+    }
+
+    UNREACHABLE();
+    return 0;
+}
+
 enum CmpPredicate {
     EQ_OQ = 0x00,
     LT_OS = 0x01,
@@ -414,7 +434,6 @@ FAST_HANDLE(OR) {
     AS.OR(result, dst, src);
 
     x86_size_e size = rec.getOperandSize(&operands[0]);
-    rec.zext(result, result, size);
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_CF)) {
         biscuit::GPR cf = rec.flagW(X86_REF_CF);
@@ -483,7 +502,6 @@ FAST_HANDLE(XOR) {
     biscuit::GPR dst = rec.getOperandGPR(&operands[0]);
 
     AS.XOR(result, dst, src);
-    rec.zext(result, result, size);
 
     if (rec.shouldEmitFlag(meta.rip, X86_REF_CF)) {
         biscuit::GPR cf = rec.flagW(X86_REF_CF);
@@ -520,8 +538,6 @@ FAST_HANDLE(AND) {
     AS.AND(result, dst, src);
 
     x86_size_e size = rec.getOperandSize(&operands[0]);
-    rec.zext(result, result, size);
-
     if (rec.shouldEmitFlag(meta.rip, X86_REF_CF)) {
         biscuit::GPR cf = rec.flagW(X86_REF_CF);
         AS.MV(cf, x0);
@@ -556,21 +572,148 @@ FAST_HANDLE(HLT) {
     rec.stopCompiling();
 }
 
-FAST_HANDLE(CALL) {
+FAST_HANDLE(CALL_rsb) {
     switch (operands[0].type) {
     case ZYDIS_OPERAND_TYPE_REGISTER:
     case ZYDIS_OPERAND_TYPE_MEMORY: {
-        biscuit::GPR scratch = rec.getRip();
+        x86_size_e size = g_mode32 ? X86_SIZE_DWORD : X86_SIZE_QWORD;
         biscuit::GPR src = rec.getOperandGPR(&operands[0]);
         rec.setRip(src);
-        biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, X86_SIZE_QWORD);
-        AS.ADDI(rsp, rsp, -8);
-        rec.setRefGPR(X86_REF_RSP, X86_SIZE_QWORD, rsp);
+        biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, size);
+        AS.ADDI(rsp, rsp, -rec.stackPointerSize());
+        rec.setRefGPR(X86_REF_RSP, size, rsp);
 
-        u64 return_offset = meta.rip - meta.block_start + instruction.length;
-        rec.addi(scratch, scratch, return_offset);
+        biscuit::GPR guest_return_address = rec.scratch();
+        GuestAddress return_address = meta.rip.add(instruction.length).toGuest();
+        AS.LI(guest_return_address, return_address.raw());
+        rec.writeMemory(guest_return_address, rsp, 0, size);
 
-        AS.SD(scratch, 0, rsp);
+        rec.writebackDirtyState();
+        rec.pushCalltrace();
+
+        // Instead of stopping and returning to dispatcher, continue compiling the current block
+        // And perform an actual call, pushing our predicted return address to the stack
+        // As long as each call corresponds to a ret this prediction will work out. If it doesn't,
+        // it goes back to the dispatcher. There's cases where calls don't correspond 1:1 to rets such as exceptions.
+
+        u64 start = (u64)AS.GetCursorPointer();
+        biscuit::GPR host_return_address = rec.scratch();
+
+        // AUIPC + ADDI + SD + SD + ADDI + 2 instructions for jump = 28
+        AS.AUIPC(host_return_address, 0);
+        AS.ADDI(host_return_address, host_return_address, 28);
+        AS.SD(host_return_address, -16, sp);
+        AS.SD(guest_return_address, -8, sp); // this is the prediction, the guest address we hope the RET jumps to
+        AS.ADDI(sp, sp, -16);
+        rec.backToDispatcher(true); // true = push to rsb
+        u64 here = (u64)AS.GetCursorPointer();
+        ASSERT(here == start + 28);
+        break;
+    }
+    case ZYDIS_OPERAND_TYPE_IMMEDIATE: {
+        u64 displacement = rec.sextImmediate(rec.getImmediate(&operands[0]), operands[0].imm.size);
+        GuestAddress return_address = meta.rip.add(instruction.length).toGuest();
+
+        x86_size_e size = g_mode32 ? X86_SIZE_DWORD : X86_SIZE_QWORD;
+        biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, size);
+        AS.ADDI(rsp, rsp, -rec.stackPointerSize());
+        rec.setRefGPR(X86_REF_RSP, size, rsp);
+
+        biscuit::GPR guest_return_address = rec.scratch();
+        biscuit::GPR new_rip = rec.scratch();
+        AS.LI(guest_return_address, return_address.raw());
+        rec.writeMemory(guest_return_address, rsp, 0, size);
+
+        rec.addi(new_rip, guest_return_address, displacement);
+
+        rec.setRip(new_rip);
+        rec.writebackDirtyState();
+        rec.pushCalltrace();
+
+        u64 start = (u64)AS.GetCursorPointer();
+        biscuit::GPR host_return_address = rec.scratch();
+
+        // AUIPC + ADDI + SD + SD + ADDI + 2 instructions for jump = 28
+        AS.AUIPC(host_return_address, 0);
+        AS.ADDI(host_return_address, host_return_address, 28);
+        AS.SD(host_return_address, -16, sp);
+        AS.SD(guest_return_address, -8, sp); // this is the prediction, the guest address we hope the RET jumps to
+        AS.ADDI(sp, sp, -16);
+        rec.jumpAndLink(meta.rip.add(instruction.length + displacement), true); // true = push to rsb
+        u64 here = (u64)AS.GetCursorPointer();
+        ASSERT(here == start + 28);
+        break;
+    }
+    default: {
+        UNREACHABLE();
+        break;
+    }
+    }
+}
+
+void increment_bad_ret() {
+    // TODO: per thread state probably
+    g_bad_ret_count += 1;
+}
+
+FAST_HANDLE(RET_rsb) {
+    x86_size_e size = g_mode32 ? X86_SIZE_DWORD : X86_SIZE_QWORD;
+    biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, size);
+    biscuit::GPR ra = rec.scratch();
+    ASSERT(ra == biscuit::ra); // using ra *may* be better for the RSB? but unsure tbh
+    biscuit::GPR scratch = rec.scratch();
+    rec.readMemory(scratch, rsp, 0, size);
+
+    u64 imm = rec.stackPointerSize();
+    if (operands[0].type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
+        imm += rec.getImmediate(&operands[0]);
+    }
+
+    rec.addi(rsp, rsp, imm);
+
+    rec.setRefGPR(X86_REF_RSP, size, rsp);
+    rec.setRip(scratch);
+
+    biscuit::Label misprediction;
+    rec.writebackDirtyState();
+    rec.popCalltrace();
+
+    biscuit::GPR prediction = rec.scratch();
+    AS.ADDI(sp, sp, 16);
+    AS.LD(prediction, -8, sp);
+    AS.BNE(scratch, prediction, &misprediction);
+    AS.LD(ra, -16, sp);
+    // Our prediction was correct, just return to ra
+    AS.RET();
+
+    // Prediction was incorrect, return to dispatcher
+    AS.Bind(&misprediction);
+    AS.LI(t0, (u64)increment_bad_ret);
+    AS.JALR(t0);
+
+    rec.backToDispatcher();
+    rec.stopCompiling();
+}
+
+FAST_HANDLE(CALL) {
+    if (g_rsb) {
+        return fast_CALL_rsb(rec, meta, instruction, operands);
+    }
+
+    switch (operands[0].type) {
+    case ZYDIS_OPERAND_TYPE_REGISTER:
+    case ZYDIS_OPERAND_TYPE_MEMORY: {
+        x86_size_e size = g_mode32 ? X86_SIZE_DWORD : X86_SIZE_QWORD;
+        biscuit::GPR src = rec.getOperandGPR(&operands[0]);
+        rec.setRip(src);
+        biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, size);
+        AS.ADDI(rsp, rsp, -rec.stackPointerSize());
+        rec.setRefGPR(X86_REF_RSP, size, rsp);
+
+        biscuit::GPR scratch = rec.scratch();
+        GuestAddress return_address = meta.rip.add(instruction.length).toGuest();
+        AS.LI(scratch, return_address.raw());
+        rec.writeMemory(scratch, rsp, 0, size);
 
         rec.writebackDirtyState();
         rec.pushCalltrace();
@@ -580,23 +723,23 @@ FAST_HANDLE(CALL) {
     }
     case ZYDIS_OPERAND_TYPE_IMMEDIATE: {
         u64 displacement = rec.sextImmediate(rec.getImmediate(&operands[0]), operands[0].imm.size);
-        u64 return_offset = meta.rip - meta.block_start + instruction.length;
+        GuestAddress return_address = meta.rip.add(instruction.length).toGuest();
 
-        biscuit::GPR scratch = rec.getRip();
-        biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, X86_SIZE_QWORD);
-        AS.ADDI(rsp, rsp, -8);
-        rec.setRefGPR(X86_REF_RSP, X86_SIZE_QWORD, rsp);
+        x86_size_e size = g_mode32 ? X86_SIZE_DWORD : X86_SIZE_QWORD;
+        biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, size);
+        AS.ADDI(rsp, rsp, -rec.stackPointerSize());
+        rec.setRefGPR(X86_REF_RSP, size, rsp);
 
-        rec.addi(scratch, scratch, return_offset);
-
-        AS.SD(scratch, 0, rsp);
+        biscuit::GPR scratch = rec.scratch();
+        AS.LI(scratch, return_address.raw());
+        rec.writeMemory(scratch, rsp, 0, size);
 
         rec.addi(scratch, scratch, displacement);
 
         rec.setRip(scratch);
         rec.writebackDirtyState();
         rec.pushCalltrace();
-        rec.jumpAndLink(meta.rip + instruction.length + displacement);
+        rec.jumpAndLink(meta.rip.add(instruction.length + displacement));
         rec.stopCompiling();
         break;
     }
@@ -608,18 +751,23 @@ FAST_HANDLE(CALL) {
 }
 
 FAST_HANDLE(RET) {
-    biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, X86_SIZE_QWORD);
-    biscuit::GPR scratch = rec.scratch();
-    AS.LD(scratch, 0, rsp);
+    if (g_rsb) {
+        return fast_RET_rsb(rec, meta, instruction, operands);
+    }
 
-    u64 imm = 8;
+    x86_size_e size = g_mode32 ? X86_SIZE_DWORD : X86_SIZE_QWORD;
+    biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, size);
+    biscuit::GPR scratch = rec.scratch();
+    rec.readMemory(scratch, rsp, 0, size);
+
+    u64 imm = rec.stackPointerSize();
     if (operands[0].type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
         imm += rec.getImmediate(&operands[0]);
     }
 
     rec.addi(rsp, rsp, imm);
 
-    rec.setRefGPR(X86_REF_RSP, X86_SIZE_QWORD, rsp);
+    rec.setRefGPR(X86_REF_RSP, size, rsp);
     rec.setRip(scratch);
     rec.writebackDirtyState();
     rec.popCalltrace();
@@ -628,44 +776,39 @@ FAST_HANDLE(RET) {
 }
 
 FAST_HANDLE(PUSH) {
+    x86_size_e size = g_mode32 ? X86_SIZE_DWORD : X86_SIZE_QWORD;
     biscuit::GPR src = rec.getOperandGPR(&operands[0]);
-    biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, X86_SIZE_QWORD);
-    int imm = instruction.operand_width == 16 ? -2 : -8;
-
-    if (instruction.operand_width == 16) {
-        AS.SH(src, imm, rsp);
-    } else {
-        AS.SD(src, imm, rsp);
-    }
+    biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, size);
+    int imm = -size_to_bytes(instruction.operand_width);
+    rec.writeMemory(src, rsp, imm, rec.zydisToSize(instruction.operand_width));
 
     AS.ADDI(rsp, rsp, imm);
-    rec.setRefGPR(X86_REF_RSP, X86_SIZE_QWORD, rsp);
+    rec.setRefGPR(X86_REF_RSP, size, rsp);
 }
 
 FAST_HANDLE(POP) {
+    x86_size_e size = g_mode32 ? X86_SIZE_DWORD : X86_SIZE_QWORD;
     biscuit::GPR result = rec.scratch();
-    biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, X86_SIZE_QWORD);
+    biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, size);
 
-    if (instruction.operand_width == 16) {
-        AS.LHU(result, 0, rsp);
-    } else {
-        AS.LD(result, 0, rsp);
-    }
+    rec.readMemory(result, rsp, 0, rec.zydisToSize(instruction.operand_width));
 
-    int imm = instruction.operand_width == 16 ? 2 : 8;
+    int imm = size_to_bytes(instruction.operand_width);
     rec.setOperandGPR(&operands[0], result);
 
     x86_ref_e ref = rec.zydisToRef(operands[0].reg.value);
     if (ref == X86_REF_RSP) {
         // pop rsp special case
-        rec.setRefGPR(X86_REF_RSP, X86_SIZE_QWORD, result);
+        rec.setRefGPR(X86_REF_RSP, size, result);
     } else {
         AS.ADDI(rsp, rsp, imm);
-        rec.setRefGPR(X86_REF_RSP, X86_SIZE_QWORD, rsp);
+        rec.setRefGPR(X86_REF_RSP, size, rsp);
     }
 }
 
 FAST_HANDLE(NOP) {}
+
+FAST_HANDLE(ENDBR32) {}
 
 FAST_HANDLE(ENDBR64) {}
 
@@ -1021,12 +1164,12 @@ FAST_HANDLE(JMP) {
     }
     case ZYDIS_OPERAND_TYPE_IMMEDIATE: {
         u64 displacement = rec.sextImmediate(rec.getImmediate(&operands[0]), operands[0].imm.size);
-        u64 offset = meta.rip - meta.block_start + instruction.length;
-        biscuit::GPR scratch = rec.getRip();
-        rec.addi(scratch, scratch, offset + displacement);
+        GuestAddress address = meta.rip.add(instruction.length + displacement).toGuest();
+        biscuit::GPR scratch = rec.scratch();
+        AS.LI(scratch, address.raw());
         rec.setRip(scratch);
         rec.writebackDirtyState();
-        rec.jumpAndLink(meta.rip + instruction.length + displacement);
+        rec.jumpAndLink(meta.rip.add(instruction.length + displacement));
         rec.stopCompiling();
         break;
     }
@@ -1506,17 +1649,14 @@ FAST_HANDLE(CQO) {
 
 void JCC(Recompiler& rec, const HandlerMetadata& meta, ZydisDecodedInstruction& instruction, ZydisDecodedOperand* operands, biscuit::GPR cond) {
     u64 immediate = rec.sextImmediate(rec.getImmediate(&operands[0]), operands[0].imm.size);
-    u64 address_false = meta.rip - meta.block_start + instruction.length;
-    u64 address_true = address_false + immediate;
+    HostAddress address_false = meta.rip.add(instruction.length);
+    HostAddress address_true = address_false.add(immediate);
 
-    biscuit::GPR rip_true = rec.getRip();
+    biscuit::GPR rip_true = rec.scratch();
     biscuit::GPR rip_false = rec.scratch();
 
-    rec.addi(rip_false, rip_true, address_false);
-    rec.addi(rip_true, rip_false, immediate);
-
-    address_false += meta.block_start;
-    address_true += meta.block_start;
+    AS.LI(rip_false, address_false.toGuest().raw());
+    AS.LI(rip_true, address_true.toGuest().raw());
 
     rec.writebackDirtyState();
     rec.jumpAndLinkConditional(cond, rip_true, rip_false, address_true, address_false);
@@ -2197,7 +2337,7 @@ FAST_HANDLE(SYSCALL) {
     }
 
     biscuit::GPR rcx = rec.allocatedGPR(X86_REF_RCX);
-    AS.LI(rcx, meta.rip + instruction.length);
+    AS.LI(rcx, meta.rip.add(instruction.length).toGuest().raw());
     rec.setRefGPR(X86_REF_RCX, X86_SIZE_QWORD, rcx);
 
     // Normally the syscall instruction also writes the flags to R11 but we don't need them in our syscall handler
@@ -3110,12 +3250,11 @@ FAST_HANDLE(SHUFPD) {
 
 FAST_HANDLE(LEAVE) {
     x86_size_e size = rec.zydisToSize(instruction.operand_width);
-    ASSERT(size == X86_SIZE_QWORD);
-    biscuit::GPR rbp = rec.getRefGPR(X86_REF_RBP, X86_SIZE_QWORD);
-    AS.ADDI(rbp, rbp, 8);
-    rec.setRefGPR(X86_REF_RSP, X86_SIZE_QWORD, rbp);
-    rec.readMemory(rbp, rbp, -8, size);
-    rec.setRefGPR(X86_REF_RBP, X86_SIZE_QWORD, rbp);
+    biscuit::GPR rbp = rec.getRefGPR(X86_REF_RBP, size);
+    AS.ADDI(rbp, rbp, rec.stackPointerSize());
+    rec.setRefGPR(X86_REF_RSP, size, rbp);
+    rec.readMemory(rbp, rbp, -rec.stackPointerSize(), size);
+    rec.setRefGPR(X86_REF_RBP, size, rbp);
 }
 
 void SETCC(Recompiler& rec, const HandlerMetadata& meta, ZydisDecodedInstruction& instruction, ZydisDecodedOperand* operands, biscuit::GPR cond) {
@@ -5898,7 +6037,7 @@ FAST_HANDLE(PUSHFQ) {
     biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, X86_SIZE_QWORD);
     AS.ADDI(rsp, rsp, -8);
     rec.setRefGPR(X86_REF_RSP, X86_SIZE_QWORD, rsp);
-    AS.SD(src, 0, rsp);
+    rec.writeMemory(src, rsp, 0, X86_SIZE_QWORD);
 }
 
 FAST_HANDLE(POPFQ) {

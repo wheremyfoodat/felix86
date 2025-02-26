@@ -1,20 +1,25 @@
 #pragma once
 
 #include <filesystem>
-#include <memory>
 #include <vector>
+#include "felix86/common/address.hpp"
 #include "felix86/common/utility.hpp"
 
 constexpr u64 brk_size = 512 * 1024 * 1024;
 
 struct Elf {
-    Elf(bool is_interpreter);
+    enum class PeekResult {
+        NotElf,
+        Elf32,
+        Elf64,
+    };
 
+    Elf(bool is_interpreter);
     ~Elf();
 
     void Load(const std::filesystem::path& path);
 
-    static void LoadSymbols(const std::string& name, const std::filesystem::path& path, void* base);
+    // static void LoadSymbols(const std::string& name, const std::filesystem::path& path, void* base);
 
     bool Okay() const {
         return ok;
@@ -24,16 +29,12 @@ struct Elf {
         return interpreter;
     }
 
-    void* GetEntrypoint() const {
-        return (void*)(program + entry);
-    }
-
-    void* GetStackPointer() const {
-        return stack_pointer;
+    GuestAddress GetEntrypoint() const {
+        return HostAddress{(u64)(program_base + entry)}.toGuest();
     }
 
     void* GetProgramBase() const {
-        return program;
+        return program_base;
     }
 
     void* GetPhdr() const {
@@ -48,20 +49,18 @@ struct Elf {
         return phent;
     }
 
-    auto& GetExecutableSegments() {
-        return executable_segments;
-    }
+    static PeekResult Peek(const std::filesystem::path& path);
 
 private:
     bool ok = false;
     bool is_interpreter = false;
-    u8* program = nullptr;
-    std::vector<std::pair<u8*, u64>> executable_segments{};
     u64 entry = 0;
     std::filesystem::path interpreter{};
-    u8* stack_pointer = nullptr;
 
+    u8* program_base = nullptr;
     u8* phdr = nullptr;
     u64 phnum = 0;
     u64 phent = 0;
+
+    std::vector<std::pair<void*, size_t>> unmap_me;
 };

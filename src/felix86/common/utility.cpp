@@ -1,4 +1,5 @@
 #include <cstring>
+#include <fstream>
 #include "Zydis/Decoder.h"
 #include "Zydis/Disassembler.h"
 #include "felix86/common/debug.hpp"
@@ -211,6 +212,13 @@ void flush_icache() {
 #endif
 }
 
+// Flush icache to other cores as well
+void flush_icache_global(const HostAddress& start, const HostAddress& end) {
+#if defined(__riscv)
+    __riscv_flush_icache((void*)start.raw(), (void*)end.raw(), 0);
+#endif
+}
+
 int guest_breakpoint(const char* region, u64 address) {
     auto [start, end] = MemoryMetadata::GetRegionByName(region);
 
@@ -234,22 +242,14 @@ __attribute__((visibility("default"))) int guest_breakpoint_abs(u64 address) {
     return g_breakpoints.size();
 }
 
-__attribute__((visibility("default"))) int guest_breakpoint_name(const char* symbol) {
-    for (auto& [address, bp] : g_symbols) {
-        if (bp == symbol) {
-            return guest_breakpoint_abs(address);
-        }
-    }
-
-    printf("Symbol %s not found\n", symbol);
-    return -1;
-}
-
 __attribute__((visibility("default"))) void disassemble_x64(u64 address) {
+    // in 32-bit mode we like to be able to provide a guest address to gdb when calling this function
+    HostAddress host_address = GuestAddress{address}.toHost();
+
     ZydisDecoder decoder;
     ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
 
-    u64 cur = address;
+    u64 cur = host_address.raw();
     while (true) {
         ZydisDecodedInstruction instruction;
         ZydisDecodedOperand operands[10];
@@ -431,21 +431,18 @@ void felix86_psadbw(u8* dst, u8* src) {
 }
 
 void dump_states() {
-    if (!g_emulator) {
-        return;
-    }
-
-    auto& states = g_thread_states;
+    auto lock = g_process_globals.states_lock.lock();
+    auto& states = g_process_globals.states;
     int i = 0;
     for (auto& state : states) {
         dprintf(g_output_fd, ANSI_COLOR_RED "State %d (%ld): " ANSI_COLOR_RESET, i, state->tid);
-        print_address(state->rip);
+        print_address(state->rip.toHost().raw());
 
         if (g_calltrace) {
             dprintf(g_output_fd, ANSI_COLOR_RED "--- CALLTRACE ---\n" ANSI_COLOR_RESET);
             auto it = state->calltrace.rbegin();
             while (it != state->calltrace.rend()) {
-                print_address(*it);
+                print_address((*it).raw());
                 it++;
             }
         }
@@ -453,29 +450,65 @@ void dump_states() {
     }
 }
 
-void print_address(u64 address) {
-    std::string symbol;
-    auto it = g_symbols.find(address);
-    if (it != g_symbols.end()) {
-        symbol = it->second;
+void update_symbols() {
+    if (g_process_globals.cached_symbols) {
+        return;
     }
 
-    if (!symbol.empty()) {
-        dprintf(g_output_fd, ANSI_COLOR_RED "%s@%s 0x%lx (%p)\n" ANSI_COLOR_RESET, MemoryMetadata::GetRegionName(address).c_str(), symbol.c_str(),
-                MemoryMetadata::GetOffset(address), (void*)address);
-    } else {
+    auto lock = g_process_globals.mapped_regions_lock.lock();
+    g_process_globals.mapped_regions.clear();
 
-        dprintf(g_output_fd, ANSI_COLOR_RED "%s@0x%lx (%p)\n" ANSI_COLOR_RESET, MemoryMetadata::GetRegionName(address).c_str(),
-                MemoryMetadata::GetOffset(address), (void*)address);
+    std::ifstream ifs("/proc/self/maps");
+    std::string line;
+    char buffer[PATH_MAX];
+    while (std::getline(ifs, line)) {
+        u64 start, end;
+        int result = sscanf(line.c_str(), "%lx-%lx %*s %*s %*s %*s %s", &start, &end, buffer);
+        if (result == 3) {
+            g_process_globals.mapped_regions[end - 1] = {.base = start, .end = end, .file = buffer};
+        }
+    }
+
+    g_process_globals.cached_symbols = true;
+}
+
+std::string get_region(u64 address) {
+    update_symbols();
+
+    auto lock = g_process_globals.mapped_regions_lock.lock();
+    auto it = g_process_globals.mapped_regions.lower_bound(address);
+    if (address >= it->second.base) {
+        return it->second.file;
+    } else {
+        return "Unknown";
     }
 }
 
+void print_address(u64 address) {
+    update_symbols();
+
+    // Dl_info info; // locks
+    // info.dli_fname = 0;
+    // info.dli_fbase = 0;
+    // int result = dladdr((void*)address, &info);
+    // printf("dlerr: %s\n", dlerror());
+
+    // if (result != 0) {
+    //     std::string lib = info.dli_fname;
+    //     u64 offset = address - (u64)info.dli_fbase;
+    //     dprintf(g_output_fd, ANSI_COLOR_RED "%s@%s 0x%lx (%p)\n" ANSI_COLOR_RESET, lib.c_str(), info.dli_sname, offset, (void*)address);
+    // } else {
+    //     dprintf(g_output_fd, ANSI_COLOR_RED "%s@0x%lx (%p)\n" ANSI_COLOR_RESET, info.dli_fname ? info.dli_fname : "Unknown",
+    //             info.dli_fbase ? address - (u64)info.dli_fbase : 0, (void*)address);
+    // }
+}
+
 void push_calltrace(ThreadState* state) {
-    state->calltrace.push_back(state->rip);
+    state->calltrace.push_back(state->rip.toHost());
 
     if (g_print_all_calls) {
         dprintf(g_output_fd, "Thread %ld calling: ", state->tid);
-        print_address(state->rip);
+        print_address(state->rip.toHost().raw());
     }
 }
 

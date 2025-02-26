@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "felix86/common/state.hpp"
 #include "felix86/v2/recompiler.hpp"
 
@@ -34,13 +35,7 @@ ThreadState::ThreadState(ThreadState* copy_state) {
 }
 
 void ThreadState::InitializeKey() {
-    int result = pthread_key_create(&g_thread_state_key, [](void* data) {
-        ThreadState* state = (ThreadState*)data;
-        FELIX86_LOCK;
-        g_thread_states.remove(state);
-        FELIX86_UNLOCK;
-        delete state;
-    });
+    int result = pthread_key_create(&g_thread_state_key, [](void*) {});
     if (result != 0) {
         ERROR("Failed to create thread state key: %s", strerror(result));
         exit(1);
@@ -49,15 +44,26 @@ void ThreadState::InitializeKey() {
 
 ThreadState* ThreadState::Create(ThreadState* copy_state) {
     ThreadState* state = new ThreadState(copy_state);
-    FELIX86_LOCK;
-    g_thread_states.push_back(state);
-    FELIX86_UNLOCK;
+    auto lock = g_process_globals.states_lock.lock();
+    g_process_globals.states.push_back(state);
     ASSERT(g_thread_state_key != (pthread_key_t)-1);
     ASSERT(pthread_getspecific(g_thread_state_key) == nullptr);
     pthread_setspecific(g_thread_state_key, state);
+    VERBOSE("Created thread state with tid %ld", state->tid);
     return state;
 }
 
 ThreadState* ThreadState::Get() {
     return (ThreadState*)pthread_getspecific(g_thread_state_key);
+}
+
+void ThreadState::Destroy(ThreadState* state) {
+    auto lock = g_process_globals.states_lock.lock();
+    auto it = std::find(g_process_globals.states.begin(), g_process_globals.states.end(), state);
+    if (it != g_process_globals.states.end()) {
+        g_process_globals.states.erase(it);
+    } else {
+        WARN("Thread state %ld not found in global list", state->tid);
+    }
+    delete state;
 }

@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cstring>
+#include <list>
 #include <string>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -17,7 +18,6 @@ bool g_testing = false;
 bool g_strace = false;
 bool g_dont_link = false;
 bool g_extensions_manually_specified = false;
-bool g_dont_validate_exe_path = false;
 bool g_calltrace = false;
 bool g_use_block_cache = true;
 bool g_single_step = false;
@@ -31,28 +31,45 @@ bool g_no_sse4_1 = false;
 bool g_no_sse4_2 = false;
 bool g_print_all_insts = false;
 bool g_dont_inline_syscalls = false;
+bool g_mode32 = false;
+bool g_rsb = true;
 u64 g_initial_brk = 0;
 u64 g_current_brk = 0;
 u64 g_current_brk_size = 0;
-sem_t* g_semaphore = nullptr;
 u64 g_dispatcher_exit_count = 0;
+u64 g_address_space_base = 0;
+std::atomic_long g_bad_ret_count{};
 std::list<ThreadState*> g_thread_states{};
-std::unordered_map<u64, std::vector<u64>> g_breakpoints{};
-std::chrono::nanoseconds g_compilation_total_time = std::chrono::nanoseconds(0);
-std::unordered_map<u64, std::string> g_symbols{};
-std::vector<const char*> g_host_argv{};
+std::unordered_map<u64, std::vector<u64>> g_breakpoints{}; // TODO: HostAddress
 pthread_key_t g_thread_state_key = -1;
+ProcessGlobals g_process_globals{};
+HostAddress g_guest_auxv{};
+size_t g_guest_auxv_size = 0;
+bool g_execve_process = false;
+std::unique_ptr<Filesystem> g_fs{};
+Config g_config{};
 
 int g_output_fd = 1;
 std::filesystem::path g_rootfs_path{};
 u64 g_executable_base_hint = 0;
 u64 g_interpreter_base_hint = 0;
-Emulator* g_emulator = nullptr;
 
-u64 g_interpreter_start = 0;
-u64 g_interpreter_end = 0;
-u64 g_executable_start = 0;
-u64 g_executable_end = 0;
+HostAddress g_interpreter_start{};
+HostAddress g_interpreter_end{};
+HostAddress g_executable_start{};
+HostAddress g_executable_end{};
+
+void ProcessGlobals::initialize() {
+    // Open a new shared memory region
+    memory = std::make_unique<SharedMemory>(shared_memory_size);
+    states_lock = ProcessLock(*memory);
+    mapped_regions_lock = ProcessLock(*memory);
+
+    // Reset the states stored here
+    states = {};
+
+    // Don't reset the mapped regions, we can reuse the ones from parent process
+}
 
 #define X(ext) bool Extensions::ext = false;
 FELIX86_EXTENSIONS_TOTAL
@@ -162,6 +179,12 @@ void initialize_globals() {
         environment += "\nFELIX86_PARANOID";
     }
 
+    const char* dont_rsb_env = getenv("FELIX86_DONT_RSB");
+    if (is_truthy(dont_rsb_env)) {
+        g_rsb = false;
+        environment += "\nFELIX86_DONT_RSB";
+    }
+
     const char* executable_base = getenv("FELIX86_EXECUTABLE_BASE");
     if (executable_base) {
         g_executable_base_hint = std::stoull(executable_base, nullptr, 16);
@@ -231,12 +254,6 @@ void initialize_globals() {
     if (is_truthy(no_sse4_2_env)) {
         g_no_sse4_2 = true;
         environment += "\nFELIX86_NO_SSE4_2";
-    }
-
-    const char* dont_validate_exe_path = getenv("FELIX86_DONT_VALIDATE_EXE_PATH");
-    if (is_truthy(dont_validate_exe_path)) {
-        g_dont_validate_exe_path = true;
-        environment += "\nFELIX86_DONT_VALIDATE_EXE_PATH";
     }
 
     const char* env_file = getenv("FELIX86_ENV_FILE");
@@ -339,28 +356,4 @@ bool parse_extensions(const char* arg) {
     }
 
     return true;
-}
-
-// Needs to be reopened on new processes, the very first time it will be null though
-void initialize_semaphore() {
-    if (!g_semaphore) {
-        g_semaphore = sem_open("/felix86_semaphore", O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP, 1);
-        if (g_semaphore == SEM_FAILED) {
-            const char* is_execve = getenv("__FELIX86_EXECVE");
-            if (!is_execve) {
-                ERROR("Failed to create semaphore: %s", strerror(errno));
-            }
-            g_semaphore = sem_open("/felix86_semaphore", 0);
-        }
-    } else {
-        g_semaphore = sem_open("/felix86_semaphore", 0);
-    }
-
-    if (g_semaphore == SEM_FAILED) {
-        ERROR("Failed to create semaphore: %s", strerror(errno));
-    }
-}
-
-void unlink_semaphore() {
-    sem_unlink("/felix86_semaphore");
 }

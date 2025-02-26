@@ -1,15 +1,19 @@
 #include <csetjmp>
 #include <fstream>
 #include <argp.h>
+#include <fcntl.h>
 #include <fmt/format.h>
 #include <grp.h>
+// #include <sys/capability.h>
+#include <sys/mount.h>
+#include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include "felix86/common/log.hpp"
 #include "felix86/emulator.hpp"
-#include "felix86/hle/filesystem.hpp"
 
 #if !defined(__riscv)
-#pragma message("felix86 should only be compiled for RISC-V")
+#pragma message("You are compiling for x86-64, felix86 should only be compiled for RISC-V, are you sure you want to do this?")
 #endif
 
 std::string version_full = get_version_full();
@@ -19,10 +23,12 @@ const char* argp_program_bug_address = "<https://github.com/OFFTKP/felix86/issue
 static char doc[] = "felix86 - a userspace x86_64 emulator";
 static char args_doc[] = "TARGET_BINARY [TARGET_ARGS...]";
 
+std::vector<std::string> mounts;
+
 static struct argp_option options[] = {
     {"verbose", 'V', 0, 0, "Produce verbose output"},
     {"quiet", 'q', 0, 0, "Don't produce any output"},
-    {"rootfs-path", 'p', "PATH", 0, "Path to the rootfs directory"},
+    {"rootfs-path", 'L', "PATH", 0, "Path to the rootfs directory"},
     {"strace", 't', 0, 0, "Trace emulated application syscalls"},
     {"all-extensions", 'X', "EXTS", 0,
      "Manually specify every available RISC-V extension. When using this, any extension not specified will be considered unavailable. "
@@ -107,7 +113,7 @@ static error_t parse_opt(int key, char* arg, struct argp_state* state) {
         disable_logging();
         break;
     }
-    case 'p': {
+    case 'L': {
         g_rootfs_path = arg;
         break;
     }
@@ -138,6 +144,34 @@ static error_t parse_opt(int key, char* arg, struct argp_state* state) {
 }
 
 static struct argp argp = {options, parse_opt, args_doc, doc};
+
+void mountme(const char* path, const std::filesystem::path& dest, const char* fs_type, unsigned flags = 0) {
+    std::filesystem::create_directories(dest);
+
+    int result = mount(path, dest.c_str(), fs_type, flags, NULL);
+    if (result < 0) {
+        WARN("Failed to mount %s to %s. Error: %d", path, dest.c_str(), errno);
+    }
+    VERBOSE("Mounting %s to %s", path, dest.c_str());
+
+    mounts.push_back(dest);
+}
+
+// int drop_capabilities() {
+//     cap_t caps = cap_init();
+//     if (caps == nullptr) {
+//         fprintf(stderr, "Error: cap_init() failed.\n");
+//         return -1;
+//     }
+
+//     if (cap_set_proc(caps) == -1) {
+//         fprintf(stderr, "Error: cap_set_proc() failed.\n");
+//         return -1;
+//     }
+
+//     cap_free(caps);
+//     return 0;
+// }
 
 int main(int argc, char* argv[]) {
 #if 0 // for testing zydis behavior on specific instructions
@@ -171,17 +205,22 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // This instance of felix86 may be running as an execve'd version of an older instance
-    // In this case we shouldn't print the version string and unlink the semaphore
-    const char* execve_process = getenv("__FELIX86_EXECVE");
-
-    for (int i = 0; i < guest_arg_start_index - 1; i++) {
-        g_host_argv.push_back(argv[i]);
+    if (geteuid() != 0) {
+        // Try to restart app with sudo
+        LOG("I need administrator permissions to chroot and mount if necessary. Requesting administrator privileges...");
+        std::vector<const char*> sudo_args = {"sudo"};
+        sudo_args.push_back("-E");
+        for (int i = 0; i < argc; i++) {
+            sudo_args.push_back(argv[i]);
+        }
+        sudo_args.push_back(nullptr);
+        execvpe("sudo", (char* const*)sudo_args.data(), environ);
+        ERROR("felix86 needs administrator privileges to chroot and mount. Failed to restart felix86 with sudo. Please run felix86 with "
+              "administrator privileges. Error code: %d",
+              errno);
     }
 
-    if (!execve_process) {
-        LOG("%s", version_full.c_str());
-    }
+    LOG("%s", version_full.c_str());
 
     std::string args = "Arguments: ";
     for (const auto& arg : config.argv) {
@@ -198,9 +237,9 @@ int main(int argc, char* argv[]) {
     initialize_globals();
     initialize_extensions();
     print_extensions();
-
     Signals::initialize();
 
+    bool purposefully_empty = false;
     const char* env_file = getenv("FELIX86_ENV_FILE");
     if (env_file) {
         std::string env_path = env_file;
@@ -210,10 +249,16 @@ int main(int argc, char* argv[]) {
             while (std::getline(env_stream, line)) {
                 config.envp.push_back(line);
             }
+
+            if (config.envp.empty()) {
+                purposefully_empty = true;
+            }
         } else {
-            ERROR("Environment variable file %s does not exist", env_file);
+            WARN("Environment variable file %s does not exist. Using host environment variables.", env_file);
         }
-    } else {
+    }
+
+    if (config.envp.empty() && !purposefully_empty) {
         char** envp = environ;
         while (*envp) {
             config.envp.push_back(*envp);
@@ -221,19 +266,46 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    const char* allow_root_env = getenv("FELIX86_ALLOW_ROOT");
+    bool allow_root = false;
+    if (allow_root_env && std::string(allow_root_env) == "1") {
+        WARN("Running felix86 with root privileges");
+        allow_root = true;
+    }
+
+    auto it = config.envp.begin();
+    while (it != config.envp.end()) {
+        std::string env = *it;
+
+        // Dont pass these to the executable itself
+        if (env.find("FELIX86_") != std::string::npos) {
+            it = config.envp.erase(it);
+        } else {
+            if (!allow_root) {
+                if (env.find("SUDO_") != std::string::npos) {
+                    it = config.envp.erase(it);
+                } else {
+                    it++;
+                }
+            } else {
+                it++;
+            }
+        }
+    }
+
     config.rootfs_path = g_rootfs_path;
 
-    // Sanitize the executable path
-    std::string path = config.argv[0];
-    if (path.size() < g_rootfs_path.string().size()) {
-        ERROR("Executable path is not part of the rootfs");
+    // Make it so we can work with both rootfs/path and /path
+    if (config.executable_path.string().find(g_rootfs_path.string()) == std::string::npos) {
+        config.executable_path = g_rootfs_path / config.executable_path.relative_path();
     }
-    path = path.substr(g_rootfs_path.string().size());
-    ASSERT(!path.empty());
-    if (path[0] != '/') {
-        path = "/" + path;
+
+    std::string arg0 = config.executable_path.string().substr(g_rootfs_path.string().size());
+    ASSERT(!arg0.empty());
+    if (arg0[0] != '/') {
+        arg0 = "/" + arg0;
     }
-    config.argv[0] = path;
+    config.argv[0] = arg0;
 
     if (config.rootfs_path.empty()) {
         ERROR("Rootfs path not specified");
@@ -255,7 +327,7 @@ int main(int argc, char* argv[]) {
         return 1;
     } else {
         if (!std::filesystem::exists(config.executable_path)) {
-            ERROR("Executable path does not exist");
+            ERROR("Executable path does not exist: %s", config.executable_path.c_str());
             return 1;
         }
 
@@ -263,98 +335,134 @@ int main(int argc, char* argv[]) {
             ERROR("Executable path is not a regular file");
             return 1;
         }
+
+        std::string exec_path = config.executable_path.string();
+        std::string rootfs_path = config.rootfs_path.string();
+
+        if (exec_path.size() >= rootfs_path.size()) {
+            // Remove rootfs from executable path, if the user prepended it
+            if (exec_path.substr(0, rootfs_path.size()) == rootfs_path) {
+                config.executable_path = exec_path.substr(rootfs_path.size());
+            }
+        }
     }
 
-    if (execve_process) {
-        pthread_setname_np(pthread_self(), "ExecveProcess");
+    pthread_setname_np(pthread_self(), "MainProcess");
+
+    // Mount the necessary filesystems
+    if (config.rootfs_path.empty()) {
+        ERROR("Rootfs path not specified, should not happen here");
+    }
+
+    std::filesystem::path has_mounted_var_path = "/run/felix86.mounted";
+
+    if (!std::filesystem::exists("/run") || !std::filesystem::is_directory("/run")) {
+        ERROR("/run does not exist?");
+    }
+
+    int has_mounted_var = open(has_mounted_var_path.c_str(), 0, 0666);
+    if (has_mounted_var != -1) {
+        // This file was already created, which means a previous instance of felix86 mounted the directories
+        LOG("We are already mounted!");
+        close(has_mounted_var);
     } else {
-        pthread_setname_np(pthread_self(), "MainProcess");
-    }
+        // Mount the necessary filesystems
+        LOG("Mounting filesystems...");
+        mountme("proc", config.rootfs_path / "proc", "proc");
+        mountme("sysfs", config.rootfs_path / "sys", "sysfs");
+        mountme("udev", config.rootfs_path / "dev", "devtmpfs");
+        mountme("devpts", config.rootfs_path / "dev/pts", "devpts");
+        mountme("/run", config.rootfs_path / "run", "none", MS_BIND | MS_REC);
 
-    if (!execve_process) {
-        unlink_semaphore(); // in case it was not closed properly last time
-    }
-
-    initialize_semaphore();
-
-    ASSERT(argc > 1); // at this point we should have at least one argument
-
-    Emulator emulator(config);
-
-    if (geteuid() == 0) {
-        const char* allow_root_env = getenv("FELIX86_ALLOW_ROOT");
-        if (allow_root_env && std::string(allow_root_env) == "1") {
-            WARN("Running felix86 with root privileges");
+        int fd = open(has_mounted_var_path.c_str(), O_CREAT | O_EXCL, 0666);
+        if (fd == -1) {
+            ERROR("Failed to create the mount variable file");
         } else {
-            ERROR("Running felix86 as root is not recommended. Set the FELIX86_ALLOW_ROOT environment variable to 1 to run as root.");
+            close(fd);
+        }
+    }
+
+    // Check that proc is mounted successfully
+    char buffer1[PATH_MAX];
+    char buffer2[PATH_MAX];
+    int n1 = readlink("/proc/self/exe", buffer1, PATH_MAX);
+    if (n1 == -1) {
+        ERROR("Failed to read /proc/self/exe, is /proc mounted?");
+        return 1;
+    }
+
+    int n2 = readlink((config.rootfs_path / "proc/self/exe").c_str(), buffer2, PATH_MAX);
+    if (n2 == -1) {
+        ERROR("Failed to read /proc/self/exe from chroot, is /proc mounted?");
+        return 1;
+    }
+
+    if (n1 != n2 || memcmp(buffer1, buffer2, n1) != 0) {
+        ERROR("Error while comparing /proc/self/exe results from inside and outside the chroot");
+        return 1;
+    }
+
+    int result = chroot(config.rootfs_path.c_str());
+    if (result < 0) {
+        ERROR("Failed to chroot to %s. Error: %d", config.rootfs_path.c_str(), errno);
+        return 1;
+    }
+
+    ASSERT(getuid() == 0);
+    ASSERT(g_rootfs_path == config.rootfs_path); // don't change me in the future
+    g_is_chrooted = true;
+
+    if (!allow_root) {
+        const char* gid_env = getenv("SUDO_GID");
+        const char* uid_env = getenv("SUDO_UID");
+
+        std::string suggestion = "If you want to run felix86 with root privileges (not recommended), "
+                                 "set the FELIX86_ALLOW_ROOT environment variable to 1. Otherwise run without root privileges.";
+
+        if (!uid_env || !gid_env) {
+            ERROR("SUDO_UID or SUDO_GID not set, can't drop root privileges. %s", suggestion.c_str());
             return 1;
         }
-    }
 
-#if 0
-    // TODO: decide mounting strategy for /dev etc.
-    if (geteuid() == 0) { // When running as root, we can fully chroot into rootfs and save some time
-        chroot(config.rootfs_path.c_str());
-        g_is_chrooted = true;
+        std::string user = getenv("SUDO_USER");
+        gid_t gid = std::stoul(gid_env);
+        uid_t uid = std::stoul(uid_env);
 
-        // Drop root privileges
-        const char* allow_root_env = getenv("FELIX86_ALLOW_ROOT");
-        bool allow_root = false;
-        if (allow_root_env && std::string(allow_root_env) == "1") {
-            WARN("Running felix86 with root privileges");
-            allow_root = true;
+        if (initgroups(user.c_str(), gid) != 0) {
+            ERROR("initgroups failed when trying to drop root privileges. %s", suggestion.c_str());
+            return 1;
         }
 
-        if (!allow_root) {
-            const char* gid_env = getenv("SUDO_GID");
-            const char* uid_env = getenv("SUDO_UID");
-
-            std::string suggestion = "If you want to run felix86 with root privileges (not recommended), "
-                                     "set the FELIX86_ALLOW_ROOT environment variable to 1. Otherwise run without root privileges.";
-
-            if (!uid_env || !gid_env) {
-                ERROR("SUDO_UID or SUDO_GID not set, can't drop root privileges. %s", suggestion.c_str());
-                return 1;
-            }
-
-            std::string user = getenv("SUDO_USER");
-            gid_t gid = std::stoul(gid_env);
-            uid_t uid = std::stoul(uid_env);
-
-            if (initgroups(user.c_str(), gid) != 0) {
-                ERROR("initgroups failed when trying to drop root privileges. %s", suggestion.c_str());
-                return 1;
-            }
-
-            if (setgid(gid) != 0) {
-                ERROR("setgid failed when trying to drop root privileges. %s", suggestion.c_str());
-                return 1;
-            }
-
-            if (setuid(uid) != 0) {
-                ERROR("setuid failed when trying to drop root privileges. %s", suggestion.c_str());
-                return 1;
-            }
-
-            ASSERT(geteuid() != 0);
-            ASSERT(getuid() != 0);
-
-            chdir("/");
+        if (setgid(gid) != 0) {
+            ERROR("setgid failed when trying to drop root privileges. %s", suggestion.c_str());
+            return 1;
         }
+
+        if (setuid(uid) != 0) {
+            ERROR("setuid failed when trying to drop root privileges. %s", suggestion.c_str());
+            return 1;
+        }
+
+        ASSERT(geteuid() != 0);
+        ASSERT(getuid() != 0);
+
+        // TODO: use this instead?
+        // drop_capabilities();
     }
-#endif
 
-    ThreadState* main_state = ThreadState::Get();
+    result = chdir("/");
+    if (result < 0) {
+        ERROR("Failed to change directory to / after dropping root privileges. Error: %d", errno);
+        return 1;
+    }
 
-    emulator.Run();
+    auto [exit_reason, exit_code] = Emulator::Start(config);
 
-    if (!execve_process) {
-        LOG("Main process exited with reason: %s", print_exit_reason(main_state->exit_reason));
+    if (!g_execve_process) {
+        LOG("Main process exited with reason: %s. Exit code: %d", print_exit_reason(exit_reason), exit_code);
     } else {
-        LOG("Execve process exited with reason: %s", print_exit_reason(main_state->exit_reason));
+        LOG("Execve process exited with reason: %s. Exit code: %d", print_exit_reason(exit_reason), exit_code);
     }
 
-    unlink_semaphore();
-
-    felix86_exit(0);
+    return exit_code;
 }

@@ -7,6 +7,7 @@
 #include "felix86/common/utility.hpp"
 #include "felix86/emulator.hpp"
 #include "felix86/hle/thread.hpp"
+#include "felix86/v2/recompiler.hpp"
 
 struct CloneArgs {
     ThreadState* parent_state = nullptr;
@@ -17,7 +18,7 @@ struct CloneArgs {
 
     u64 new_fsbase = 0;
     u64 new_rsp = 0;
-    u64 new_rip = 0;
+    GuestAddress new_rip = {};
     pthread_t new_thread{};
 
     alignas(4) u32 new_tid = 0; // to signal that clone_handler has finished using the pointer and get the tid
@@ -96,11 +97,15 @@ void* pthread_handler(void* args) {
 
     LOG("Thread %ld started", state->tid);
     pthread_setname_np(state->thread, "ChildProcess");
-    g_emulator->StartThread(state);
+    Threads::StartThread(state);
     LOG("Thread %ld exited with reason: %s", state->tid, print_exit_reason(state->exit_reason));
 
-    __atomic_store_n(state->clear_tid_address, 0, __ATOMIC_SEQ_CST);
-    syscall(SYS_futex, state->clear_tid_address, FUTEX_WAKE, ~0ULL, 0, 0, 0);
+    if (state->clear_tid_address) {
+        __atomic_store_n(state->clear_tid_address, 0, __ATOMIC_SEQ_CST);
+        syscall(SYS_futex, state->clear_tid_address, FUTEX_WAKE, ~0ULL, 0, 0, 0);
+    }
+
+    ThreadState::Destroy(state);
 
     return nullptr;
 }
@@ -110,6 +115,11 @@ int clone_handler(void* args) {
     int res = prctl(PR_SET_NAME, (unsigned long)"CloneHandler", 0, 0, 0);
     if (res < 0) {
         ERROR("prctl failed with %d", errno);
+    }
+
+    if (!(clone_args->flags & CLONE_VM)) {
+        // New memory space, reinitialize the process globals
+        g_process_globals.initialize();
     }
 
     // We can't use this cloned process, because when the guest created it, it passed a guest TLS which we can't use,
@@ -180,11 +190,11 @@ long Threads::Clone(ThreadState* current_state, clone_args* args) {
     std::string sflags = flags_to_string(args->flags);
     STRACE("clone({%s}, stack: %llx, parid: %llx, ctid: %llx, tls: %llx)", sflags.c_str(), args->stack, args->parent_tid, args->child_tid, args->tls);
 
-    u64 allowed_flags = CLONE_VM | CLONE_THREAD | CLONE_SYSVSEM | CLONE_VFORK | CLONE_CHILD_CLEARTID | CLONE_CHILD_SETTID | CLONE_SIGHAND |
-                        CLONE_FILES | CLONE_FS | CLONE_IO | CLONE_SETTLS | CLONE_PARENT_SETTID;
+    u64 allowed_flags = CLONE_VM | CLONE_THREAD | CLONE_SYSVSEM | CLONE_CHILD_CLEARTID | CLONE_CHILD_SETTID | CLONE_SIGHAND | CLONE_FILES | CLONE_FS |
+                        CLONE_IO | CLONE_SETTLS | CLONE_PARENT_SETTID;
     if ((args->flags & ~CSIGNAL) & ~allowed_flags) {
         ERROR("Unsupported flags %016llx", (args->flags & ~CSIGNAL) & ~allowed_flags);
-        return -EINVAL;
+        return -ENOSYS;
     }
 
     // We use this "tid" to check that the cloned process has finished
@@ -199,7 +209,8 @@ long Threads::Clone(ThreadState* current_state, clone_args* args) {
         .child_tid = (pid_t*)args->child_tid,
         .new_fsbase = args->tls,
         .new_rsp = args->stack,
-        .new_rip = current_state->gprs[X86_REF_RCX],
+        .new_rip = GuestAddress{current_state->gprs[X86_REF_RCX]},
+        .new_thread = 0,
         .new_tid = 0,
     };
 
@@ -211,6 +222,7 @@ long Threads::Clone(ThreadState* current_state, clone_args* args) {
         // copy-on-write semantics ensure that the child gets separate copies of stack pages when either process modifies the stack. In this case,
         // for correct operation, the CLONE_VM option should not be specified.
         ASSERT(!(host_flags & CLONE_VM));
+        ASSERT(!(host_flags & CLONE_VFORK)); // does this happen?
 
         int parent_tid = host_clone_args.parent_state->tid;
 
@@ -220,6 +232,7 @@ long Threads::Clone(ThreadState* current_state, clone_args* args) {
         if (ret == 0) {
             // Start the child at the instruction after the syscall
             result = 0;
+            g_process_globals.initialize(); // New memory space, reinitialize the process globals
             // it's fine to just return to felix86_syscall, which will set the result to 0 and continue execution
             // in this new process. Just give it a new name to make debugging easier
             std::string name = "ForkedFrom" + std::to_string(parent_tid); // forked from parent tid
@@ -256,7 +269,7 @@ long Threads::Clone(ThreadState* current_state, clone_args* args) {
     return result;
 }
 
-std::pair<u8*, size_t> Threads::AllocateStack(size_t size) {
+std::pair<u8*, size_t> Threads::AllocateStack(bool mode32) {
     struct rlimit stack_limit = {0};
     if (getrlimit(RLIMIT_STACK, &stack_limit) == -1) {
         ERROR("Failed to get stack size limit");
@@ -267,27 +280,64 @@ std::pair<u8*, size_t> Threads::AllocateStack(size_t size) {
         stack_size = 8 * 1024 * 1024;
     }
 
-    u64 max_stack_size = size == 0 ? stack_limit.rlim_max : size;
+    u64 max_stack_size = stack_limit.rlim_max;
     if (max_stack_size == RLIM_INFINITY) {
-        max_stack_size = 128 * 1024 * 1024;
+        max_stack_size = 16 * 1024 * 1024;
     }
 
-    u64 stack_hint = 0x7FFFFFFFF000 - max_stack_size;
+    max_stack_size &= ~0xFFF; // Make sure we are aligned
 
-    u8* base =
-        (u8*)mmap((void*)stack_hint, max_stack_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK | MAP_GROWSDOWN | MAP_NORESERVE, -1, 0);
-    if (base == MAP_FAILED) {
-        ERROR("Failed to allocate stack");
+    // If mode32 is on, we already reserved a mapping with FIXED_NORESERVE, so we don't wanna
+    //  pass NORESERVE in stack allocation as it would just fail.
+    int fixed_flag = mode32 ? MAP_FIXED : MAP_FIXED_NOREPLACE;
+
+    u64 stack_hint;
+    if (mode32) {
+        stack_hint = g_address_space_base + 0x7FFF'F000 - max_stack_size;
+    } else {
+        // Randomish hint. Needs to be below 0x3f'ffff'ffff however as that is the lowest possible
+        // user-space virtual memory (the one in Kernel SV39).
+        stack_hint = 0x2A'FFFF'F000 - max_stack_size;
+    }
+
+    u8* base;
+    int attempts = 0;
+    int max_attempts = 14;
+
+    while (true) {
+        VERBOSE("Attempting to allocate stack on %p", (void*)stack_hint);
+        base =
+            (u8*)mmap((void*)stack_hint, max_stack_size, PROT_NONE, MAP_PRIVATE | fixed_flag | MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_NORESERVE, -1, 0);
+        if (base != MAP_FAILED) {
+            break;
+        }
+
+        stack_hint -= max_stack_size;
+
+        if (attempts++ >= max_attempts) {
+            ERROR("Failed to allocate stack, ran out of attempts");
+        }
     }
 
     u8* stack_pointer = (u8*)mmap(base + max_stack_size - stack_size, stack_size, PROT_READ | PROT_WRITE,
-                                  MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK | MAP_GROWSDOWN, -1, 0);
+                                  MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS | MAP_GROWSDOWN, -1, 0);
     if (stack_pointer == MAP_FAILED) {
         ERROR("Failed to allocate stack");
     }
+
+    if (mode32) {
+        ASSERT((u64)stack_pointer < g_address_space_base + 0x8000'0000 && (u64)stack_pointer > g_address_space_base);
+    }
+
     VERBOSE("Allocated stack at %p", base);
     stack_pointer += stack_size;
     VERBOSE("Stack pointer at %p", stack_pointer);
 
     return {stack_pointer, max_stack_size};
+}
+
+void Threads::StartThread(ThreadState* state) {
+    state->tid = gettid();
+    state->recompiler->enterDispatcher(state);
+    VERBOSE("Thread exited with reason %d\n", state->exit_reason);
 }

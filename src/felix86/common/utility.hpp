@@ -1,5 +1,6 @@
 #pragma once
 
+#include <climits>
 #include <cstddef>
 #include <stdbool.h>
 #include <stdint.h>
@@ -15,6 +16,8 @@ using i32 = int32_t;
 using i16 = int16_t;
 using i8 = int8_t;
 
+struct HostAddress;
+
 [[nodiscard]] constexpr bool IsValidSigned12BitImm(i64 value) {
     return value >= -2048 && value <= 2047;
 }
@@ -27,6 +30,10 @@ using i8 = int8_t;
     return value >= -0x80000 && value <= 0x7FFFF;
 }
 
+[[nodiscard]] constexpr bool IsValid2GBImm(i64 value) {
+    return (i64)value >= (i64)INT_MIN && (i64)value <= (i64)INT_MAX;
+}
+
 void felix86_div128(struct ThreadState* state, u64 divisor);
 void felix86_divu128(struct ThreadState* state, u64 divisor);
 
@@ -35,11 +42,13 @@ u64 sext_if_64(u64 value, u8 size_e);
 
 void flush_icache();
 
+void flush_icache_global(const HostAddress& start, const HostAddress& end);
+
 int guest_breakpoint(const char* name, u64 address);
 
 int clear_breakpoints();
 
-void print_address(u64 address);
+void print_address(u64 address); // u64 instead of HostAddress for convenient calling from gdb
 
 void felix86_fxsave(struct ThreadState* state, u64 address, bool fxsave64);
 
@@ -57,9 +66,6 @@ void dump_states();
 
 namespace biscuit {}
 using namespace biscuit;
-
-#define FELIX86_LOCK ASSERT(sem_wait(g_semaphore) == 0)
-#define FELIX86_UNLOCK ASSERT(sem_post(g_semaphore) == 0)
 
 enum class x86RoundingMode { Nearest = 0, Down = 1, Up = 2, Truncate = 3 };
 

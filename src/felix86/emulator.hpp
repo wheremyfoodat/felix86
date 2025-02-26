@@ -1,72 +1,38 @@
 #pragma once
 
-#include <semaphore.h>
+#include <sys/mman.h>
+#include "felix86/common/config.hpp"
 #include "felix86/common/log.hpp"
 #include "felix86/common/state.hpp"
 #include "felix86/hle/filesystem.hpp"
-#include "felix86/hle/signals.hpp"
-
-struct Config {
-    std::filesystem::path rootfs_path;
-    std::filesystem::path executable_path;
-    std::vector<std::string> argv;
-    std::vector<std::string> envp;
-};
 
 struct TestConfig {
-    void* entrypoint;
+    HostAddress entrypoint;
+    bool mode32;
 };
 
 struct Emulator {
-    Emulator(const Config& config) : config(config) {
-        g_emulator = this;
-        fs.LoadRootFS(config.rootfs_path);
-        fs.LoadExecutable(config.executable_path);
-        auto main_state = ThreadState::Create();
-        VERBOSE("Created thread state with tid %ld", main_state->tid);
-        setupMainStack(main_state);
-        main_state->signal_handlers = std::make_shared<SignalHandlerTable>();
-        main_state->SetRip((u64)fs.GetEntrypoint());
-    }
-
-    Emulator(const TestConfig& config) {
-        g_emulator = this;
-        auto main_state = ThreadState::Create();
-        VERBOSE("Created thread state with tid %ld", main_state->tid);
-        main_state->SetRip((u64)config.entrypoint);
-        testing = true;
-    }
-
-    ~Emulator() = default;
-
     Filesystem& GetFilesystem() {
         return fs;
     }
 
-    Config& GetConfig() {
-        return config;
-    }
-
-    void Run();
-
-    void StartThread(ThreadState* state);
-
     static void* CompileNext(ThreadState* state);
 
-    std::pair<void*, size_t> GetAuxv() {
-        return {auxv_base, auxv_size};
-    }
+    [[nodiscard]] static std::pair<ExitReason, int> Start(const Config& config);
 
-    void CleanExit(ThreadState* state);
+    static void StartTest(const TestConfig& config, GuestAddress stack);
 
-    void UnlinkBlock(ThreadState* state, u64 rip);
+    // The exit dispatcher function also restores the stack pointer to what it was before
+    // entering the dispatcher, so it can be called from anywhere
+    [[noreturn]] static void ExitDispatcher(ThreadState* state);
 
 private:
-    void setupMainStack(ThreadState* state);
+    [[nodiscard]] static std::pair<void*, size_t> setupMainStack(ThreadState* state);
 
-    Config config;
+    static void initialize32BitAddressSpace();
+    static void uninitialize32BitAddressSpace();
+
     Filesystem fs;
-    bool testing = false;
-    void* auxv_base = nullptr;
-    size_t auxv_size = 0;
+    void* stack = nullptr;
+    size_t stack_size = 0;
 };
