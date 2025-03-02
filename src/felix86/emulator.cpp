@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/random.h>
+#include "felix86/common/script.hpp"
 #include "felix86/emulator.hpp"
 #include "felix86/hle/thread.hpp"
 #include "felix86/v2/recompiler.hpp"
@@ -175,23 +176,21 @@ std::pair<void*, size_t> Emulator::setupMainStack(ThreadState* state) {
 
 void* Emulator::CompileNext(ThreadState* thread_state) {
     // Check if there's any pending asynchronous signals. If there are, raise them.
-    if (thread_state->pending_signals != 0) {
+    if (!thread_state->pending_signals.empty()) {
         sigset_t full, old;
         sigfillset(&full);
         sigprocmask(SIG_BLOCK, &full, &old); // block signals to make changing pending_signals safe
 
-        int sig = 0;
-        for (int i = 0; i < 64; i++) {
-            if (thread_state->pending_signals & (1 << i)) {
-                sig = i + 1;
-                thread_state->pending_signals &= ~(1 << i);
-                break;
-            }
-        }
+        PendingSignal& signal = thread_state->pending_signals.back();
+
+        int sig = signal.sig;
+        siginfo_t info = signal.info;
+
+        thread_state->pending_signals.pop_back();
 
         sigprocmask(SIG_SETMASK, &old, nullptr);
 
-        ASSERT(sig != 0); // found the signal
+        ASSERT(sig != 0);
 
         SignalHandlerTable& handlers = *thread_state->signal_handlers;
         RegisteredSignal& handler = handlers[sig - 1];
@@ -210,7 +209,7 @@ void* Emulator::CompileNext(ThreadState* thread_state) {
 
         bool use_altstack = handler.flags & SA_ONSTACK;
 
-        Signals::setupFrame(nullptr, rip, thread_state, mask_during_signal, gprs, xmms, use_altstack, false);
+        Signals::setupFrame(nullptr, rip, 0, thread_state, mask_during_signal, gprs, xmms, use_altstack, false, &info);
 
         thread_state->SetGpr(X86_REF_RDI, sig);
 
@@ -285,66 +284,69 @@ std::pair<ExitReason, int> Emulator::Start(const Config& config) {
     int exit_code;
     g_config = config;
 
-    do {
-        g_process_globals.initialize();
-        g_fs = std::make_unique<Filesystem>();
+    g_process_globals.initialize();
+    g_fs = std::make_unique<Filesystem>();
 
-        Elf::PeekResult peek = Elf::Peek(g_config.executable_path);
-        if (peek == Elf::PeekResult::NotElf) {
-            ERROR("File %s is not an ELF file", g_config.executable_path.c_str());
-        }
+    Elf::PeekResult peek = Elf::Peek(g_config.executable_path);
+    if (peek == Elf::PeekResult::NotElf) {
+        Script::PeekResult peek = Script::Peek(g_config.executable_path);
+        if (peek == Script::PeekResult::Script) {
+            Script script(g_config.executable_path);
+            const std::filesystem::path& interpreter = script.GetInterpreter();
 
-        if (peek == Elf::PeekResult::Elf32) {
-            g_mode32 = true;
-            initialize32BitAddressSpace();
+            // Scripts start with a line that goes #! (usually) and that means
+            // use the interpreter after #!. This can be bash, zsh, python, whatever.
+            // So, set executable path to be the interpreter itself and push it to the front of argv.
+            g_config.argv.push_front(interpreter.string());
+            g_config.executable_path = interpreter;
         } else {
-            g_mode32 = false;
+            ERROR("Unknown file format: %s", g_config.executable_path.c_str());
         }
+    }
 
-        g_fs->LoadExecutable(g_config.executable_path);
-        ThreadState* main_state = ThreadState::Create(nullptr);
-        main_state->signal_handlers = std::make_shared<SignalHandlerTable>();
-        main_state->SetRip(g_fs->GetEntrypoint());
+    if (peek == Elf::PeekResult::Elf32) {
+        g_mode32 = true;
+        initialize32BitAddressSpace();
+    } else {
+        g_mode32 = false;
+    }
 
-        auto [stack, size] = setupMainStack(main_state);
+    g_fs->LoadExecutable(g_config.executable_path);
+    ThreadState* main_state = ThreadState::Create(nullptr);
+    main_state->signal_handlers = std::make_shared<SignalHandlerTable>();
+    main_state->SetRip(g_fs->GetEntrypoint());
 
-        // The Emulator::Run will only return when exit_dispatcher is jumped to
-        VERBOSE("Executable: %016lx - %016lx", g_executable_start.raw(), g_executable_end.raw());
-        if (!g_interpreter_start.isNull()) {
-            VERBOSE("Interpreter: %016lx - %016lx", g_interpreter_start.raw(), g_interpreter_end.raw());
-        }
+    auto [stack, size] = setupMainStack(main_state);
 
-        if (!g_testing) {
-            VERBOSE("Entrypoint: %016lx", g_fs->GetEntrypoint().toHost().raw());
-        }
+    // The Emulator::Run will only return when exit_dispatcher is jumped to
+    VERBOSE("Executable: %016lx - %016lx", g_executable_start.raw(), g_executable_end.raw());
+    if (!g_interpreter_start.isNull()) {
+        VERBOSE("Interpreter: %016lx - %016lx", g_interpreter_start.raw(), g_interpreter_end.raw());
+    }
 
-        VERBOSE("Entering main thread :)");
+    if (!g_testing) {
+        VERBOSE("Entrypoint: %016lx", g_fs->GetEntrypoint().toHost().raw());
+    }
 
-        Threads::StartThread(main_state);
+    VERBOSE("Entering main thread :)");
 
-        VERBOSE("Bye-bye main thread :(");
+    Threads::StartThread(main_state);
 
-        exit_reason = main_state->exit_reason;
-        exit_code = main_state->exit_code;
+    VERBOSE("Bye-bye main thread :(");
 
-        if (g_mode32) {
-            uninitialize32BitAddressSpace();
-        }
+    exit_reason = main_state->exit_reason;
+    exit_code = main_state->exit_code;
 
-        munmap(stack, size);
-        munmap((void*)g_initial_brk, g_current_brk_size);
-        g_fs.reset();
-        g_breakpoints.clear();
-        ThreadState::Destroy(main_state);
-        pthread_setspecific(g_thread_state_key, nullptr);
+    if (g_mode32) {
+        uninitialize32BitAddressSpace();
+    }
 
-        if (exit_reason == EXIT_REASON_EXECVE) {
-            // Just start the emulator again
-            // The execve handler has changed g_config to the new executable
-            ERROR("TODO: Implement execve");
-            continue;
-        }
-    } while (false);
+    munmap(stack, size);
+    munmap((void*)g_initial_brk, g_current_brk_size);
+    g_fs.reset();
+    g_breakpoints.clear();
+    ThreadState::Destroy(main_state);
+    pthread_setspecific(g_thread_state_key, nullptr);
 
     return {exit_reason, exit_code};
 }

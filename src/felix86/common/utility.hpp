@@ -2,6 +2,7 @@
 
 #include <climits>
 #include <cstddef>
+#include <string>
 #include <stdbool.h>
 #include <stdint.h>
 #include "biscuit/isa.hpp"
@@ -40,6 +41,8 @@ void felix86_divu128(struct ThreadState* state, u64 divisor);
 u64 sext(u64 value, u8 size);
 u64 sext_if_64(u64 value, u8 size_e);
 
+std::string get_perf_symbol(u64 address);
+
 void flush_icache();
 
 void flush_icache_global(const HostAddress& start, const HostAddress& end);
@@ -50,6 +53,10 @@ int clear_breakpoints();
 
 void print_address(u64 address); // u64 instead of HostAddress for convenient calling from gdb
 
+bool has_region(u64 address);
+
+void update_symbols();
+
 void felix86_fxsave(struct ThreadState* state, u64 address, bool fxsave64);
 
 void felix86_fxrstor(struct ThreadState* state, u64 address, bool fxrstor64);
@@ -58,7 +65,7 @@ void felix86_packuswb(u8* dst, u8* src);
 void felix86_packusdw(u16* dst, u8* src);
 void felix86_pmaddwd(i16* dst, i16* src);
 
-void push_calltrace(ThreadState* state);
+void push_calltrace(ThreadState* state, u64 address);
 
 void pop_calltrace(ThreadState* state);
 

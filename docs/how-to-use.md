@@ -3,13 +3,12 @@
 :warning: felix86 is early in development. It can run some simple games. :warning:
 
 ## Required architecture
-You need a RISC-V board with `rv64gvb` extensions.
+You need a RISC-V board with `rv64gv` extensions.
 
 Furthermore, **you need a recent version of Linux like `6.11`**, so that there is vector extension support in signal handlers.
 If you don't have a recent version of Linux, things may go wrong.
 
 Any extra extensions might be utilized, but `G` and `V` are mandatory.
-`B` is currently mandatory. Eventually it won't be, but currently it is.
 
 felix86 is going to tell you which extensions it detects on your system.
 If you have an extension but it's unable to detect it, you can use the environment variable:
@@ -45,6 +44,27 @@ qemu-system-riscv64 \
 -drive file=ubuntu-24.04.1-preinstalled-server-riscv64.img,format=raw,if=virtio
 ```
 
+## Debugging
+Because felix86 needs to mount and chroot, it will ask for administrator privileges, which it will drop
+right after mounting. This means you need to run `gdb` as root.
+
+Example:
+```
+sudo -E gdb --args ./felix86 <my felix86 arguments>
+```
+
+Make sure sudo has the `-E` flag so environment variables are passed to felix86!
+
+## Profiling
+felix86 can emit JIT symbols for perf. You need to enable the `FELIX86_PERF` environment variable to enable this!
+
+Example:
+```
+sudo -E perf record -e cpu-clock -g ./felix86 <my felix86 arguments>
+```
+
+The generated perf.data may need administrator permissions to view, either `chmod` it or run `perf report` with sudo.
+
 ## RootFS
 
 felix86 requires an x86-64 "rootfs" which is the filesystem at the root directory on Linux.
@@ -52,7 +72,7 @@ felix86 requires an x86-64 "rootfs" which is the filesystem at the root director
 The way to get the rootfs varies for each distro, for Ubuntu you can use the following link:
 - [http://cdimage.ubuntu.com/ubuntu-base/releases/](http://cdimage.ubuntu.com/ubuntu-base/releases/)
 
-After acquiring the rootfs, you need to supply felix86 with the path to the rootfs directory using the `-L` parameter.
+After acquiring the rootfs, you need to supply felix86 with the path to the rootfs directory using the `FELIX86_ROOTFS` environment variable.
 
 After providing the path you can add more optional arguments and finish it with the path to the binary you want to emulate and
 any arguments you want to pass.
@@ -60,12 +80,10 @@ any arguments you want to pass.
 The binary **must** be inside the rootfs directory, so place it anywhere in there.
 
 Example:
-`./felix86 -L /home/myuser/myrootfs /home/myuser/myrootfs/MyApplication arg1 arg2 arg3`
+`./felix86 /home/myuser/myrootfs/MyDir/MyApplication arg1 arg2 arg3`
 
 Or, don't prepend the executable path with the rootfs path:
-`./felix86 -L /home/myuser/myrootfs /MyApplication arg1 arg2 arg3`
-
-You may also set the `FELIX86_ROOTFS` environment variable to point to the path so you don't have to type it every time.
+`./felix86 /MyDir/MyApplication arg1 arg2 arg3`
 
 By default, the host environment variables are passed to the executable.
 

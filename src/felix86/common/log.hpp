@@ -10,6 +10,7 @@
 #define ANSI_COLOR_BLUE "\x1b[34m"
 #define ANSI_COLOR_MAGENTA "\x1b[35m"
 #define ANSI_COLOR_CYAN "\x1b[36m"
+#define ANSI_BOLD "\x1b[1m"
 #define ANSI_COLOR_RESET "\x1b[0m"
 
 #define LOG(format, ...)                                                                                                                             \
@@ -20,8 +21,7 @@
     } while (0)
 #define ERROR(format, ...)                                                                                                                           \
     do {                                                                                                                                             \
-        dprintf(g_output_fd, ANSI_COLOR_RED "%s:%d " format ANSI_COLOR_RESET "\n", __FILE__, __LINE__, ##__VA_ARGS__);                               \
-        dump_states();                                                                                                                               \
+        dprintf(g_output_fd, ANSI_COLOR_RED "%s:%d (Thread: %d) " format ANSI_COLOR_RESET "\n", __FILE__, __LINE__, getpid(), ##__VA_ARGS__);        \
         felix86_exit(1);                                                                                                                             \
     } while (0)
 #define WARN(format, ...)                                                                                                                            \

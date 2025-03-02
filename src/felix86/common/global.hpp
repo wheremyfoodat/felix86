@@ -15,9 +15,16 @@
 struct Filesystem;
 
 struct MappedRegion {
-    u64 base;
-    u64 end;
-    std::string file; // without rootfs prefix
+    u64 base{};
+    u64 end{};
+    std::string file{}; // without rootfs prefix
+};
+
+struct Symbol {
+    u64 start{};
+    u64 size{};
+    bool strong = false;
+    std::string name{};
 };
 
 // Globals that are shared across processes, including threads, that have CLONE_VM set.
@@ -31,10 +38,9 @@ struct ProcessGlobals {
     // own copy of the process memory, which means we don't worry about self-modifying code there.
     std::vector<ThreadState*> states{};
 
-    ProcessLock mapped_regions_lock{};
+    ProcessLock symbols_lock{};
     std::map<u64, MappedRegion> mapped_regions{};
-    std::unordered_map<u64, std::string> symbols{};
-    std::atomic_bool cached_symbols = {false};
+    std::map<u64, Symbol> symbols{};
 
 private:
     constexpr static size_t shared_memory_size = 0x1000;
@@ -46,10 +52,10 @@ extern bool g_verbose;
 extern bool g_quiet;
 extern bool g_testing;
 extern bool g_strace;
+extern bool g_dump_regs;
 extern bool g_calltrace;
 extern bool g_extensions_manually_specified;
 extern bool g_paranoid;
-extern bool g_is_chrooted;
 extern bool g_dont_link;
 extern bool g_dont_inline_syscalls;
 extern bool g_use_block_cache;
@@ -65,6 +71,8 @@ extern bool g_no_sse4_2;
 extern bool g_print_all_insts;
 extern bool g_mode32;
 extern bool g_rsb;
+extern bool g_perf;
+extern std::atomic_bool g_symbols_cached;
 extern u64 g_initial_brk;
 extern u64 g_current_brk;
 extern u64 g_current_brk_size;
@@ -77,6 +85,7 @@ extern HostAddress g_interpreter_start, g_interpreter_end;
 extern HostAddress g_executable_start, g_executable_end;
 extern u64 g_interpreter_base_hint;
 extern u64 g_executable_base_hint;
+extern u64 g_brk_base_hint;
 extern const char* g_git_hash;
 extern std::unordered_map<u64, std::vector<u64>> g_breakpoints;
 extern pthread_key_t g_thread_state_key;
@@ -85,12 +94,11 @@ extern size_t g_guest_auxv_size;
 extern bool g_execve_process;
 extern Config g_config;
 extern std::unique_ptr<Filesystem> g_fs;
-extern std::atomic_long g_bad_ret_count;
 
 bool parse_extensions(const char* ext);
 void initialize_globals();
 void initialize_extensions();
-const char* get_version_full();
+std::string get_extensions();
 
 struct Extensions {
 #define FELIX86_EXTENSIONS_TOTAL                                                                                                                     \

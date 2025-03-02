@@ -1,5 +1,6 @@
 #include <array>
 #include <sys/mman.h>
+#include "biscuit/decoder.hpp"
 #include "felix86/common/state.hpp"
 #include "felix86/emulator.hpp"
 #include "felix86/hle/filesystem.hpp"
@@ -92,122 +93,89 @@ struct x64_rt_sigframe {
 static_assert(sizeof(siginfo_t) == 128);
 static_assert(sizeof(x64_rt_sigframe) == 1120);
 
-void reconstruct_state(ThreadState* state, BlockMetadata* current_block, HostAddress rip, const u64* gprs, const XmmReg* xmms) {
-    // We were in the middle of a basic block when the signal hit
-    // We need to fixup our state and get the correct values that may not have been written back to the state struct
-    // First, for the GPRS
-    for (int i = 0; i < 16; i++) {
-        bool needs_copy = false;
-        for (auto& access : current_block->register_accesses[i]) {
-            if (access.address >= rip)
-                break;
-            needs_copy = access.valid;
-        }
+void reconstruct_state(ThreadState* state, BlockMetadata* current_block, HostAddress rip, uint64_t pc, const u64* gprs, const XmmReg* xmms) {
+    const u64 start = current_block->address.raw();
+    const u64 end = pc;
+    u64 current = start;
+    bool valid = true;
 
-        // At the time of signal, the register was loaded from memory and potentially modified, so we need to copy it to the state struct
-        // effectively doing a writeback to state.
-        if (needs_copy) {
-            int allocated_host_gpr = Recompiler::allocatedGPR((x86_ref_e)(X86_REF_RAX + i)).Index();
-            state->SetGpr((x86_ref_e)(X86_REF_RAX + i), gprs[allocated_host_gpr]);
-        }
-    }
+    // Go through the instructions in this block, find the ones that modify our allocated registers, extract the values
+    // from the registers and put them into `state`
+    biscuit::Decoder decoder;
+    DecodedInstruction instruction;
+    DecodedOperand operands[4];
 
-    // Do the same for XMMs
-    if (xmms) {
+    // TODO: static method in recompiler for this conversion that doesn't do runtime computation
+    static std::array<x86_ref_e, 32> gpr_to_x86 = {};
+    static std::array<x86_ref_e, 32> vec_to_x86 = {};
+    static std::atomic_flag initialized = ATOMIC_FLAG_INIT;
+    if (!initialized.test_and_set()) {
+        memset(gpr_to_x86.data(), X86_REF_COUNT, 32);
+        memset(vec_to_x86.data(), X86_REF_COUNT, 32);
+
         for (int i = 0; i < 16; i++) {
-            bool needs_copy = false;
-            // TODO: again get rid of magic number 16 + 5
-            for (auto& access : current_block->register_accesses[16 + 5 + i]) {
-                if (access.address >= rip)
-                    break;
-                needs_copy = access.valid;
+            biscuit::GPR allocated_gpr = Recompiler::allocatedGPR((x86_ref_e)(X86_REF_RAX + i));
+            biscuit::Vec allocated_vec = Recompiler::allocatedVec((x86_ref_e)(X86_REF_XMM0 + i));
+            gpr_to_x86[allocated_gpr.Index()] = (x86_ref_e)(X86_REF_RAX + i);
+            vec_to_x86[allocated_vec.Index()] = (x86_ref_e)(X86_REF_XMM0 + i);
+        }
+
+        gpr_to_x86[Recompiler::allocatedGPR(X86_REF_ZF).Index()] = X86_REF_ZF;
+        gpr_to_x86[Recompiler::allocatedGPR(X86_REF_CF).Index()] = X86_REF_CF;
+        gpr_to_x86[Recompiler::allocatedGPR(X86_REF_OF).Index()] = X86_REF_OF;
+        gpr_to_x86[Recompiler::allocatedGPR(X86_REF_SF).Index()] = X86_REF_SF;
+        gpr_to_x86[Recompiler::allocatedGPR(X86_REF_AF).Index()] = X86_REF_AF;
+    }
+
+    while (current < end) {
+        DecoderStatus status = decoder.Decode((void*)current, 4, instruction, operands);
+
+        if (status == DecoderStatus::UnknownInstruction) {
+            u32 buffer = *(u32*)current;
+            WARN("Couldn't decode: %08x", buffer);
+            current += 4;
+            continue;
+        } else if (status == DecoderStatus::UnknownInstructionCompressed) {
+            u16 buffer = *(u16*)current;
+            WARN("Couldn't decode: %04x", buffer);
+            current += 2;
+            continue;
+        } else {
+            current += instruction.length;
+        }
+
+        // See Recompiler::invalidStateUntilJump, we use this NOP to mark regions of the block
+        // that don't have valid register state and shouldn't be copied
+        if (instruction.mnemonic == Mnemonic::SRLI && operands[0].GPR() == x0 && operands[1].GPR() == x0 && operands[2].Immediate() == 42) {
+            valid = false;
+        }
+
+        if (valid) {
+            if (instruction.operand_count >= 1) {
+                bool write = operands[0].IsWrite();
+                if (write && operands[0].IsGPR()) {
+                    int gpr_index = operands[0].GPR().Index();
+                    x86_ref_e ref = gpr_to_x86[gpr_index];
+                    if (ref >= X86_REF_RAX && ref <= X86_REF_R15) {
+                        u64 value = gprs[gpr_index];
+                        state->SetGpr(ref, value);
+                    } else if (ref >= X86_REF_CF && ref <= X86_REF_OF) {
+                        u64 value = gprs[gpr_index];
+                        state->SetFlag(ref, value);
+                    }
+                } else if (write && operands[0].IsVec()) {
+                    int vec_index = operands[0].Vec().Index();
+                    x86_ref_e ref = vec_to_x86[vec_index];
+                    if (ref != X86_REF_COUNT) {
+                        XmmReg xmm = xmms[vec_index];
+                        state->SetXmmReg(ref, xmm);
+                    }
+                }
             }
-
-            if (needs_copy) {
-                state->SetXmmReg((x86_ref_e)(X86_REF_XMM0 + i), xmms[i]);
+        } else {
+            if (instruction.mnemonic == Mnemonic::JAL || instruction.mnemonic == Mnemonic::JALR) {
+                valid = true;
             }
-        }
-    } else {
-        static bool warned = false;
-        if (!warned) {
-            WARN("Could not retrieve host vector registers, probably old Linux kernel version, may cause issues with signal handling");
-            warned = true;
-        }
-    }
-
-    // Check for CF
-    {
-        bool needs_copy = false;
-        // TODO: get rid of magic number 16, 17, etc
-        for (auto& access : current_block->register_accesses[16]) {
-            if (access.address >= rip)
-                break;
-            needs_copy = access.valid;
-        }
-
-        if (needs_copy) {
-            int allocated_host_gpr = Recompiler::allocatedGPR(X86_REF_CF).Index();
-            state->SetFlag(X86_REF_CF, gprs[allocated_host_gpr] & 1);
-        }
-    }
-
-    // Check for AF
-    {
-        bool needs_copy = false;
-        for (auto& access : current_block->register_accesses[17]) {
-            if (access.address >= rip)
-                break;
-            needs_copy = access.valid;
-        }
-
-        if (needs_copy) {
-            int allocated_host_gpr = Recompiler::allocatedGPR(X86_REF_AF).Index();
-            state->SetFlag(X86_REF_AF, gprs[allocated_host_gpr] & 1);
-        }
-    }
-
-    // Check for ZF
-    {
-        bool needs_copy = false;
-        for (auto& access : current_block->register_accesses[18]) {
-            if (access.address >= rip)
-                break;
-            needs_copy = access.valid;
-        }
-
-        if (needs_copy) {
-            int allocated_host_gpr = Recompiler::allocatedGPR(X86_REF_ZF).Index();
-            state->SetFlag(X86_REF_ZF, gprs[allocated_host_gpr] & 1);
-        }
-    }
-
-    // Check for SF
-    {
-        bool needs_copy = false;
-        for (auto& access : current_block->register_accesses[19]) {
-            if (access.address >= rip)
-                break;
-            needs_copy = access.valid;
-        }
-
-        if (needs_copy) {
-            int allocated_host_gpr = Recompiler::allocatedGPR(X86_REF_SF).Index();
-            state->SetFlag(X86_REF_SF, gprs[allocated_host_gpr] & 1);
-        }
-    }
-
-    // Check for OF
-    {
-        bool needs_copy = false;
-        for (auto& access : current_block->register_accesses[20]) {
-            if (access.address >= rip)
-                break;
-            needs_copy = access.valid;
-        }
-
-        if (needs_copy) {
-            int allocated_host_gpr = Recompiler::allocatedGPR(X86_REF_OF).Index();
-            state->SetFlag(X86_REF_OF, gprs[allocated_host_gpr] & 1);
         }
     }
 
@@ -216,12 +184,12 @@ void reconstruct_state(ThreadState* state, BlockMetadata* current_block, HostAdd
 }
 
 // arch/x86/kernel/signal.c, get_sigframe function prepares the signal frame
-void Signals::setupFrame(BlockMetadata* current_block, GuestAddress rip, ThreadState* state, sigset_t new_mask, const u64* host_gprs,
-                         const XmmReg* host_vecs, bool use_altstack, bool in_jit_code) {
+void Signals::setupFrame(BlockMetadata* current_block, GuestAddress rip, uint64_t pc, ThreadState* state, sigset_t new_mask, const u64* host_gprs,
+                         const XmmReg* host_vecs, bool use_altstack, bool in_jit_code, siginfo_t* host_siginfo) {
     HostAddress rsp = GuestAddress{use_altstack ? (u64)state->alt_stack.ss_sp : state->GetGpr(X86_REF_RSP)}.toHost();
-    rsp.add(-128); // red zone
+    rsp = rsp.add(-128); // red zone
 
-    rsp.add(-sizeof(x64_rt_sigframe));
+    rsp = rsp.add(-sizeof(x64_rt_sigframe));
     x64_rt_sigframe* frame = (x64_rt_sigframe*)rsp.raw();
 
     frame->pretcode = (char*)Signals::magicSigreturnAddress().raw();
@@ -230,6 +198,7 @@ void Signals::setupFrame(BlockMetadata* current_block, GuestAddress rip, ThreadS
 
     frame->uc.uc_flags = 0;
     frame->uc.uc_link = 0;
+    frame->info = *host_siginfo;
 
     // After some testing, this is set to the altstack if it exists and is valid (which we don't check here, but on sigaltstack)
     // Otherwise it is zero, it's not set to the actual stack
@@ -249,7 +218,7 @@ void Signals::setupFrame(BlockMetadata* current_block, GuestAddress rip, ThreadS
     if (in_jit_code) {
         // We were in the middle of executing a basic block, the state up to that point needs to be written back to the state struct
         ASSERT(current_block);
-        reconstruct_state(state, current_block, rip.toHost(), host_gprs, host_vecs);
+        reconstruct_state(state, current_block, rip.toHost(), pc, host_gprs, host_vecs);
     } else {
         // State reconstruction isn't necessary, the state should be in some stable form
         // It's rare that a signal doesn't happen in jit code as we block signals during compilation, but it's possible
@@ -298,15 +267,9 @@ void Signals::setupFrame(BlockMetadata* current_block, GuestAddress rip, ThreadS
 
 BlockMetadata* get_block_metadata(ThreadState* state, HostAddress host_pc) {
     auto& map = state->recompiler->getBlockMap();
-
-    for (auto& span : map) {
-        if (host_pc >= span.second.address && host_pc < span.second.address_end) {
-            return &span.second;
-        }
-    }
-
-    UNREACHABLE();
-    return nullptr;
+    auto it = map.find(host_pc.raw());
+    ASSERT(it != map.end());
+    return &it->second;
 }
 
 GuestAddress get_actual_rip(BlockMetadata& metadata, HostAddress host_pc) {
@@ -627,12 +590,12 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
         bool jit_code = is_in_jit_code(current_state, pc);
         if (!jit_code || current_state->signals_disabled) {
             WARN("Deferring signal %s", strsignal(sig));
-            if (current_state->pending_signals & (1 << (sig - 1))) {
-                u64 write_address = (u64)info->si_addr;
-                ERROR("Signal %s is already deferred, probably needed to be handled. Write address: %016lx", strsignal(sig), write_address);
+            if (current_state->pending_signals.size() > 5) {
+                ERROR("More than 5 pending signals, something is probably wrong, exiting to avoid spam");
+                exit(0);
             }
 
-            current_state->pending_signals |= 1 << (sig - 1);
+            current_state->pending_signals.push_back({sig, *info});
 
             // Unlink the current block, making it jump back to the dispatcher at the end
             // This will ensure that the pending signal is eventually handled if we are stuck in a loop
@@ -671,12 +634,12 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
             sigaddset(&mask_during_signal, sig);
         }
 
-        BlockMetadata* metadata = get_block_metadata(current_state, HostAddress{pc});
+        BlockMetadata* metadata = get_block_metadata(current_state, current_state->rip.toHost());
         GuestAddress actual_rip = get_actual_rip(*metadata, HostAddress{pc});
 
         // Prepares everything necessary to run the signal handler when we return from the host signal handler.
         // The stack is switched if necessary and filled with the frame that the signal handler expects.
-        Signals::setupFrame(metadata, actual_rip, current_state, mask_during_signal, gprs, xmms, use_altstack, jit_code);
+        Signals::setupFrame(metadata, actual_rip, pc, current_state, mask_during_signal, gprs, xmms, use_altstack, jit_code, info);
 
         current_state->SetGpr(X86_REF_RDI, sig);
 

@@ -38,6 +38,16 @@ struct Elf_Ehdr {
         }
     }
 
+    Elf_Ehdr(bool mode32, void* data) : mode32(mode32) {
+        if (mode32) {
+            inner = Elf32_Ehdr{};
+            memcpy(&inner32(), data, sizeof(Elf32_Ehdr));
+        } else {
+            inner = Elf64_Ehdr{};
+            memcpy(&inner64(), data, sizeof(Elf64_Ehdr));
+        }
+    }
+
     u64 version() {
         return mode32 ? inner32().e_version : inner64().e_version;
     }
@@ -64,6 +74,22 @@ struct Elf_Ehdr {
 
     u64 phentsize() {
         return mode32 ? inner32().e_phentsize : inner64().e_phentsize;
+    }
+
+    u64 shoff() {
+        return mode32 ? inner32().e_shoff : inner64().e_shoff;
+    }
+
+    u64 shnum() {
+        return mode32 ? inner32().e_shnum : inner64().e_shnum;
+    }
+
+    u64 shentsize() {
+        return mode32 ? inner32().e_shentsize : inner64().e_shentsize;
+    }
+
+    u64 shstrindex() {
+        return mode32 ? inner32().e_shstrndx : inner64().e_shstrndx;
     }
 
 private:
@@ -93,6 +119,16 @@ struct Elf_Phdr {
 
         if (read != 1) {
             ERROR("Failed to read ELF program header from file");
+        }
+    }
+
+    Elf_Phdr(bool mode32, void* data) : mode32(mode32) {
+        if (mode32) {
+            inner = Elf32_Phdr{};
+            memcpy(&inner32(), data, sizeof(Elf32_Phdr));
+        } else {
+            inner = Elf64_Phdr{};
+            memcpy(&inner64(), data, sizeof(Elf64_Phdr));
         }
     }
 
@@ -132,6 +168,127 @@ private:
     }
 
     std::variant<Elf64_Phdr, Elf32_Phdr> inner;
+};
+
+struct Elf_Shdr {
+    Elf_Shdr(bool mode32, FILE* file) : mode32(mode32) {
+        size_t read;
+        if (mode32) {
+            inner = Elf32_Shdr{};
+            read = fread(&inner32(), sizeof(Elf32_Shdr), 1, file);
+        } else {
+            inner = Elf64_Shdr{};
+            read = fread(&inner64(), sizeof(Elf64_Shdr), 1, file);
+        }
+
+        if (read != 1) {
+            ERROR("Failed to read ELF program header from file");
+        }
+    }
+
+    Elf_Shdr(bool mode32, void* data) : mode32(mode32) {
+        if (mode32) {
+            inner = Elf32_Shdr{};
+            memcpy(&inner32(), data, sizeof(Elf32_Shdr));
+        } else {
+            inner = Elf64_Shdr{};
+            memcpy(&inner64(), data, sizeof(Elf64_Shdr));
+        }
+    }
+
+    u64 name_offset() {
+        return mode32 ? inner32().sh_name : inner64().sh_name;
+    }
+
+    u64 type() {
+        return mode32 ? inner32().sh_type : inner64().sh_type;
+    }
+
+    u64 address() {
+        return mode32 ? inner32().sh_addr : inner64().sh_addr;
+    }
+
+    u64 offset() {
+        return mode32 ? inner32().sh_offset : inner64().sh_offset;
+    }
+
+    u64 size() {
+        return mode32 ? inner32().sh_size : inner64().sh_size;
+    }
+
+private:
+    bool mode32;
+
+    Elf32_Shdr& inner32() {
+        return std::get<Elf32_Shdr>(inner);
+    }
+
+    Elf64_Shdr& inner64() {
+        return std::get<Elf64_Shdr>(inner);
+    }
+
+    std::variant<Elf64_Shdr, Elf32_Shdr> inner;
+};
+
+struct Elf_Sym {
+    Elf_Sym(bool mode32, FILE* file) : mode32(mode32) {
+        size_t read;
+        if (mode32) {
+            inner = Elf32_Sym{};
+            read = fread(&inner32(), sizeof(Elf32_Sym), 1, file);
+        } else {
+            inner = Elf64_Sym{};
+            read = fread(&inner64(), sizeof(Elf64_Sym), 1, file);
+        }
+
+        if (read != 1) {
+            ERROR("Failed to read ELF program header from file");
+        }
+    }
+
+    Elf_Sym(bool mode32, void* data) : mode32(mode32) {
+        if (mode32) {
+            inner = Elf32_Sym{};
+            memcpy(&inner32(), data, sizeof(Elf32_Sym));
+        } else {
+            inner = Elf64_Sym{};
+            memcpy(&inner64(), data, sizeof(Elf64_Sym));
+        }
+    }
+
+    u64 offset() {
+        return mode32 ? inner32().st_name : inner64().st_name;
+    }
+
+    u64 size() {
+        return mode32 ? inner32().st_size : inner64().st_size;
+    }
+
+    u64 address() {
+        return mode32 ? inner32().st_value : inner64().st_value;
+    }
+
+    u64 bind() {
+        return ELF64_ST_BIND(mode32 ? inner32().st_info : inner64().st_info);
+    }
+
+    u64 type() {
+        // Macro is the same for 32-bit and 64-bit
+        return ELF64_ST_TYPE(mode32 ? inner32().st_info : inner64().st_info);
+    }
+
+private:
+    bool mode32;
+
+    Elf32_Sym& inner32() {
+        return std::get<Elf32_Sym>(inner);
+    }
+
+    Elf64_Sym& inner64() {
+        return std::get<Elf64_Sym>(inner);
+    }
+
+    std::variant<Elf64_Sym, Elf32_Sym> inner;
 };
 
 Elf::Elf(bool is_interpreter) : is_interpreter(is_interpreter) {}
@@ -391,7 +548,12 @@ void Elf::Load(const std::filesystem::path& path) {
     if (!is_interpreter) {
         // Don't add to unmap_me, unmapped elsewhere
         program_base = base_ptr;
-        g_current_brk = (u64)mmap(base_ptr + PAGE_ALIGN(highest_vaddr), brk_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (!g_brk_base_hint) {
+            g_current_brk = (u64)mmap(base_ptr + PAGE_ALIGN(highest_vaddr), brk_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        } else {
+            g_current_brk =
+                (u64)mmap((void*)g_brk_base_hint, brk_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+        }
         if ((void*)g_current_brk == MAP_FAILED) {
             ERROR("Failed to allocate memory for brk in file %s", path.c_str());
         }
@@ -430,7 +592,7 @@ Elf::PeekResult Elf::Peek(const std::filesystem::path& path) {
     u8 e_ident[EI_NIDENT];
     ssize_t result = fread(&e_ident, EI_NIDENT, sizeof(u8), file);
     if (result != 1) {
-        ERROR("Failed to read ELF header from file %s", path.c_str());
+        return Elf::PeekResult::NotElf;
     }
 
     fclose(file);
@@ -445,6 +607,251 @@ Elf::PeekResult Elf::Peek(const std::filesystem::path& path) {
         return PeekResult::Elf64;
     }
 
-    ERROR("File %s is an ELF but not a 64-bit or 32-bit ELF file", path.c_str());
     return PeekResult::NotElf;
+}
+
+void Elf::AddSymbols(std::map<u64, Symbol>& symbols, const std::filesystem::path& path, u8* start_of_data, u8* end_of_data) {
+    // g_mode32 has already been set at this point
+    // Load static symbols first
+    VERBOSE("Adding symbols from %s", path.c_str());
+    size_t dynsym_size = 0;
+    do {
+        std::string spath = path.string();
+
+        FILE* file = fopen(spath.c_str(), "rb");
+        if (!file) {
+            WARN("Could not open file for symbols: %s (full path: %s)", spath.c_str(), path.c_str());
+            return;
+        }
+
+        fseek(file, 0, SEEK_END);
+        volatile size_t file_size = ftell(file); // debugger access
+        (void)file_size;
+        fseek(file, 0, SEEK_SET);
+
+        Elf_Ehdr ehdr(g_mode32, file);
+
+        if (ehdr.shnum() == 0) {
+            WARN("Empty section table for file: %s", path.c_str());
+            return;
+        }
+
+        std::vector<std::unique_ptr<Elf_Phdr>> phdrtable;
+        u64 ehdr_phoff = ehdr.phoff();
+        fseek(file, ehdr_phoff, SEEK_SET);
+        for (u64 i = 0; i < ehdr.phnum(); i++) {
+            phdrtable.push_back(std::make_unique<Elf_Phdr>(g_mode32, file));
+        }
+
+        std::vector<std::unique_ptr<Elf_Shdr>> shdrtable;
+        u64 ehdr_shoff = ehdr.shoff();
+        fseek(file, ehdr_shoff, SEEK_SET);
+        for (u64 i = 0; i < ehdr.shnum(); i++) {
+            shdrtable.push_back(std::make_unique<Elf_Shdr>(g_mode32, file));
+        }
+
+        u64 shstrindex = ehdr.shstrindex();
+        Elf_Shdr* shstrtable = shdrtable[shstrindex].get();
+        ASSERT(shstrtable->type() == SHT_STRTAB);
+
+        std::vector<char> sh_string_table(shstrtable->size());
+        u64 shstroff = shstrtable->offset();
+        fseek(file, shstroff, SEEK_SET);
+        size_t read = fread(sh_string_table.data(), shstrtable->size(), 1, file);
+        if (read != 1) {
+            ERROR("Failed to read string table?");
+        }
+
+        Elf_Shdr *symtab = nullptr, *strtab = nullptr;
+        Elf_Shdr* dynsym = nullptr;
+        for (u64 i = 0; i < ehdr.shnum(); i++) {
+            Elf_Shdr* current = shdrtable[i].get();
+            const char* name = sh_string_table.data() + current->name_offset();
+            if (strcmp(name, ".symtab") == 0) {
+                symtab = current;
+            } else if (strcmp(name, ".strtab") == 0) {
+                strtab = current;
+            } else if (strcmp(name, ".dynsym") == 0) {
+                dynsym = current;
+            }
+
+            if (symtab && strtab && dynsym) {
+                break;
+            }
+        }
+
+        if (dynsym) {
+            // Get the size, because getting it without having access to the sections
+            // becomes 5 times harder for whatever reason (see DT_GNU_HASH business)
+            // http://deroko.phearless.org/dt_gnu_hash.txt
+            // So we get the size here while we can and use it later
+            dynsym_size = dynsym->size();
+        } else {
+            VERBOSE("Could not get dynsym size");
+        }
+
+        if (symtab && strtab) {
+            std::vector<char> string_table(strtab->size());
+            u64 strtab_off = strtab->offset();
+            fseek(file, strtab_off, SEEK_SET);
+            read = fread(string_table.data(), strtab->size(), 1, file);
+            if (read != 1) {
+                ERROR("Failed to read the .strtab string table");
+            }
+
+            size_t symbol_count = symtab->size() / (g_mode32 ? sizeof(Elf32_Sym) : sizeof(Elf64_Sym));
+            std::vector<std::unique_ptr<Elf_Sym>> elf_symbols;
+            u64 symtab_off = symtab->offset();
+            fseek(file, symtab_off, SEEK_SET);
+            for (u64 i = 0; i < symbol_count; i++) {
+                elf_symbols.push_back(std::make_unique<Elf_Sym>(g_mode32, file));
+            }
+
+            for (u64 i = 0; i < symbol_count; i++) {
+                u64 index = elf_symbols[i]->offset();
+                const char* symbol = string_table.data() + index;
+                if (elf_symbols[i]->address() == 0 || elf_symbols[i]->type() != STT_FUNC) {
+                    // We don't care about this symbol
+                    continue;
+                }
+
+                u64 address = (u64)start_of_data + elf_symbols[i]->address();
+                u64 size = elf_symbols[i]->size();
+                u64 end = address + size;
+                int status;
+                const char* output = abi::__cxa_demangle(symbol, nullptr, nullptr, &status);
+                Symbol new_symbol = {};
+                new_symbol.size = size;
+                new_symbol.start = address;
+                new_symbol.name = status == 0 ? output : symbol;
+
+                if (output)
+                    free((void*)output);
+
+                // For finding with lower_bound
+                symbols[end - 1] = new_symbol;
+            }
+        } else {
+            VERBOSE("symtab and strtab not found for file %s", path.c_str());
+        }
+
+        fclose(file);
+    } while (0);
+
+    // Find the dynamic segment, load dynamic symbols that have now been loaded by the interpreter hopefully
+    Elf_Ehdr ehdr(g_mode32, start_of_data);
+
+    std::vector<std::unique_ptr<Elf_Phdr>> phdrtable;
+    u8* start_of_phdr = start_of_data + ehdr.phoff();
+    for (u64 i = 0; i < ehdr.phnum(); i++) {
+        void* current_phdr = start_of_phdr + (i * ehdr.phentsize());
+        phdrtable.push_back(std::make_unique<Elf_Phdr>(g_mode32, current_phdr));
+    }
+
+    Elf_Phdr* dynamic = nullptr;
+    for (u64 i = 0; i < ehdr.phnum(); i++) {
+        if (phdrtable[i]->type() == PT_DYNAMIC) {
+            dynamic = phdrtable[i].get();
+            break;
+        }
+    }
+
+    if (dynamic && !dynsym_size) {
+        WARN(".dynamic section found, but couldn't deduce .dynsym size...");
+        return;
+    }
+
+    if (dynamic) {
+        u8* symtab = nullptr;
+        const char* strtab = nullptr;
+        u8* dynamic_ptr = start_of_data + dynamic->vaddr();
+
+        if (dynamic_ptr > end_of_data) {
+            // Probably the mapped file hasn't fully loaded yet, skip
+            return;
+        }
+
+        size_t count = dynamic->memsz() / (g_mode32 ? sizeof(Elf32_Dyn) : sizeof(Elf64_Dyn));
+        for (size_t i = 0; i < count; i++) {
+            if (g_mode32) {
+                Elf32_Dyn* dyn = (Elf32_Dyn*)(dynamic_ptr + (i * sizeof(Elf32_Dyn)));
+                if (dyn->d_tag == DT_SYMTAB) {
+                    symtab = (u8*)(u64)dyn->d_un.d_ptr;
+                } else if (dyn->d_tag == DT_STRTAB) {
+                    strtab = (const char*)(u64)dyn->d_un.d_ptr;
+                }
+            } else {
+                Elf64_Dyn* dyn = (Elf64_Dyn*)(dynamic_ptr + (i * sizeof(Elf64_Dyn)));
+                if (dyn->d_tag == DT_SYMTAB) {
+                    symtab = (u8*)dyn->d_un.d_ptr;
+                } else if (dyn->d_tag == DT_STRTAB) {
+                    strtab = (const char*)dyn->d_un.d_ptr;
+                }
+            }
+
+            if (symtab && strtab)
+                break;
+        }
+
+        if (symtab > start_of_data && (u8*)strtab > start_of_data) {
+            size_t sym_size = g_mode32 ? sizeof(Elf32_Sym) : sizeof(Elf64_Sym);
+            size_t dynsym_count = dynsym_size / sym_size;
+            size_t mod = dynsym_size % sym_size;
+            if (mod != 0) {
+                WARN("Couldn't deduce dynamic symbol count, doesn't divide neatly");
+                return;
+            }
+
+            if (symtab + (sym_size * dynsym_count) > end_of_data || (u8*)strtab > end_of_data) {
+                return;
+            }
+
+            for (size_t i = 0; i < dynsym_count; i++) {
+                u8* data = symtab + (sym_size * i);
+                Elf_Sym elf_symbol(g_mode32, data);
+                size_t index = elf_symbol.offset();
+                const char* symbol = strtab + index;
+                if ((u8*)symbol > end_of_data) {
+                    // Just in case...
+                    WARN("symbol > end_of_data in %s", path.c_str());
+                    continue;
+                }
+
+                if (elf_symbol.type() != STT_FUNC) {
+                    // We don't care about this symbol
+                    continue;
+                }
+
+                if (elf_symbol.address() == 0) { // not yet resolved? skip
+                    continue;
+                }
+
+                u64 address = (u64)start_of_data + elf_symbol.address();
+                u64 end = address + elf_symbol.size();
+                int status;
+                const char* output = abi::__cxa_demangle(symbol, nullptr, nullptr, &status);
+                Symbol new_symbol;
+                new_symbol.name = status == 0 ? output : symbol;
+                new_symbol.start = address;
+                new_symbol.size = elf_symbol.size();
+                new_symbol.strong = elf_symbol.bind() != STB_WEAK;
+
+                if (output)
+                    free((void*)output);
+
+                auto old_symbol = symbols.find(end - 1);
+                if (old_symbol != symbols.end() && old_symbol->second.strong) {
+                    // Not weak symbol, don't replace
+                    continue;
+                }
+
+                symbols[end - 1] = new_symbol;
+                VERBOSE("Added new dynamic symbol `%s` at %lx", new_symbol.name.c_str(), new_symbol.start);
+            }
+        } else {
+            VERBOSE("symtab > start_of_data && (u8*)strtab > start_of_data failed: %p > %p && %p > %p", symtab, start_of_data, strtab, start_of_data);
+        }
+    } else {
+        VERBOSE("dynamic section not found for file %s", path.c_str());
+    }
 }

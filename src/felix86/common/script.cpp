@@ -37,8 +37,6 @@ Script::PeekResult Script::Peek(const std::filesystem::path& path) {
 }
 
 Script::Script(const std::filesystem::path& script) {
-    this->script = script;
-
     FILE* file = fopen(script.c_str(), "r");
 
     if (!file) {
@@ -77,4 +75,9 @@ Script::Script(const std::filesystem::path& script) {
     char interpreter[PATH_MAX];
     memset(interpreter, 0, PATH_MAX);
     strncpy(interpreter, (char*)data, PATH_MAX);
+
+    this->interpreter = interpreter;
+
+    ASSERT(std::filesystem::exists(interpreter));
+    ASSERT(std::filesystem::is_regular_file(interpreter));
 }

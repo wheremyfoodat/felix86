@@ -20,7 +20,6 @@
 #include "felix86/hle/stat.hpp"
 #include "felix86/hle/syscall.hpp"
 #include "felix86/hle/thread.hpp"
-#include "felix86/v2/recompiler.hpp"
 
 // We add felix86_${ARCH}_ in front of the linux related identifiers to avoid
 // naming conflicts
@@ -774,8 +773,10 @@ void felix86_syscall(ThreadState* state) {
         result = HOST_SYSCALL(mmap, rdi, rsi, rdx, r10, r8, r9);
         STRACE("mmap(%p, %016lx, %d, %d, %d, %d) = %016lx", (void*)rdi, rsi, (int)rdx, (int)r10, (int)r8, (int)r9, (u64)result);
 
-        if ((int)r8 != -1) { // Uses file descriptor for mmap, may need to update symbols
-            g_process_globals.cached_symbols = false;
+        if ((int)r8 != -1) {
+            // uses file descriptor, mmaps file to memory, may need to update mappings
+            // this can occur when using something like dlopen or when the interpreter initially loads the symbols
+            g_symbols_cached = false;
         }
         break;
     }
@@ -1194,36 +1195,42 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
 
-        g_config.executable_path = path;
-        g_config.argv.clear();
-        g_config.envp.clear();
+        std::vector<const char*> argv;
+        std::vector<const char*> envp;
 
+        argv.push_back("/proc/self/exe");
         if (rsi) {
             const char** guest_argv = (const char**)rsi;
             while (*guest_argv) {
-                g_config.argv.push_back(*guest_argv);
+                argv.push_back(*guest_argv);
                 guest_argv++;
             }
         }
+        argv.push_back(nullptr);
 
         if (rdx) {
             const char** guest_env = (const char**)rdx;
             while (*guest_env) {
-                g_config.envp.push_back(*guest_env);
+                envp.push_back(*guest_env);
                 guest_env++;
             }
         }
+        envp.push_back("__FELIX86_LAUNCHED=1");
+        envp.push_back(nullptr);
 
         g_execve_process = true;
         pthread_setname_np(pthread_self(), "ExecveProcess");
-        state->exit_reason = EXIT_REASON_EXECVE;
 
-        LOG("Calling execve: %s", path.c_str());
+        std::string args = "";
+        for (auto arg : argv) {
+            args += " ";
+            args += arg ? arg : "";
+        }
 
-        // TODO: what if it has child threads? They need to be killed...
+        LOG("Running execve, wish me luck:%s", args.c_str());
 
-        // The main function will see that the exit code is execve and act accordingly
-        Emulator::ExitDispatcher(state);
+        syscall(SYS_execve, "/proc/self/exe", argv.data(), envp.data());
+
         UNREACHABLE();
         break;
     }

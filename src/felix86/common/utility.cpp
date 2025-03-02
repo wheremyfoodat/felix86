@@ -1,10 +1,13 @@
 #include <cstring>
 #include <fstream>
+#include <sys/ioctl.h>
 #include "Zydis/Decoder.h"
 #include "Zydis/Disassembler.h"
 #include "felix86/common/debug.hpp"
+#include "felix86/common/elf.hpp"
 #include "felix86/common/state.hpp"
 #include "felix86/common/utility.hpp"
+#include "fmt/format.h"
 
 #ifdef __riscv
 #include <sys/cachectl.h>
@@ -435,11 +438,10 @@ void dump_states() {
     auto& states = g_process_globals.states;
     int i = 0;
     for (auto& state : states) {
-        dprintf(g_output_fd, ANSI_COLOR_RED "State %d (%ld): " ANSI_COLOR_RESET, i, state->tid);
+        dprintf(g_output_fd, ANSI_COLOR_RED "State %d (%ld):" ANSI_COLOR_RESET "\n", i, state->tid);
         print_address(state->rip.toHost().raw());
 
         if (g_calltrace) {
-            dprintf(g_output_fd, ANSI_COLOR_RED "--- CALLTRACE ---\n" ANSI_COLOR_RESET);
             auto it = state->calltrace.rbegin();
             while (it != state->calltrace.rend()) {
                 print_address((*it).raw());
@@ -451,31 +453,66 @@ void dump_states() {
 }
 
 void update_symbols() {
-    if (g_process_globals.cached_symbols) {
+    if (g_symbols_cached) {
         return;
     }
 
-    auto lock = g_process_globals.mapped_regions_lock.lock();
+    auto lock = g_process_globals.symbols_lock.lock();
     g_process_globals.mapped_regions.clear();
+    g_process_globals.symbols.clear();
 
     std::ifstream ifs("/proc/self/maps");
     std::string line;
     char buffer[PATH_MAX];
+    std::map<std::string, std::pair<u64, u64>> regions{};
     while (std::getline(ifs, line)) {
         u64 start, end;
         int result = sscanf(line.c_str(), "%lx-%lx %*s %*s %*s %*s %s", &start, &end, buffer);
         if (result == 3) {
-            g_process_globals.mapped_regions[end - 1] = {.base = start, .end = end, .file = buffer};
+            if (!std::filesystem::is_regular_file(buffer)) {
+                // Not a regular file, either a library outside the chroot or something like
+                // /dev/zero, so we don't add it
+                continue;
+            }
+
+            auto it = regions.find(buffer);
+            if (it == regions.end() && Elf::Peek(buffer) == Elf::PeekResult::NotElf) {
+                continue;
+            }
+
+            if (std::string(buffer).find("/felix86") == 0) {
+                // It's our emulator or its libraries, skip
+                continue;
+            }
+
+            if (it == regions.end()) {
+                regions[buffer] = {UINT64_MAX, 0};
+            }
+
+            std::pair<u64, u64>& region = regions[buffer];
+            u64 new_start = std::min(region.first, start);
+            u64 new_end = std::max(region.second, end);
+            region.first = new_start;
+            region.second = new_end;
+        } else {
+            // Failed to parse, is not a map line with a path, skip
         }
     }
 
-    g_process_globals.cached_symbols = true;
+    for (auto& region : regions) {
+        std::string name = region.first;
+        u64 start = region.second.first;
+        u64 end = region.second.second;
+
+        g_process_globals.mapped_regions[end - 1] = {.base = start, .end = end, .file = name};
+        Elf::AddSymbols(g_process_globals.symbols, name, (u8*)start, (u8*)end);
+    }
+
+    g_symbols_cached = true;
 }
 
 std::string get_region(u64 address) {
-    update_symbols();
-
-    auto lock = g_process_globals.mapped_regions_lock.lock();
+    auto lock = g_process_globals.symbols_lock.lock();
     auto it = g_process_globals.mapped_regions.lower_bound(address);
     if (address >= it->second.base) {
         return it->second.file;
@@ -484,31 +521,172 @@ std::string get_region(u64 address) {
     }
 }
 
-void print_address(u64 address) {
-    update_symbols();
+bool has_region(u64 address) {
+    auto lock = g_process_globals.symbols_lock.lock();
+    auto region_it = g_process_globals.mapped_regions.lower_bound(address);
+    if (region_it == g_process_globals.mapped_regions.end()) {
+        return false;
+    }
 
-    // Dl_info info; // locks
-    // info.dli_fname = 0;
-    // info.dli_fbase = 0;
-    // int result = dladdr((void*)address, &info);
-    // printf("dlerr: %s\n", dlerror());
+    if (address >= region_it->second.base && address <= region_it->second.end) {
+        return true;
+    }
 
-    // if (result != 0) {
-    //     std::string lib = info.dli_fname;
-    //     u64 offset = address - (u64)info.dli_fbase;
-    //     dprintf(g_output_fd, ANSI_COLOR_RED "%s@%s 0x%lx (%p)\n" ANSI_COLOR_RESET, lib.c_str(), info.dli_sname, offset, (void*)address);
-    // } else {
-    //     dprintf(g_output_fd, ANSI_COLOR_RED "%s@0x%lx (%p)\n" ANSI_COLOR_RESET, info.dli_fname ? info.dli_fname : "Unknown",
-    //             info.dli_fbase ? address - (u64)info.dli_fbase : 0, (void*)address);
-    // }
+    return false;
 }
 
-void push_calltrace(ThreadState* state) {
-    state->calltrace.push_back(state->rip.toHost());
+std::string get_perf_symbol(u64 address) {
+    auto lock = g_process_globals.symbols_lock.lock();
+    auto symbol_it = g_process_globals.symbols.lower_bound(address);
+
+    Symbol* symbol = nullptr;
+    if (symbol_it != g_process_globals.symbols.end()) {
+        u64 start = symbol_it->second.start;
+        u64 end = symbol_it->second.start + symbol_it->second.size;
+        if (address >= start && address <= end) {
+            symbol = &symbol_it->second;
+        }
+    }
+
+    bool file_found = false;
+    std::string file = "??";
+    u64 file_offset = address;
+    auto region_it = g_process_globals.mapped_regions.lower_bound(address);
+    if (region_it != g_process_globals.mapped_regions.end()) {
+        u64 start = region_it->second.base;
+        u64 end = region_it->second.end;
+        if (address >= start && address <= end) {
+            file_found = true;
+            file = std::filesystem::path(region_it->second.file).filename();
+
+            if (file.size() > 20) {
+                file = file.substr(0, 19);
+                file += "...";
+            }
+
+            file_offset = address - region_it->second.base;
+        }
+    }
+
+    const char* x86 = g_mode32 ? "x86" : "x86_64";
+    std::string ret;
+    if (symbol) {
+        std::string symbol_name = symbol->name;
+        if (symbol_name.size() > 30) {
+            symbol_name = symbol_name.substr(0, 29);
+            symbol_name += "...";
+        }
+
+        ret = fmt::format("{} {}@0x{:x} {}@0x{:x}", x86, file, file_offset, symbol->name, address - symbol->start);
+    } else if (file_found) {
+        ret = fmt::format("{} {}@0x{:x}", x86, file, file_offset);
+    } else {
+        ret = fmt::format("{} 0x{:x}", x86, address);
+    }
+
+    return ret;
+}
+
+void print_address(u64 address) {
+    auto lock = g_process_globals.symbols_lock.lock();
+
+    bool found = false;
+    MappedRegion region{};
+
+    auto region_it = g_process_globals.mapped_regions.lower_bound(address);
+    if (region_it != g_process_globals.mapped_regions.end()) {
+        u64 start = region_it->second.base;
+        u64 end = region_it->second.end;
+        if (address >= start && address <= end) {
+            region = region_it->second;
+            found = true;
+        }
+    }
+
+    if (!found) {
+        region.base = address;
+        region.end = address;
+        region.file = "??";
+    }
+
+    Symbol* symbol = nullptr;
+    auto symbol_it = g_process_globals.symbols.lower_bound(address);
+    if (symbol_it != g_process_globals.symbols.end()) {
+        u64 start = symbol_it->second.start;
+        u64 end = symbol_it->second.start + symbol_it->second.size;
+        if (address >= start && address <= end) {
+            symbol = &symbol_it->second;
+        } else {
+            VERBOSE("Lower bound doesn't match address: %lx - %lx %s, address is %lx", start, end, symbol_it->second.name.c_str(), address);
+        }
+    } else {
+        VERBOSE("Lower bound not found for address: %lx", address);
+    }
+
+    struct winsize w;
+    ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
+
+    std::string filename = region.file;
+    if (found) {
+        filename = std::filesystem::path(region.file).filename();
+    }
+
+    const char* symbol_str = symbol ? symbol->name.c_str() : nullptr;
+    std::string symbol_trunc;
+    if (symbol_str) {
+        // 16 for each hex number at most
+        // 4 for " in "
+        // 8 more for the parentheses stuff and other characters
+        i64 max_size = 16 + 4 + filename.size() + 8 + 16;
+        max_size = w.ws_col - max_size;
+        max_size -= 8; // give it some extra breathing room too
+
+        if (max_size < 10) {
+            // If we have fewer than 10 characters, the user is just messing around with a tiny terminal or idk
+            // Let's just not truncate it.
+            symbol_trunc = symbol_str;
+        } else {
+            symbol_trunc = symbol_str;
+            symbol_trunc = symbol_trunc.substr(0, max_size);
+            symbol_trunc += "...";
+        }
+    }
+
+    // clang-format can't comprehend what I am about to do
+    // clang-format off
+    std::string filename_offset;
+    if (filename == "??") {
+        filename_offset = filename;
+    } else {
+        filename_offset = fmt::format("{}+0x{:x}", filename, address - region.base);
+    }
+
+    if (symbol_str) {
+        u64 offset = address - symbol->start;
+        dprintf(g_output_fd,
+            ANSI_COLOR_CYAN "%s+0x%lx" ANSI_COLOR_RESET " in " ANSI_COLOR_YELLOW "%s" ANSI_COLOR_RESET " (0x%lx)\n",
+            symbol_trunc.c_str(),
+            offset,
+            filename_offset.c_str(),
+            address
+        );
+    } else {
+        dprintf(g_output_fd,
+            ANSI_COLOR_CYAN "0x%lx" ANSI_COLOR_RESET " in " ANSI_COLOR_YELLOW "%s" ANSI_COLOR_RESET "\n",
+            address,
+            filename_offset.c_str()
+        );
+    }
+    // clang-format on
+}
+
+void push_calltrace(ThreadState* state, u64 address) {
+    state->calltrace.push_back(HostAddress{address});
 
     if (g_print_all_calls) {
         dprintf(g_output_fd, "Thread %ld calling: ", state->tid);
         print_address(state->rip.toHost().raw());
+        dprintf(g_output_fd, "rbp: %lx rsp: %lx\n", state->gprs[X86_REF_RBP], state->gprs[X86_REF_RSP]);
     }
 }
 

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <sys/file.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include "Zydis/Disassembler.h"
@@ -6,7 +7,9 @@
 #include "felix86/hle/syscall.hpp"
 #include "felix86/v2/recompiler.hpp"
 
-#define X(name) void fast_##name(Recompiler& rec, const HandlerMetadata& meta, ZydisDecodedInstruction& instruction, ZydisDecodedOperand* operands);
+#define X(name)                                                                                                                                      \
+    void fast_##name(Recompiler& rec, const HandlerMetadata& meta, Assembler& as, ZydisDecodedInstruction& instruction,                              \
+                     ZydisDecodedOperand* operands);
 #include "felix86/v2/handlers.inc"
 #undef X
 
@@ -149,6 +152,7 @@ void Recompiler::clearCodeCache() {
 
     emitDispatcher();
     emitSigreturnThunk();
+    start_of_code_cache = as.GetCursorPointer();
 }
 
 HostAddress Recompiler::compile(HostAddress rip) {
@@ -171,6 +175,33 @@ HostAddress Recompiler::compile(HostAddress rip) {
 
     // Mark the page as read-only to catch self-modifying code
     markPagesAsReadOnly(rip, end_rip);
+
+    if (g_perf) {
+        if (perf_fd == -1) {
+            std::string path = "/tmp/perf-" + std::to_string(getpid()) + ".map";
+            FILE* file = fopen(path.c_str(), "w");
+            ASSERT(file);
+            perf_fd = fileno(file);
+        }
+
+        // Executed region not found, update the symbols
+        if (!has_region(rip.raw())) {
+            update_symbols();
+        }
+
+        BlockMetadata& metadata = getBlockMetadata(rip);
+        std::string symbol = get_perf_symbol(rip.raw());
+        static char buffer[4096];
+        size_t size = metadata.address_end.raw() - metadata.address.raw();
+        int string_size = snprintf(buffer, 4096, "%lx %lx %s\n", metadata.address.raw(), size, symbol.c_str());
+        ASSERT(string_size > 0 && string_size < 4095);
+
+        int locked = flock(perf_fd, LOCK_EX);
+        ASSERT(locked == 0);
+        int written = write(perf_fd, buffer, string_size);
+        ASSERT(written == string_size);
+        flock(perf_fd, LOCK_UN);
+    }
 
     return start;
 }
@@ -264,7 +295,7 @@ HostAddress Recompiler::compileSequence(HostAddress rip) {
         switch (mnemonic) {
 #define X(name)                                                                                                                                      \
     case ZYDIS_MNEMONIC_##name:                                                                                                                      \
-        fast_##name(*this, meta, instruction, operands);                                                                                             \
+        fast_##name(*this, meta, as, instruction, operands);                                                                                         \
         break;
 #include "felix86/v2/handlers.inc"
 #undef X
@@ -698,8 +729,9 @@ biscuit::GPR Recompiler::getOperandGPR(ZydisDecodedOperand* operand) {
         return address;
     }
     case ZYDIS_OPERAND_TYPE_IMMEDIATE: {
+        u64 value = operand->imm.value.s;
         biscuit::GPR imm = scratch();
-        as.LI(imm, operand->imm.value.s);
+        as.LI(imm, value);
         return imm;
     }
     default: {
@@ -808,8 +840,6 @@ biscuit::GPR Recompiler::flag(x86_ref_e ref) {
 
     biscuit::GPR reg = allocatedGPR(ref);
     loadGPR(ref, reg);
-    addRegisterAccess(ref, true); // this is not quite right, as flags may be used as temporaries sometimes
-                                  // but it's good enough for now. Surely the signal handler behavior won't care about flags that much :cluegi:
     return reg;
 }
 
@@ -818,7 +848,6 @@ biscuit::GPR Recompiler::flagW(x86_ref_e ref) {
     RegisterMetadata& meta = getMetadata(ref);
     meta.dirty = true;
     meta.loaded = true;
-    addRegisterAccess(ref, true);
     return reg;
 }
 
@@ -828,7 +857,6 @@ biscuit::GPR Recompiler::flagWR(x86_ref_e ref) {
     loadGPR(ref, reg);
     meta.dirty = true;
     meta.loaded = true;
-    addRegisterAccess(ref, true);
     return reg;
 }
 
@@ -836,7 +864,6 @@ biscuit::GPR Recompiler::getRefGPR(x86_ref_e ref, x86_size_e size) {
     biscuit::GPR gpr = allocatedGPR(ref);
 
     loadGPR(ref, gpr);
-    addRegisterAccess(ref, true); // mark register state as valid at this address
 
     switch (size) {
     case X86_SIZE_BYTE: {
@@ -878,7 +905,6 @@ biscuit::Vec Recompiler::getRefVec(x86_ref_e ref) {
     biscuit::Vec vec = allocatedVec(ref);
 
     loadVec(ref, vec);
-    addRegisterAccess(ref, true); // mark register state as valid at this address
 
     return vec;
 }
@@ -950,8 +976,7 @@ void Recompiler::setRefGPR(x86_ref_e ref, x86_size_e size, biscuit::GPR reg) {
 
     RegisterMetadata& meta = getMetadata(ref);
     meta.dirty = true;
-    meta.loaded = true;           // since the value is fresh it's as if we read it from memory
-    addRegisterAccess(ref, true); // mark register state as valid at this address
+    meta.loaded = true; // since the value is fresh it's as if we read it from memory
 }
 
 void Recompiler::setRefVec(x86_ref_e ref, biscuit::Vec vec) {
@@ -963,8 +988,7 @@ void Recompiler::setRefVec(x86_ref_e ref, biscuit::Vec vec) {
 
     RegisterMetadata& meta = getMetadata(ref);
     meta.dirty = true;
-    meta.loaded = true;           // since the value is fresh it's as if we read it from memory
-    addRegisterAccess(ref, true); // mark register state as valid at this address
+    meta.loaded = true; // since the value is fresh it's as if we read it from memory
 }
 
 void Recompiler::setOperandGPR(ZydisDecodedOperand* operand, biscuit::GPR reg) {
@@ -1042,58 +1066,6 @@ void Recompiler::setOperandVec(ZydisDecodedOperand* operand, biscuit::Vec vec) {
     default: {
         UNREACHABLE();
     }
-    }
-}
-
-void Recompiler::addRegisterAccess(x86_ref_e ref, bool valid) {
-    std::vector<RegisterAccess>* access = nullptr;
-    switch (ref) {
-    case X86_REF_RAX ... X86_REF_R15: {
-        access = &current_block_metadata->register_accesses[ref - X86_REF_RAX];
-        break;
-    }
-    case X86_REF_CF: {
-        access = &current_block_metadata->register_accesses[16];
-        break;
-    }
-    case X86_REF_AF: {
-        access = &current_block_metadata->register_accesses[17];
-        break;
-    }
-    case X86_REF_ZF: {
-        access = &current_block_metadata->register_accesses[18];
-        break;
-    }
-    case X86_REF_SF: {
-        access = &current_block_metadata->register_accesses[19];
-        break;
-    }
-    case X86_REF_OF: {
-        access = &current_block_metadata->register_accesses[20];
-        break;
-    }
-    case X86_REF_XMM0 ... X86_REF_XMM15: {
-        access = &current_block_metadata->register_accesses[ref - X86_REF_XMM0 + 16 + 5];
-        break;
-    }
-    default: {
-        UNREACHABLE();
-        break;
-    }
-    }
-
-    HostAddress address{(u64)as.GetCursorPointer()};
-    if (access->empty()) {
-        ASSERT(valid);
-        access->push_back({address, valid});
-    } else {
-        RegisterAccess& last = access->back();
-        if (!last.valid) {
-            ASSERT(valid); // should never go from invalid to invalid
-            access->push_back({address, valid});
-        } else if (last.valid && !valid) { // only push a state change if it goes from valid to invalid
-            access->push_back({address, valid});
-        }
     }
 }
 
@@ -1269,16 +1241,15 @@ void Recompiler::stopCompiling() {
 
 void Recompiler::pushCalltrace() {
     if (g_calltrace) {
-        ASSERT(!g_rsb); // needs fixes, clobbers scratch reg
         as.LI(t0, (u64)push_calltrace);
         as.MV(a0, threadStatePointer());
+        as.LI(a1, current_meta->rip.raw());
         as.JALR(t0);
     }
 }
 
 void Recompiler::popCalltrace() {
     if (g_calltrace) {
-        ASSERT(!g_rsb);
         as.LI(t0, (u64)pop_calltrace);
         as.MV(a0, threadStatePointer());
         as.JALR(t0);
@@ -1297,7 +1268,6 @@ void Recompiler::writebackDirtyState() {
         x86_ref_e ref = (x86_ref_e)(X86_REF_RAX + i);
         if (getMetadata(ref).dirty) {
             as.SD(allocatedGPR(ref), offsetof(ThreadState, gprs) + i * sizeof(u64), threadStatePointer());
-            addRegisterAccess(ref, false);
         }
     }
 
@@ -1308,34 +1278,28 @@ void Recompiler::writebackDirtyState() {
             setVectorState(SEW::E64, maxVlen() / 64);
             as.ADDI(address, threadStatePointer(), offsetof(ThreadState, xmm) + i * 16);
             as.VSE64(allocatedVec(ref), address);
-            addRegisterAccess(ref, false);
         }
     }
     popScratch();
 
     if (getMetadata(X86_REF_CF).dirty) {
         as.SB(allocatedGPR(X86_REF_CF), offsetof(ThreadState, cf), threadStatePointer());
-        addRegisterAccess(X86_REF_CF, false);
     }
 
     if (getMetadata(X86_REF_AF).dirty) {
         as.SB(allocatedGPR(X86_REF_AF), offsetof(ThreadState, af), threadStatePointer());
-        addRegisterAccess(X86_REF_AF, false);
     }
 
     if (getMetadata(X86_REF_ZF).dirty) {
         as.SB(allocatedGPR(X86_REF_ZF), offsetof(ThreadState, zf), threadStatePointer());
-        addRegisterAccess(X86_REF_ZF, false);
     }
 
     if (getMetadata(X86_REF_SF).dirty) {
         as.SB(allocatedGPR(X86_REF_SF), offsetof(ThreadState, sf), threadStatePointer());
-        addRegisterAccess(X86_REF_SF, false);
     }
 
     if (getMetadata(X86_REF_OF).dirty) {
         as.SB(allocatedGPR(X86_REF_OF), offsetof(ThreadState, of), threadStatePointer());
-        addRegisterAccess(X86_REF_OF, false);
     }
 
     for (size_t i = 0; i < metadata.size(); i++) {
@@ -1347,6 +1311,17 @@ void Recompiler::writebackDirtyState() {
     current_vlen = 0;
     current_grouping = LMUL::M1;
     rounding_mode_set = false;
+}
+
+void Recompiler::invalidStateUntilJump() {
+    // This instruction hints to the state reconstruction in the signal handler that the state was written back
+    // and is invalid, until a jump. For example, if a block does something like
+    // writebackDirtyState()
+    // modify a0, a1, t0
+    // jump to function to handle stuff
+    // Then we need a way of communicating that between writebackDirtyState and the jump, the state (a0, a1, t0) is invalid
+    // and to not reconstruct ThreadState using those registers. This NOP instruction below will serve this purpose.
+    as.SRLI(x0, x0, 42);
 }
 
 void Recompiler::restoreRoundingMode() {
@@ -1380,6 +1355,8 @@ void* Recompiler::getCompileNext() {
     return compile_next_handler;
 }
 
+// TODO: this is bad. Make it so we emit flags right before an instruction that needs them as we go through emitting them
+// instead of scanning forward
 void Recompiler::scanFlagUsageAhead(HostAddress rip) {
     for (int i = 0; i < 6; i++) {
         flag_access_cpazso[i].clear();
@@ -1489,6 +1466,116 @@ bool Recompiler::shouldEmitFlag(HostAddress rip, x86_ref_e ref) {
     return true;
 }
 
+// (res & (~d | s)) | (~d & s), xor top 2 bits
+void Recompiler::updateOverflowSub(biscuit::GPR lhs, biscuit::GPR rhs, biscuit::GPR result, x86_size_e size_e) {
+    int size = getBitSize(size_e);
+    biscuit::GPR of = flagW(X86_REF_OF);
+    biscuit::GPR temp = scratch();
+    as.NOT(temp, lhs);
+    as.OR(of, temp, rhs);
+    as.AND(of, of, result);
+    as.AND(temp, temp, rhs);
+    as.OR(of, of, temp);
+    as.SRLI(temp, of, size - 2);
+    as.SRLI(of, of, size - 1);
+    as.XOR(of, of, temp);
+    as.ANDI(of, of, 1);
+    popScratch();
+}
+
+// ((s & d) | ((~res) & (s | d))), xor top 2 bits
+void Recompiler::updateOverflowAdd(biscuit::GPR lhs, biscuit::GPR rhs, biscuit::GPR result, x86_size_e size_e) {
+    int size = getBitSize(size_e);
+    biscuit::GPR of = flagW(X86_REF_OF);
+    biscuit::GPR temp = scratch();
+    as.OR(of, lhs, rhs);
+    as.NOT(temp, result);
+    as.AND(of, temp, of);
+    as.AND(temp, lhs, rhs);
+    as.OR(of, of, temp);
+    as.SRLI(temp, of, size - 2);
+    as.SRLI(of, of, size - 1);
+    as.XOR(of, of, temp);
+    as.ANDI(of, of, 1);
+    popScratch();
+}
+
+void Recompiler::updateAuxiliaryAdd(biscuit::GPR lhs, biscuit::GPR result) {
+    biscuit::GPR af = flagW(X86_REF_AF);
+    biscuit::GPR temp = scratch();
+    as.ANDI(af, result, 0xF);
+    as.ANDI(temp, lhs, 0xF);
+    as.SLTU(af, af, temp);
+    popScratch();
+}
+
+void Recompiler::updateAuxiliarySub(biscuit::GPR lhs, biscuit::GPR rhs) {
+    biscuit::GPR af = flagW(X86_REF_AF);
+    biscuit::GPR temp = scratch();
+    as.ANDI(af, rhs, 0xF);
+    as.ANDI(temp, lhs, 0xF);
+    as.SLTU(af, temp, af);
+    popScratch();
+}
+
+void Recompiler::updateAuxiliaryAdc(biscuit::GPR lhs, biscuit::GPR result, biscuit::GPR cf, biscuit::GPR result_2) {
+    biscuit::GPR af = flagW(X86_REF_AF);
+    biscuit::GPR temp = scratch();
+    as.ANDI(af, result, 0xF);
+    as.ANDI(temp, lhs, 0xF);
+    as.SLTU(af, af, temp);
+    as.ANDI(temp, result_2, 0xF);
+    as.SLTU(temp, temp, cf);
+    as.OR(af, af, temp);
+    popScratch();
+}
+
+void Recompiler::updateAuxiliarySbb(biscuit::GPR lhs, biscuit::GPR rhs, biscuit::GPR result, biscuit::GPR cf) {
+    biscuit::GPR af = flagW(X86_REF_AF);
+    biscuit::GPR temp = scratch();
+    as.ANDI(af, rhs, 0xF);
+    as.ANDI(temp, lhs, 0xF);
+    as.SLTU(af, temp, af);
+    as.ANDI(temp, result, 0xF);
+    as.SLTU(temp, temp, cf);
+    as.OR(af, af, temp);
+    popScratch();
+}
+
+void Recompiler::updateCarryAdd(biscuit::GPR lhs, biscuit::GPR result, x86_size_e size) {
+    biscuit::GPR cf = flagW(X86_REF_CF);
+    zext(cf, result, size);
+    as.SLTU(cf, cf, lhs);
+}
+
+void Recompiler::updateCarrySub(biscuit::GPR lhs, biscuit::GPR rhs) {
+    biscuit::GPR cf = flagW(X86_REF_CF);
+    as.SLTU(cf, lhs, rhs);
+}
+
+void Recompiler::updateCarryAdc(biscuit::GPR lhs, biscuit::GPR result, biscuit::GPR result_2, x86_size_e size) {
+    biscuit::GPR temp = scratch();
+    biscuit::GPR temp2 = scratch();
+    biscuit::GPR cf = flagWR(X86_REF_CF);
+    zext(temp, result, size);
+    zext(temp2, result_2, size);
+    as.SLTU(temp, temp, lhs);
+    as.SLTU(temp2, temp2, cf);
+    as.OR(cf, temp, temp2);
+    popScratch();
+    popScratch();
+}
+
+void Recompiler::zeroFlag(x86_ref_e flag) {
+    biscuit::GPR f = flagW(flag);
+    as.LI(f, 0);
+}
+
+void Recompiler::setFlag(x86_ref_e flag) {
+    biscuit::GPR f = flagW(flag);
+    as.LI(f, 1);
+}
+
 void Recompiler::zext(biscuit::GPR dest, biscuit::GPR src, x86_size_e size) {
     switch (size) {
     case X86_SIZE_BYTE:
@@ -1560,7 +1647,36 @@ void Recompiler::updateParity(biscuit::GPR result) {
         as.SB(pf, offsetof(ThreadState, pf), threadStatePointer());
         popScratch();
     } else {
-        ERROR("This needs B extension");
+        static bool bitcount[] = {
+            1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0,
+            1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1,
+            1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0,
+            1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0,
+            1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0,
+            1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
+        };
+        static_assert(sizeof(bitcount) == 256, "Invalid bitcount table size");
+
+        bool* addy = bitcount;
+        Literal address((u64)addy);
+        Label end;
+        biscuit::GPR pf = scratch();
+
+        // We need another scratch but on many instructions there isn't one available at this point :(
+        ASSERT(pf != t0);
+        as.LD(pf, &address);
+        as.ADDI(sp, sp, -8);
+        as.SD(t0, 0, sp);
+        as.ANDI(t0, result, 0xFF);
+        as.ADD(pf, pf, t0);
+        as.LD(t0, 0, sp);
+        as.ADDI(sp, sp, 8);
+        as.LBU(pf, 0, pf);
+        as.SB(pf, offsetof(ThreadState, pf), threadStatePointer());
+        as.J(&end);
+        as.Place(&address);
+        as.Bind(&end);
+        popScratch();
     }
 }
 

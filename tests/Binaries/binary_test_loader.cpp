@@ -13,7 +13,7 @@ void run_test(const std::filesystem::path& felix_path, const std::filesystem::pa
         exit(1);
     }
 
-    const std::filesystem::path tmp_path = "/tmp/felix86_binary_tests";
+    const std::filesystem::path tmp_path = "/felix86_binary_tests";
     const std::filesystem::path exec_path = tmp_path / path.filename();
 
     CATCH_INFO(fmt::format("Running test: {}", path.filename().string()));
@@ -86,7 +86,7 @@ void common_loader(const std::filesystem::path& path) {
 }
 
 CATCH_TEST_CASE("Signals", "[Signals]") {
-    // common_loader("Signals"); // TODO: Fix the sigsegv_simple.c test to not get stuck
+    common_loader("Signals");
 }
 
 CATCH_TEST_CASE("Simple", "[Simple]") {

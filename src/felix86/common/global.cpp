@@ -1,14 +1,16 @@
 #include <algorithm>
 #include <cstring>
+#include <fstream>
 #include <list>
 #include <string>
 #include <fcntl.h>
+#include <linux/perf_event.h>
 #include <sys/mman.h>
 #include "biscuit/cpuinfo.hpp"
 #include "felix86/common/global.hpp"
 #include "felix86/common/log.hpp"
 #include "felix86/common/state.hpp"
-#include "felix86/emulator.hpp"
+#include "felix86/hle/filesystem.hpp"
 #include "fmt/format.h"
 
 bool g_paranoid = false;
@@ -16,12 +18,12 @@ bool g_verbose = false;
 bool g_quiet = false;
 bool g_testing = false;
 bool g_strace = false;
+bool g_dump_regs = false;
 bool g_dont_link = false;
 bool g_extensions_manually_specified = false;
 bool g_calltrace = false;
 bool g_use_block_cache = true;
 bool g_single_step = false;
-bool g_is_chrooted = false;
 bool g_dont_protect_pages = false;
 bool g_print_all_calls = false;
 bool g_no_sse2 = false;
@@ -33,12 +35,13 @@ bool g_print_all_insts = false;
 bool g_dont_inline_syscalls = false;
 bool g_mode32 = false;
 bool g_rsb = true;
+bool g_perf = false;
+std::atomic_bool g_symbols_cached = {false};
 u64 g_initial_brk = 0;
 u64 g_current_brk = 0;
 u64 g_current_brk_size = 0;
 u64 g_dispatcher_exit_count = 0;
 u64 g_address_space_base = 0;
-std::atomic_long g_bad_ret_count{};
 std::list<ThreadState*> g_thread_states{};
 std::unordered_map<u64, std::vector<u64>> g_breakpoints{}; // TODO: HostAddress
 pthread_key_t g_thread_state_key = -1;
@@ -53,17 +56,43 @@ int g_output_fd = 1;
 std::filesystem::path g_rootfs_path{};
 u64 g_executable_base_hint = 0;
 u64 g_interpreter_base_hint = 0;
+u64 g_brk_base_hint = 0;
 
 HostAddress g_interpreter_start{};
 HostAddress g_interpreter_end{};
 HostAddress g_executable_start{};
 HostAddress g_executable_end{};
 
+bool is_running_under_perf() {
+    // Always enable symbol emission when this is enabled, in case our detection fails
+    const char* perf_env = getenv("FELIX86_PERF");
+    if (perf_env) {
+        return true;
+    }
+
+    int ppid = getppid();
+
+    std::string line;
+    std::ifstream ifs("/proc/" + std::to_string(ppid) + "/comm");
+    if (!ifs) {
+        WARN("Failed to check if perf is a parent process");
+        return false;
+    }
+
+    std::getline(ifs, line);
+
+    if (line == "perf") {
+        return true;
+    }
+
+    return false;
+}
+
 void ProcessGlobals::initialize() {
     // Open a new shared memory region
     memory = std::make_unique<SharedMemory>(shared_memory_size);
     states_lock = ProcessLock(*memory);
-    mapped_regions_lock = ProcessLock(*memory);
+    symbols_lock = ProcessLock(*memory);
 
     // Reset the states stored here
     states = {};
@@ -83,11 +112,6 @@ void Extensions::Clear() {
     VLEN = 0;
 }
 
-const char* get_version_full() {
-    static std::string version = "felix86 0.1.0." + std::string(g_git_hash);
-    return version.c_str();
-}
-
 bool is_truthy(const char* str) {
     if (!str) {
         return false;
@@ -96,6 +120,56 @@ bool is_truthy(const char* str) {
     std::string lower = str;
     std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
     return lower == "true" || lower == "1" || lower == "yes" || lower == "on" || lower == "y" || lower == "enable";
+}
+
+std::string get_extensions() {
+    std::string extensions;
+    if (Extensions::G) {
+        extensions += "g";
+    }
+    if (Extensions::V) {
+        if (!extensions.empty())
+            extensions += ",";
+        extensions += "v";
+        extensions += std::to_string(Extensions::VLEN);
+    }
+    if (Extensions::C) {
+        if (!extensions.empty())
+            extensions += ",";
+        extensions += "c";
+    }
+    if (Extensions::B) {
+        if (!extensions.empty())
+            extensions += ",";
+        extensions += "b";
+    }
+    if (Extensions::Zacas) {
+        if (!extensions.empty())
+            extensions += ",";
+        extensions += "zacas";
+    }
+    if (Extensions::Zam) {
+        if (!extensions.empty())
+            extensions += ",";
+        extensions += "zam";
+    }
+    if (Extensions::Zabha) {
+        if (!extensions.empty())
+            extensions += ",";
+        extensions += "zabha";
+    }
+    if (Extensions::Zicond) {
+        if (!extensions.empty())
+            extensions += ",";
+        extensions += "zicond";
+    }
+    if (Extensions::Zfa) {
+        if (!extensions.empty())
+            extensions += ",";
+        extensions += "zfa";
+    }
+
+    return extensions;
 }
 
 void initialize_globals() {
@@ -149,6 +223,12 @@ void initialize_globals() {
         environment += "\nFELIX86_QUIET";
     }
 
+    const char* dump_regs_env = getenv("FELIX86_DUMP_REGS");
+    if (dump_regs_env) {
+        g_dump_regs = true;
+        environment += "\nFELIX86_DUMP_REGS";
+    }
+
     const char* rootfs_path = getenv("FELIX86_ROOTFS");
     if (rootfs_path) {
         if (!g_rootfs_path.empty()) {
@@ -195,6 +275,12 @@ void initialize_globals() {
     if (interpreter_base) {
         g_interpreter_base_hint = std::stoull(interpreter_base, nullptr, 16);
         environment += "\nFELIX86_INTERPRETER_BASE=" + fmt::format("{:016x}", g_interpreter_base_hint);
+    }
+
+    const char* brk_base = getenv("FELIX86_BRK_BASE");
+    if (brk_base) {
+        g_brk_base_hint = std::stoull(brk_base, nullptr, 16);
+        environment += "\nFELIX86_BRK_BASE=" + fmt::format("{:016x}", g_brk_base_hint);
     }
 
     const char* dont_link = getenv("FELIX86_DONT_LINK");
@@ -260,6 +346,15 @@ void initialize_globals() {
     if (env_file) {
         // Handled in main
         environment += "\nFELIX86_ENV_FILE=" + std::string(env_file);
+    }
+
+    g_perf = is_running_under_perf();
+    if (g_perf) {
+        if (!std::filesystem::exists("/tmp")) {
+            std::filesystem::create_directory("/tmp");
+        }
+
+        LOG("Running under " ANSI_BOLD "perf" ANSI_COLOR_RESET "!");
     }
 
     const char* single_step = getenv("FELIX86_SINGLE_STEP");

@@ -39,7 +39,6 @@ struct BlockMetadata {
     std::vector<u8*> pending_links{};
     std::vector<u8*> links{}; // where this block was linked to, used for unlinking it
     std::vector<std::pair<GuestAddress, HostAddress>> instruction_spans{};
-    std::array<std::vector<RegisterAccess>, allocated_reg_count> register_accesses;
 };
 
 struct Recompiler {
@@ -131,6 +130,8 @@ struct Recompiler {
     u64 sextImmediate(u64 imm, ZyanU8 size);
 
     void addi(biscuit::GPR dest, biscuit::GPR src, u64 imm);
+
+    void invalidStateUntilJump();
 
     biscuit::GPR flag(x86_ref_e ref);
 
@@ -369,6 +370,28 @@ struct Recompiler {
         return g_mode32 ? 4 : 8;
     }
 
+    void updateOverflowAdd(biscuit::GPR lhs, biscuit::GPR rhs, biscuit::GPR result, x86_size_e size);
+
+    void updateOverflowSub(biscuit::GPR lhs, biscuit::GPR rhs, biscuit::GPR result, x86_size_e size);
+
+    void updateCarryAdd(biscuit::GPR lhs, biscuit::GPR result, x86_size_e size);
+
+    void updateCarrySub(biscuit::GPR lhs, biscuit::GPR rhs);
+
+    void updateAuxiliaryAdd(biscuit::GPR lhs, biscuit::GPR result);
+
+    void updateAuxiliarySub(biscuit::GPR lhs, biscuit::GPR rhs);
+
+    void updateAuxiliaryAdc(biscuit::GPR lhs, biscuit::GPR result, biscuit::GPR cf, biscuit::GPR result_2);
+
+    void updateAuxiliarySbb(biscuit::GPR lhs, biscuit::GPR rhs, biscuit::GPR result, biscuit::GPR cf);
+
+    void updateCarryAdc(biscuit::GPR dst, biscuit::GPR result, biscuit::GPR result_2, x86_size_e size);
+
+    void zeroFlag(x86_ref_e flag);
+
+    void setFlag(x86_ref_e flag);
+
 private:
     struct RegisterMetadata {
         x86_ref_e reg;
@@ -405,8 +428,6 @@ private:
 
     void expirePendingLinks(HostAddress rip);
 
-    void addRegisterAccess(x86_ref_e ref, bool is_load);
-
     void clearCodeCache();
 
     void markPagesAsReadOnly(HostAddress start, HostAddress end);
@@ -430,6 +451,8 @@ private:
 
     void* compile_next_handler{};
 
+    void* start_of_code_cache{};
+
     std::array<RegisterMetadata, 16 + 5 + 16> metadata{};
 
     // This may be locked by a different thread on a signal handler to unlink a block
@@ -448,6 +471,8 @@ private:
 
     int rax_value = -1;
 
+    // TODO: replace this method of flag detection with 5 (4? remove AF) assemblers that emit flag calculations seperately.
+    // TODO: Then when a flag is used copy the instructions over from the equivalent assembler, reset it when overwritten
     std::array<std::vector<FlagAccess>, 6> flag_access_cpazso{};
 
     BlockMetadata* current_block_metadata{};
@@ -456,4 +481,5 @@ private:
     u8 current_vlen = 0;
     LMUL current_grouping = LMUL::M1;
     bool rounding_mode_set = false;
+    int perf_fd = -1;
 };

@@ -1,23 +1,23 @@
 #include <signal.h>
+#include <unistd.h>
+#include "common.h"
 
-volatile int* address = 0;
-int valid_memory = 0;
+volatile int you_can_leave = 0;
 
 void signal_handler(int sig, siginfo_t* info, void* ucontext) {
-    address = &valid_memory;
+    you_can_leave = 1;
 }
 
 int main() {
     struct sigaction act;
     act.sa_sigaction = signal_handler;
     act.sa_flags = SA_SIGINFO;
-    sigaction(SIGSEGV, &act, 0);
+    sigaction(SIGALRM, &act, 0);
 
-    *address = 42;
+    alarm(1);
 
-    if (valid_memory == 42) {
-        return 0x42;
+    while (!you_can_leave) {
     }
 
-    return 1;
+    return FELIX86_BTEST_SUCCESS;
 }
