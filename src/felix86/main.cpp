@@ -201,8 +201,6 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    config.executable_path = std::filesystem::absolute(config.executable_path);
-
     if (!g_rootfs_path.empty()) {
         // Remove rootfs from executable path, if the user prepended it
         if (config.executable_path.string().find(g_rootfs_path.string()) == 0) {
@@ -210,13 +208,9 @@ int main(int argc, char* argv[]) {
             ASSERT(new_path.size() > 0);
             ASSERT(new_path[0] == '/');
             config.executable_path = new_path;
+            config.argv[0] = config.executable_path;
         }
     }
-
-    std::string arg0 = config.executable_path;
-    ASSERT(!arg0.empty());
-    ASSERT(arg0[0] == '/');
-    config.argv[0] = arg0;
 
     if (config.executable_path.empty()) {
         ERROR("Executable path not specified");
@@ -233,7 +227,13 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    pthread_setname_np(pthread_self(), "MainProcess");
+    g_execve_process = !!getenv("__FELIX86_EXECVE");
+
+    if (g_execve_process) {
+        pthread_setname_np(pthread_self(), "ExecveProcess");
+    } else {
+        pthread_setname_np(pthread_self(), "MainProcess");
+    }
 
     auto [exit_reason, exit_code] = Emulator::Start(config);
 

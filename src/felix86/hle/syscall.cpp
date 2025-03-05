@@ -158,6 +158,20 @@ bool try_strace_ioctl(int rdi, u64 rsi, u64 rdx, u64 result) {
     return false;
 }
 
+bool is_proc_self_exe(u64 val) {
+    const char* path = (const char*)val;
+    std::string spath = path;
+    std::string pidpath = "/proc/" + std::to_string(getpid()) + "/exe";
+    if (spath == "/proc/self/exe" || spath == "/proc/thread-self/exe" || spath == pidpath) {
+        return true;
+    }
+    return false;
+}
+
+bool is_proc_self_exe(const std::string& path) {
+    return is_proc_self_exe((u64)path.c_str());
+}
+
 void felix86_syscall(ThreadState* state) {
     u64 syscall_number = state->GetGpr(X86_REF_RAX);
     u64 rdi = state->GetGpr(X86_REF_RDI);
@@ -274,7 +288,7 @@ void felix86_syscall(ThreadState* state) {
         break;
     }
     case felix86_x86_64_readlink: {
-        if (std::string((char*)rdi) == "/proc/self/exe") {
+        if (is_proc_self_exe(rdi)) {
             std::string path = fs.GetExecutablePath().string();
             size_t size = std::min(path.size(), (size_t)rdx);
             memcpy((void*)rsi, path.c_str(), size);
@@ -286,7 +300,7 @@ void felix86_syscall(ThreadState* state) {
         break;
     }
     case felix86_x86_64_readlinkat: {
-        if (std::string((char*)rsi) == "/proc/self/exe") {
+        if (is_proc_self_exe(rsi)) {
             std::string path = fs.GetExecutablePath().string();
             size_t size = std::min(path.size(), (size_t)r10);
             memcpy((void*)rdx, path.c_str(), size);
@@ -383,12 +397,12 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_rename: {
         std::string oldpath = (char*)rdi;
-        if (oldpath == "/proc/self/exe") {
+        if (is_proc_self_exe(oldpath)) {
             oldpath = fs.GetExecutablePath();
         }
 
         std::string newpath = (char*)rsi;
-        if (newpath == "/proc/self/exe") {
+        if (is_proc_self_exe(newpath)) {
             newpath = fs.GetExecutablePath();
         }
 
@@ -418,7 +432,7 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_chmod: {
         std::string path = (char*)rdi;
-        if (path == "/proc/self/exe") {
+        if (is_proc_self_exe(path)) {
             path = fs.GetExecutablePath();
         }
 
@@ -426,14 +440,64 @@ void felix86_syscall(ThreadState* state) {
         STRACE("chmod(%s, %d) = %d", path.c_str(), (int)rsi, (int)result);
         break;
     }
+    case felix86_x86_64_mount: {
+        result = HOST_SYSCALL(mount, rdi, rsi, rdx, r10, r8);
+        STRACE("mount(%p, %p, %p, %lx, %p) = %d", (void*)rdi, (void*)rsi, (void*)rdx, r10, (void*)r8, (int)result);
+        break;
+    }
+    case felix86_x86_64_socketpair: {
+        result = HOST_SYSCALL(socketpair, rdi, rsi, rdx, r10);
+        STRACE("socketpair(%d, %d, %d, %p) = %d", (int)rdi, (int)rsi, (int)rdx, (void*)r10, (int)result);
+        break;
+    }
+    case felix86_x86_64_setgid: {
+        result = HOST_SYSCALL(setgid, rdi);
+        STRACE("setgid(%d) = %d", (int)rdi, (int)result);
+        break;
+    }
+    case felix86_x86_64_setsid: {
+        result = HOST_SYSCALL(setsid, rdi);
+        STRACE("setsid(%d) = %d", (int)rdi, (int)result);
+        break;
+    }
+    case felix86_x86_64_setreuid: {
+        result = HOST_SYSCALL(setreuid, rdi, rsi);
+        STRACE("setreuid(%d, %d) = %d", (int)rdi, (int)rsi, (int)result);
+        break;
+    }
+    case felix86_x86_64_setregid: {
+        result = HOST_SYSCALL(setregid, rdi, rsi);
+        STRACE("setregid(%d, %d) = %d", (int)rdi, (int)rsi, (int)result);
+        break;
+    }
+    case felix86_x86_64_setgroups: {
+        result = HOST_SYSCALL(setgroups, rdi, rsi);
+        STRACE("setgroups(%d, %p) = %d", (int)rdi, (void*)rsi, (int)result);
+        break;
+    }
+    case felix86_x86_64_getgroups: {
+        result = HOST_SYSCALL(getgroups, rdi, rsi);
+        STRACE("getgroups(%d, %p) = %d", (int)rdi, (void*)rsi, (int)result);
+        break;
+    }
+    case felix86_x86_64_setuid: {
+        result = HOST_SYSCALL(setuid, rdi);
+        STRACE("setuid(%d) = %d", (int)rdi, (int)result);
+        break;
+    }
+    case felix86_x86_64_umount2: {
+        result = HOST_SYSCALL(umount2, rdi, rsi);
+        STRACE("umount2(%s, %lx) = %d", (const char*)rdi, rsi, (int)result);
+        break;
+    }
     case felix86_x86_64_symlink: {
         std::string oldpath = (char*)rdi;
-        if (oldpath == "/proc/self/exe") {
+        if (is_proc_self_exe(oldpath)) {
             oldpath = fs.GetExecutablePath();
         }
 
         std::string newpath = (char*)rsi;
-        if (newpath == "/proc/self/exe") {
+        if (is_proc_self_exe(newpath)) {
             newpath = fs.GetExecutablePath();
         }
 
@@ -459,6 +523,11 @@ void felix86_syscall(ThreadState* state) {
     case felix86_x86_64_sched_getparam: {
         result = HOST_SYSCALL(sched_getparam, rdi, (struct sched_param*)rsi);
         STRACE("sched_getparam(%d, %p) = %d", (int)rdi, (void*)rsi, (int)result);
+        break;
+    }
+    case felix86_x86_64_sched_setparam: {
+        result = HOST_SYSCALL(sched_setparam, rdi, rsi);
+        STRACE("sched_setparam(%d, %p) = %d", (int)rdi, (void*)rsi, (int)result);
         break;
     }
     case felix86_x86_64_clock_gettime: {
@@ -513,7 +582,7 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_lstat: {
         std::string path = (char*)rdi;
-        if (path == "/proc/self/exe") {
+        if (is_proc_self_exe(path)) {
             path = fs.GetExecutablePath();
         }
 
@@ -563,7 +632,7 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_statx: {
         std::string path = (char*)rsi;
-        if (path == "/proc/self/exe") {
+        if (is_proc_self_exe(path)) {
             path = fs.GetExecutablePath();
         }
 
@@ -598,7 +667,7 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_chown: {
         std::string path = (char*)rdi;
-        if (path == "/proc/self/exe") {
+        if (is_proc_self_exe(path)) {
             path = fs.GetExecutablePath();
         }
 
@@ -608,7 +677,7 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_unlinkat: {
         std::string path = (char*)rsi;
-        if (path == "/proc/self/exe") {
+        if (is_proc_self_exe(path)) {
             WARN("unlinkat called on /proc/self/exe");
             path = fs.GetExecutablePath();
         }
@@ -624,7 +693,7 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_newfstatat: {
         std::string path = (char*)rsi;
-        if (path == "/proc/self/exe") {
+        if (is_proc_self_exe(path)) {
             path = fs.GetExecutablePath();
         }
 
@@ -672,7 +741,7 @@ void felix86_syscall(ThreadState* state) {
         break;
     }
     case felix86_x86_64_access: {
-        if (std::string((char*)rdi) == "/proc/self/exe") {
+        if (is_proc_self_exe(rdi)) {
             std::filesystem::path path = fs.GetExecutablePath();
             result = HOST_SYSCALL(faccessat, AT_FDCWD, path.c_str(), rsi, 0);
         } else {
@@ -683,7 +752,7 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_faccessat:
     case felix86_x86_64_faccessat2: {
-        if (std::string((char*)rsi) == "/proc/self/exe") {
+        if (is_proc_self_exe(rsi)) {
             std::filesystem::path path = fs.GetExecutablePath();
             result = HOST_SYSCALL(faccessat, rdi, path.c_str(), rdx, r10);
         } else {
@@ -742,6 +811,16 @@ void felix86_syscall(ThreadState* state) {
         STRACE("pread64(%d, %p, %d, %d) = %d", (int)rdi, (void*)rsi, (int)rdx, (int)r10, (int)result);
         break;
     }
+    case felix86_x86_64_open: {
+        u64 rdi_old = rdi;
+        u64 rsi_old = rsi;
+        u64 rdx_old = rdx;
+        rdi = AT_FDCWD;
+        rsi = rdi_old;
+        rdx = rsi_old;
+        r10 = rdx_old;
+        [[fallthrough]]; // openat MUST be right after
+    }
     case felix86_x86_64_openat: {
         std::string path = (char*)rsi;
         if (path == "/run/systemd/userdb/") { // TODO: There's some bug in Qt apps with this path
@@ -749,7 +828,7 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
 
-        if (std::string((char*)rsi) == "/proc/self/exe") {
+        if (is_proc_self_exe(rsi)) {
             std::filesystem::path path = fs.GetExecutablePath();
             result = HOST_SYSCALL(openat, rdi, path.c_str(), rdx, r10);
         } else {
@@ -920,7 +999,7 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_statfs: {
         std::string path = (char*)rdi;
-        if (path == "/proc/self/exe") {
+        if (is_proc_self_exe(path)) {
             path = fs.GetExecutablePath();
         }
 
@@ -930,7 +1009,7 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_stat: {
         std::string path = (char*)rdi;
-        if (path == "/proc/self/exe") {
+        if (is_proc_self_exe(path)) {
             path = fs.GetExecutablePath();
         }
 
@@ -1181,7 +1260,7 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_execve: {
         std::string path = (char*)rdi;
-        if (path == "/proc/self/exe") {
+        if (is_proc_self_exe(path)) {
             path = fs.GetExecutablePath();
         }
 
@@ -1198,9 +1277,41 @@ void felix86_syscall(ThreadState* state) {
         std::vector<const char*> argv;
         std::vector<const char*> envp;
 
-        argv.push_back("/proc/self/exe");
+        argv.push_back("/proc/self/exe"); // emulator itself
         if (rsi) {
             const char** guest_argv = (const char**)rsi;
+            guest_argv++;
+
+            if (path.find('/') == std::string::npos) {
+                // If there's no '/' characters, this is probably just a filename by itself
+                // That means we need to look for the absolute path in PATH
+                bool found = false;
+                std::string PATH = getenv("PATH");
+                size_t current_start = 0;
+                size_t size = PATH.size();
+                for (size_t i = 0; i < size; i++) {
+                    if (PATH[i] == ':' || i == size - 1) {
+                        // Set it to 0 so that the string creation ends there
+                        if (PATH[i] == ':')
+                            PATH[i] = '\0';
+                        std::filesystem::path dir = PATH.data() + current_start;
+                        current_start = i + 1;
+                        std::filesystem::path executable = dir / path;
+                        if (std::filesystem::exists(executable) && std::filesystem::is_regular_file(executable)) {
+                            path = executable;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!found) {
+                    ERROR("Failed to find %s during execve", path.c_str());
+                }
+            }
+
+            argv.push_back(path.c_str());
+
             while (*guest_argv) {
                 argv.push_back(*guest_argv);
                 guest_argv++;
@@ -1216,10 +1327,17 @@ void felix86_syscall(ThreadState* state) {
             }
         }
         envp.push_back("__FELIX86_LAUNCHED=1");
+        envp.push_back("__FELIX86_EXECVE=1");
+        envp.push_back("LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/felix86/lib");
+        char** host_environ = environ;
+        while (*host_environ) {
+            std::string env = *host_environ;
+            if (env.find("FELIX86") != std::string::npos) {
+                envp.push_back(*host_environ);
+            }
+            host_environ++;
+        }
         envp.push_back(nullptr);
-
-        g_execve_process = true;
-        pthread_setname_np(pthread_self(), "ExecveProcess");
 
         std::string args = "";
         for (auto arg : argv) {
@@ -1241,12 +1359,12 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_linkat: {
         std::string oldpath = (char*)rsi;
-        if (oldpath == "/proc/self/exe") {
+        if (is_proc_self_exe(oldpath)) {
             oldpath = fs.GetExecutablePath();
         }
 
         std::string newpath = (char*)r10;
-        if (newpath == "/proc/self/exe") {
+        if (is_proc_self_exe(newpath)) {
             newpath = fs.GetExecutablePath();
         }
 
@@ -1256,7 +1374,7 @@ void felix86_syscall(ThreadState* state) {
     }
     case felix86_x86_64_unlink: {
         std::string path = (char*)rdi;
-        if (path == "/proc/self/exe") {
+        if (is_proc_self_exe(path)) {
             path = fs.GetExecutablePath();
         }
 

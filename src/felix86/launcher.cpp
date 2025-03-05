@@ -10,7 +10,6 @@
 #include <unistd.h>
 #include "biscuit/cpuinfo.hpp"
 #include "felix86/common/info.hpp"
-#include "felix86/common/log.hpp"
 #undef ERROR
 #undef ASSERT
 
@@ -69,7 +68,21 @@ void copy_lib(const std::filesystem::path& lib, const std::filesystem::path& des
     std::error_code ec;
     std::filesystem::copy(full_path, dest / lib, ec);
     if (ec) {
-        ERROR("Error while copying: %s", ec.message().c_str());
+        ERROR("Error while copying %s: %s", ec.message().c_str(), full_path.c_str());
+    }
+}
+
+void copy_recursive(const char* dir_cstr, const std::filesystem::path& dest) {
+    std::filesystem::path dir = dir_cstr;
+    if (!std::filesystem::exists(dir)) {
+        printf("I couldn't find %s to copy to the rootfs, may cause problems with some games", dir.c_str());
+        return;
+    }
+
+    std::error_code ec;
+    std::filesystem::copy(dir, dest, std::filesystem::copy_options::overwrite_existing | std::filesystem::copy_options::recursive, ec);
+    if (ec) {
+        ERROR("Error while copying %s: %s", dir.c_str(), ec.message().c_str());
     }
 }
 
@@ -78,6 +91,7 @@ std::string version_full = get_version_full();
 int print_version_stuff() {
     printf("%s\n", version_full.c_str());
 
+    using namespace biscuit;
     biscuit::CPUInfo info;
     bool I = info.Has(Extension::I) && info.Has(Extension::M) && info.Has(Extension::A) && info.Has(Extension::F) && info.Has(Extension::D);
     bool V = info.Has(Extension::V);
@@ -150,7 +164,7 @@ int print_version_stuff() {
     return 0;
 
 error:
-    printf("Please install " ANSI_BOLD "neofetch" ANSI_COLOR_RESET " for more information\n");
+    printf("Please install neofetch for more information\n");
     return ok;
 }
 
@@ -204,6 +218,11 @@ int main(int argc, const char** argv) {
     copy_lib("libgcc_s.so.1", libpath);
     copy_lib("libc.so.6", libpath);
     copy_lib("ld-linux-riscv64-lp64d.so.1", libpath);
+
+    copy_recursive("/var/lib/dbus", rootfs / "var" / "lib" / "dbus");
+    copy_recursive("/etc/mtab", rootfs / "etc" / "mtab");
+    copy_recursive("/etc/passwd", rootfs / "etc" / "passwd");
+    copy_recursive("/etc/passwd-", rootfs / "etc" / "passwd");
 
     std::filesystem::path has_mounted_var_path = "/run/felix86.mounted";
 
@@ -302,7 +321,7 @@ int main(int argc, const char** argv) {
     jit_args.push_back(nullptr);
 
     constexpr static const char* launched = "__FELIX86_LAUNCHED=1";
-    constexpr static const char* ld_lib_path = "LD_LIBRARY_PATH=/felix86/lib";
+    constexpr static const char* ld_lib_path = "LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/felix86/lib";
     char** environ_copy = environ;
     std::vector<const char*> jit_envs;
     while (*environ_copy) {

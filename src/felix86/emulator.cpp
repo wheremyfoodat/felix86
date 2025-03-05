@@ -233,7 +233,12 @@ void* Emulator::CompileNext(ThreadState* thread_state) {
 
     g_dispatcher_exit_count++;
 
-    HostAddress next_block = thread_state->recompiler->getCompiledBlock(thread_state->GetRip().toHost());
+    HostAddress next_block = thread_state->recompiler->getCompiledBlock(thread_state, thread_state->GetRip().toHost());
+
+    if (g_block_trace) {
+        thread_state->recompiler->trace(thread_state->GetRip().toHost().raw());
+    }
+
     return (void*)next_block.raw();
 }
 
@@ -293,11 +298,29 @@ std::pair<ExitReason, int> Emulator::Start(const Config& config) {
         if (peek == Script::PeekResult::Script) {
             Script script(g_config.executable_path);
             const std::filesystem::path& interpreter = script.GetInterpreter();
+            const std::string& args = script.GetArgs();
 
             // Scripts start with a line that goes #! (usually) and that means
             // use the interpreter after #!. This can be bash, zsh, python, whatever.
             // So, set executable path to be the interpreter itself and push it to the front of argv.
+            // In that #! line args can follow and if they exist we need to push them to the front in opposite order
+            auto args_array = split_string(args, ' ');
+            for (auto it = args_array.rbegin(); it < args_array.rend(); it++) {
+                if (it->empty())
+                    continue;
+
+                g_config.argv.push_front(*it);
+            }
+
             g_config.argv.push_front(interpreter.string());
+
+            std::string final;
+            for (auto& arg : g_config.argv) {
+                final += arg + " ";
+            }
+
+            LOG("I built the script arguments: %s", final.c_str());
+
             g_config.executable_path = interpreter;
         } else {
             ERROR("Unknown file format: %s", g_config.executable_path.c_str());
@@ -363,4 +386,75 @@ void Emulator::StartTest(const TestConfig& config, GuestAddress stack) {
     }
 
     Threads::StartThread(main_state);
+}
+
+void Emulator::LinkIndirect(u64 host_address, u64 guest_address, u8* link_address, ThreadState* state) {
+    Assembler& as = state->recompiler->getAssembler();
+
+    u8* before = as.GetCursorPointer();
+    as.SetCursorPointer(link_address);
+
+    Label unlink_indirect;
+    Literal guest(guest_address);
+    Literal host(host_address);
+    Literal unlink_address((u64)Emulator::UnlinkIndirect);
+    as.LD(t1, offsetof(ThreadState, rip), Recompiler::threadStatePointer());
+    as.LD(t0, &guest);
+    as.BNE(t0, t1, &unlink_indirect);
+    as.LD(t2, &host);
+    if (g_rsb) {
+        as.JALR(t2); // push to rsb
+    } else {
+        as.JR(t2);
+    }
+    as.Bind(&unlink_indirect);
+    as.NOP(); // important it's here, due to -11 * 4 in unlink indirect
+    as.NOP();
+
+    const u64 offset = (u64)state->recompiler->getUnlinkIndirectThunk() - (u64)as.GetCursorPointer();
+    ASSERT(IsValid2GBImm(offset));
+    const auto hi20 = static_cast<int32_t>(((static_cast<uint32_t>(offset) + 0x800) >> 12) & 0xFFFFF);
+    const auto lo12 = static_cast<int32_t>(offset << 20) >> 20;
+
+    as.AUIPC(t2, hi20);
+    as.JALR(ra, lo12, t2);
+
+    // The instruction following is a jump that goes back exactly 10 instructions, the same amount that we have here
+    // Note: LD with Literal is 2 instructions -> AUIPC + LD. So we have 11 instructions here too.
+    u8* here = as.GetCursorPointer();
+    ASSERT(here - link_address == 11 * 4);
+
+    // We don't wanna overwrite this jump. Not only do we need it after we return from this function,
+    // but we are also gonna need it in case the comparison fails, as UnlinkIndirect will once again rewrite this
+    // chunk of code
+    as.SetCursorPointer(here + 4);
+
+    // Now overwrite these 3 literals from Recompiler::linkIndirect with our own
+    as.Place(&guest);
+    as.Place(&host);
+    as.Place(&unlink_address);
+
+    as.SetCursorPointer(before);
+
+    // Spooky self-modifying code over
+    flush_icache();
+}
+
+void Emulator::UnlinkIndirect(ThreadState* state, u8* link_address) {
+    // This function is called when an indirect jump prediction fails once. One time is enough for it to not be worth
+    // the check anymore... for example OOP structs with vtables can change function pointers quite a bit so we would rather
+    // always jump to the dispatcher for those... So replace our link with a backToDispatcher
+
+    // This function takes no arguments, yet we have enough info to deduce where we are from the registers
+    Assembler& as = state->recompiler->getAssembler();
+    u8* before = as.GetCursorPointer();
+
+    as.SetCursorPointer(link_address);
+
+    // Replace the first two instructions with a back to dispatcher jump and forget whatever follows
+    state->recompiler->backToDispatcher();
+
+    as.SetCursorPointer(before);
+
+    flush_icache();
 }

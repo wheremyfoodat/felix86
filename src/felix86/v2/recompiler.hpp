@@ -49,7 +49,7 @@ struct Recompiler {
     Recompiler(Recompiler&&) = delete;
     Recompiler& operator=(Recompiler&&) = delete;
 
-    HostAddress compile(HostAddress rip);
+    HostAddress compile(ThreadState* state, HostAddress rip);
 
     inline Assembler& getAssembler() {
         return as;
@@ -73,6 +73,8 @@ struct Recompiler {
 
     void pushST(biscuit::GPR top, biscuit::FPR st);
 
+    void popST(biscuit::GPR top);
+
     void setTOP(biscuit::GPR top);
 
     biscuit::FPR getST(biscuit::GPR top, int index);
@@ -80,6 +82,8 @@ struct Recompiler {
     biscuit::FPR getST(biscuit::GPR top, ZydisDecodedOperand* operand);
 
     void setST(biscuit::GPR top, int index, biscuit::FPR value);
+
+    void setST(biscuit::GPR top, ZydisDecodedOperand* operand, biscuit::FPR value);
 
     biscuit::GPR getOperandGPR(ZydisDecodedOperand* operand);
 
@@ -350,11 +354,13 @@ struct Recompiler {
 
     HostAddress emitSigreturnThunk();
 
+    HostAddress emitUnlinkIndirectThunk();
+
     auto& getBlockMap() {
         return block_metadata;
     }
 
-    HostAddress getCompiledBlock(HostAddress rip);
+    HostAddress getCompiledBlock(ThreadState* state, HostAddress rip);
 
     void pushCalltrace();
 
@@ -368,6 +374,10 @@ struct Recompiler {
 
     u8 stackPointerSize() {
         return g_mode32 ? 4 : 8;
+    }
+
+    x86_size_e addressWidth() {
+        return g_mode32 ? X86_SIZE_DWORD : X86_SIZE_QWORD;
     }
 
     void updateOverflowAdd(biscuit::GPR lhs, biscuit::GPR rhs, biscuit::GPR result, x86_size_e size);
@@ -391,6 +401,16 @@ struct Recompiler {
     void zeroFlag(x86_ref_e flag);
 
     void setFlag(x86_ref_e flag);
+
+    void trace(u64 address);
+
+    void printTrace();
+
+    void linkIndirect();
+
+    u8* getUnlinkIndirectThunk() {
+        return unlink_indirect_thunk;
+    }
 
 private:
     struct RegisterMetadata {
@@ -428,7 +448,7 @@ private:
 
     void expirePendingLinks(HostAddress rip);
 
-    void clearCodeCache();
+    void clearCodeCache(ThreadState* state);
 
     void markPagesAsReadOnly(HostAddress start, HostAddress end);
 
@@ -440,8 +460,6 @@ private:
     biscuit::Assembler as{};
     ZydisDecoder decoder{};
 
-    std::array<BlockCacheEntry, 1 << block_cache_bits> block_cache{};
-
     ZydisDecodedInstruction instruction{};
     ZydisDecodedOperand operands[10]{};
 
@@ -452,6 +470,8 @@ private:
     void* compile_next_handler{};
 
     void* start_of_code_cache{};
+
+    u8* unlink_indirect_thunk{};
 
     std::array<RegisterMetadata, 16 + 5 + 16> metadata{};
 
@@ -482,4 +502,12 @@ private:
     LMUL current_grouping = LMUL::M1;
     bool rounding_mode_set = false;
     int perf_fd = -1;
+
+    std::array<u64, 16> saved_host_gprs;
+    std::vector<u64> block_trace;
+    size_t block_trace_index = 0;
+
+    std::array<bool, 16> zexted_gprs; // gprs that have been set in 32-bit form, to avoid future zexts
+
+    std::array<BlockCacheEntry, 1 << block_cache_bits> block_cache{};
 };

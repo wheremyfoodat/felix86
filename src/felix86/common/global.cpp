@@ -33,9 +33,13 @@ bool g_no_sse4_1 = false;
 bool g_no_sse4_2 = false;
 bool g_print_all_insts = false;
 bool g_dont_inline_syscalls = false;
+bool g_min_max_accurate = false;
+int g_block_trace = 0;
 bool g_mode32 = false;
 bool g_rsb = true;
 bool g_perf = false;
+bool g_always_tso = false;
+bool g_dont_link_indirect = true; // doesn't seem to impact performance from limited testing, so off by default
 std::atomic_bool g_symbols_cached = {false};
 u64 g_initial_brk = 0;
 u64 g_current_brk = 0;
@@ -63,10 +67,20 @@ HostAddress g_interpreter_end{};
 HostAddress g_executable_start{};
 HostAddress g_executable_end{};
 
+bool is_truthy(const char* str) {
+    if (!str) {
+        return false;
+    }
+
+    std::string lower = str;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    return lower == "true" || lower == "1" || lower == "yes" || lower == "on" || lower == "y" || lower == "enable";
+}
+
 bool is_running_under_perf() {
     // Always enable symbol emission when this is enabled, in case our detection fails
     const char* perf_env = getenv("FELIX86_PERF");
-    if (perf_env) {
+    if (is_truthy(perf_env)) {
         return true;
     }
 
@@ -110,16 +124,6 @@ void Extensions::Clear() {
     FELIX86_EXTENSIONS_TOTAL
 #undef X
     VLEN = 0;
-}
-
-bool is_truthy(const char* str) {
-    if (!str) {
-        return false;
-    }
-
-    std::string lower = str;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-    return lower == "true" || lower == "1" || lower == "yes" || lower == "on" || lower == "y" || lower == "enable";
 }
 
 std::string get_extensions() {
@@ -265,6 +269,21 @@ void initialize_globals() {
         environment += "\nFELIX86_DONT_RSB";
     }
 
+    const char* min_max_accurate_env = getenv("FELIX86_MIN_MAX_ACCURATE");
+    if (is_truthy(min_max_accurate_env)) {
+        g_min_max_accurate = true;
+        environment += "\nFELIX86_MIN_MAX_ACCURATE";
+    }
+
+    const char* block_trace = getenv("FELIX86_BLOCK_TRACE");
+    if (block_trace) {
+        g_block_trace = std::stoi(block_trace);
+        g_dont_link = true; // needed to trace blocks
+        g_dont_link_indirect = true;
+        environment += "\nFELIX86_BLOCK_TRACE=";
+        environment += block_trace;
+    }
+
     const char* executable_base = getenv("FELIX86_EXECUTABLE_BASE");
     if (executable_base) {
         g_executable_base_hint = std::stoull(executable_base, nullptr, 16);
@@ -286,7 +305,14 @@ void initialize_globals() {
     const char* dont_link = getenv("FELIX86_DONT_LINK");
     if (is_truthy(dont_link)) {
         g_dont_link = true;
+        g_dont_link_indirect = true;
         environment += "\nFELIX86_DONT_LINK";
+    }
+
+    const char* link_indirect = getenv("FELIX86_LINK_INDIRECT");
+    if (is_truthy(link_indirect)) {
+        g_dont_link_indirect = false;
+        environment += "\nFELIX86_LINK_INDIRECT";
     }
 
     const char* dont_protect_pages = getenv("FELIX86_DONT_PROTECT_PAGES");

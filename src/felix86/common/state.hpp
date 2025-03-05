@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include "biscuit/isa.hpp"
 #include "felix86/common/address.hpp"
 #include "felix86/common/log.hpp"
@@ -124,15 +123,13 @@ struct ThreadState {
     std::shared_ptr<SignalHandlerTable> signal_handlers{};
     sigset_t signal_mask{};
 
-    void* compile_next_handler{};
-
     ExitReason exit_reason{};
 
     u8 exit_code{}; // process exit code
 
     bool mode32 = false; // 32-bit execution mode, changes the behavior of some instructions and the decoder
 
-    std::array<u64, 16> saved_host_gprs;
+    u64 current_sp = 0;
 
     std::unique_ptr<Recompiler> recompiler;
 
