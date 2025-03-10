@@ -169,11 +169,12 @@ struct Recompiler {
 
     void setFlagUndefined(x86_ref_e ref);
 
-    x86_ref_e zydisToRef(ZydisRegister reg);
+    // TODO: move these elsewhere
+    static x86_ref_e zydisToRef(ZydisRegister reg);
 
-    x86_size_e zydisToSize(ZydisRegister reg);
+    static x86_size_e zydisToSize(ZydisRegister reg);
 
-    x86_size_e zydisToSize(ZyanU8 size);
+    static x86_size_e zydisToSize(ZyanU8 size);
 
     std::lock_guard<std::mutex> lock() {
         return std::lock_guard{block_map_mutex};
@@ -233,9 +234,6 @@ struct Recompiler {
         }
         case X86_REF_CF: {
             return biscuit::x21;
-        }
-        case X86_REF_AF: {
-            return biscuit::x7;
         }
         case X86_REF_ZF: {
             return biscuit::x23;
@@ -326,6 +324,8 @@ struct Recompiler {
 
     void readMemory(biscuit::GPR dest, biscuit::GPR address, i64 offset, x86_size_e size);
 
+    void readMemoryVectorNoBase(biscuit::Vec dest, biscuit::GPR address, int size);
+
     void writeMemory(biscuit::GPR src, biscuit::GPR address, i64 offset, x86_size_e size);
 
     void readMemoryNoBase(biscuit::GPR dest, biscuit::GPR address, i64 offset, x86_size_e size);
@@ -358,6 +358,10 @@ struct Recompiler {
 
     auto& getBlockMap() {
         return block_metadata;
+    }
+
+    auto& getHostPcMap() {
+        return host_pc_map;
     }
 
     HostAddress getCompiledBlock(ThreadState* state, HostAddress rip);
@@ -412,6 +416,31 @@ struct Recompiler {
         return unlink_indirect_thunk;
     }
 
+    void clearCodeCache(ThreadState* state);
+
+    void call(u64 target) {
+        call(as, target);
+    }
+
+    static void call(Assembler& as, u64 target) {
+        i64 offset = target - (u64)as.GetCursorPointer();
+        if (IsValidJTypeImm(offset)) {
+            as.JAL(offset);
+        } else if (IsValid2GBImm(offset)) {
+            const auto hi20 = static_cast<int32_t>(((static_cast<uint32_t>(offset) + 0x800) >> 12) & 0xFFFFF);
+            const auto lo12 = static_cast<int32_t>(offset << 20) >> 20;
+            as.AUIPC(t0, hi20);
+            as.JALR(ra, lo12, t0);
+        } else {
+            as.LI(t0, target);
+            as.JALR(t0);
+        }
+    }
+
+    u8* getStartOfCodeCache() {
+        return (u8*)start_of_code_cache;
+    }
+
 private:
     struct RegisterMetadata {
         x86_ref_e reg;
@@ -448,7 +477,7 @@ private:
 
     void expirePendingLinks(HostAddress rip);
 
-    void clearCodeCache(ThreadState* state);
+    void emitNecessaryStuff();
 
     void markPagesAsReadOnly(HostAddress start, HostAddress end);
 
@@ -473,13 +502,17 @@ private:
 
     u8* unlink_indirect_thunk{};
 
-    std::array<RegisterMetadata, 16 + 5 + 16> metadata{};
+    // 16 GPRS followed by 4 flags (CF,OF,ZF,SF) then 16 XMMs
+    std::array<RegisterMetadata, 16 + 4 + 16> metadata{};
 
     // This may be locked by a different thread on a signal handler to unlink a block
     std::mutex block_map_mutex{};
 
-    // TODO: can we use HostAddress here?
     std::unordered_map<u64, BlockMetadata> block_metadata{};
+
+    // For fast host pc -> block metadata lookup (binary search vs looking up one by one)
+    // on signal handlers
+    std::map<u64, BlockMetadata*> host_pc_map{};
 
     bool compiling{};
 
@@ -503,7 +536,6 @@ private:
     bool rounding_mode_set = false;
     int perf_fd = -1;
 
-    std::array<u64, 16> saved_host_gprs;
     std::vector<u64> block_trace;
     size_t block_trace_index = 0;
 

@@ -50,20 +50,15 @@ static bool flag_passthrough(ZydisMnemonic mnemonic, x86_ref_e flag) {
 Recompiler::Recompiler() : code_cache(allocateCodeCache()), as(code_cache, code_cache_size) {
     for (int i = 0; i < 16; i++) {
         metadata[i].reg = (x86_ref_e)(X86_REF_RAX + i);
-        metadata[i + 16 + 5].reg = (x86_ref_e)(X86_REF_XMM0 + i);
+        metadata[i + 16 + 4].reg = (x86_ref_e)(X86_REF_XMM0 + i);
     }
 
     metadata[16].reg = X86_REF_CF;
-    metadata[17].reg = X86_REF_AF;
-    metadata[18].reg = X86_REF_ZF;
-    metadata[19].reg = X86_REF_SF;
-    metadata[20].reg = X86_REF_OF;
+    metadata[17].reg = X86_REF_ZF;
+    metadata[18].reg = X86_REF_SF;
+    metadata[19].reg = X86_REF_OF;
 
-    // Deduplicate code with clearcodecache -> emitNecessaryStuff
-    emitDispatcher();
-    emitSigreturnThunk();
-    emitUnlinkIndirectThunk();
-    start_of_code_cache = as.GetCursorPointer();
+    emitNecessaryStuff();
 
     ZydisMachineMode mode = g_mode32 ? ZYDIS_MACHINE_MODE_LONG_COMPAT_32 : ZYDIS_MACHINE_MODE_LONG_64;
     ZydisStackWidth stack_width = g_mode32 ? ZYDIS_STACK_WIDTH_32 : ZYDIS_STACK_WIDTH_64;
@@ -80,16 +75,38 @@ Recompiler::~Recompiler() {
     deallocateCodeCache(code_cache);
 }
 
+void Recompiler::emitNecessaryStuff() {
+    emitDispatcher();
+    emitSigreturnThunk();
+    emitUnlinkIndirectThunk();
+    start_of_code_cache = as.GetCursorPointer();
+}
+
 void Recompiler::emitDispatcher() {
     enter_dispatcher = (decltype(enter_dispatcher))as.GetCursorPointer();
 
-    // Save the current register state of callee-saved registers and return address
-    static_assert(sizeof(saved_host_gprs) == saved_gprs.size() * 8);
-    as.LI(t0, (u64)this);
-    as.ADDI(t0, t0, offsetof(Recompiler, saved_host_gprs));
+    Label stack_overflow;
+
+    // Disable guest signal handling while we are modifying the frame stack pointer
+    as.LI(t3, 1);
+    as.SB(t3, offsetof(ThreadState, signals_disabled), a0);
+
+    // Save the current frame. This means the return address, the stack pointer and
+    // the saved registers. We don't save these in the stack, as we do RSB and our stack pointer may not
+    // be back to what it was when we exit the dispatcher. We save it in this separate stack-like structure instead.
+    as.LD(t0, offsetof(ThreadState, frame_pointer), a0);
+    as.ADDI(t1, a0, offsetof(ThreadState, frames));
+    as.LI(t3, sizeof(ThreadState::frames));
+    as.ADD(t1, t1, t3);
+    as.ADDI(t2, t0, saved_gprs.size() * sizeof(u64));
+    // Make sure we wouldn't overflow our stack
+    as.BGT(t2, t1, &stack_overflow);
     for (size_t i = 0; i < saved_gprs.size(); i++) {
         as.SD(saved_gprs[i], i * sizeof(u64), t0);
     }
+    as.SD(t2, offsetof(ThreadState, frame_pointer), a0);
+
+    as.SB(x0, offsetof(ThreadState, signals_disabled), a0);
 
     as.MV(threadStatePointer(), a0);
 
@@ -131,13 +148,28 @@ void Recompiler::emitDispatcher() {
 
     exit_dispatcher = (decltype(exit_dispatcher))as.GetCursorPointer();
 
-    as.LI(t0, (u64)this);
-    as.ADDI(t0, t0, offsetof(Recompiler, saved_host_gprs));
+    // Disable guest signal handling while we are modifying the frame stack pointer
+    as.LI(t3, 1);
+    as.SB(t3, offsetof(ThreadState, signals_disabled), a0);
+
+    // Load the frame we had before entering the dispatcher from our custom stack
+    as.LD(t0, offsetof(ThreadState, frame_pointer), a0);
+    as.ADDI(t0, t0, -(int)saved_gprs.size() * (int)sizeof(u64));
     for (size_t i = 0; i < saved_gprs.size(); i++) {
         as.LD(saved_gprs[i], i * sizeof(u64), t0);
     }
+    as.SD(t0, offsetof(ThreadState, frame_pointer), a0);
 
+    as.SB(x0, offsetof(ThreadState, signals_disabled), a0);
+
+    // Return to wherever the dispatcher was originally entered from using enter_dispatcher
     as.JR(ra);
+
+    as.Bind(&stack_overflow);
+
+    as.LI(t0, EXIT_REASON_FRAME_STACK_OVERFLOW);
+    as.SB(t0, offsetof(ThreadState, exit_reason), threadStatePointer());
+    as.J(&exit_dispatcher_label);
 
     flush_icache();
 }
@@ -145,6 +177,8 @@ void Recompiler::emitDispatcher() {
 HostAddress Recompiler::emitSigreturnThunk() {
     // This piece of code is responsible for moving the thread state pointer to the right place (so we don't have to find it using tid)
     // calling sigreturn, returning and going back to the dispatcher.
+    // It sets exit reason as sigreturn so the dispatcher will then jump to exit dispatcher, and return to the signal handler
+    // that the dispatcher was entered from. The signal handler will then return and peace will be restored or something.
     HostAddress here{(u64)as.GetCursorPointer()};
     getBlockMetadata(Signals::magicSigreturnAddress()).address = here;
 
@@ -175,20 +209,21 @@ void Recompiler::clearCodeCache(ThreadState* state) {
     WARN("Clearing cache on thread %u", gettid());
     as.RewindBuffer();
     block_metadata.clear();
+    host_pc_map.clear();
     std::fill(std::begin(block_cache), std::end(block_cache), BlockCacheEntry{});
 
-    emitDispatcher();
-    emitSigreturnThunk();
-    emitUnlinkIndirectThunk();
-    start_of_code_cache = as.GetCursorPointer();
+    emitNecessaryStuff();
 
     if (g_rsb) {
         // Need to zero out the stack that rsb has used thus far.
         // Because if the cache is cleared and we hit more RETs than calls,
         // we are gonna be returning to potentially invalid places
-        constexpr int index = 1;
-        static_assert(saved_gprs[index] == sp);
-        u64 stack_start = saved_host_gprs[index];
+        // Our frame pointer (see dispatcher for how it's made) points past
+        // the saved registers so we need to point at the start of the frame
+        constexpr int sp_index = 1;
+        u64* frame = (u64*)(state->frame_pointer - saved_gprs.size() * sizeof(u64));
+        u64 stack_start = frame[sp_index];
+        static_assert(saved_gprs[sp_index] == sp);
         u64 stack_end = state->current_sp;
 
         for (u64 i = stack_end; i < stack_start; i++) {
@@ -207,10 +242,13 @@ HostAddress Recompiler::compile(ThreadState* state, HostAddress rip) {
     HostAddress start{(u64)as.GetCursorPointer()};
 
     // Map it immediately so we can optimize conditional branch to self
-    getBlockMetadata(rip).address = start;
+    BlockMetadata& block_meta = getBlockMetadata(rip);
+    block_meta.address = start;
 
     // A sequence of code. This is so that we can also call it recursively later.
     HostAddress end_rip = compileSequence(rip);
+
+    host_pc_map[block_meta.address_end.raw() - 1] = &block_meta;
 
     // If other blocks were waiting for this block to be linked, link them now
     expirePendingLinks(rip);
@@ -263,6 +301,10 @@ void Recompiler::markPagesAsReadOnly(HostAddress start, HostAddress end) {
 }
 
 HostAddress Recompiler::getCompiledBlock(ThreadState* state, HostAddress rip) {
+    if (g_dont_cache) {
+        return compile(state, rip);
+    }
+
     if (g_use_block_cache) {
         BlockCacheEntry& entry = block_cache[rip.raw() & ((1 << block_cache_bits) - 1)];
         if (entry.guest == rip) {
@@ -306,13 +348,13 @@ HostAddress Recompiler::compileSequence(HostAddress rip) {
     while (compiling) {
         resetScratch();
 
+        block_meta.instruction_spans.push_back({meta.rip.toGuest(), HostAddress{(u64)as.GetCursorPointer()}});
+
         if (g_breakpoints.find(meta.rip.raw()) != g_breakpoints.end()) {
             u64 current_address = (u64)as.GetCursorPointer();
             g_breakpoints[meta.rip.raw()].push_back(current_address);
             as.GetCodeBuffer().Emit32(0); // UNIMP instruction
         }
-
-        block_meta.instruction_spans.push_back({meta.rip.toGuest(), HostAddress{(u64)as.GetCursorPointer()}});
 
         ZydisMnemonic mnemonic = decode(meta.rip, instruction, operands);
 
@@ -382,6 +424,7 @@ HostAddress Recompiler::compileSequence(HostAddress rip) {
 }
 
 biscuit::GPR Recompiler::scratch() {
+    // TODO: constexpr list of regs
     switch (scratch_index++) {
     case 0:
         return x1;
@@ -395,6 +438,8 @@ biscuit::GPR Recompiler::scratch() {
         return x30;
     case 5:
         return x31;
+    case 6:
+        return x7;
     default:
         ERROR("Tried to use more than 6 scratch GPRs");
         return x0;
@@ -402,7 +447,8 @@ biscuit::GPR Recompiler::scratch() {
 }
 
 bool Recompiler::isScratch(biscuit::GPR reg) {
-    return reg == x1 || reg == x6 || reg == x28 || reg == x29 || reg == x30 || reg == x31;
+    // TODO: constexpr list of regs, std::find
+    return reg == x1 || reg == x6 || reg == x28 || reg == x29 || reg == x30 || reg == x31 || reg == x7;
 }
 
 biscuit::Vec Recompiler::scratchVec() {
@@ -690,20 +736,17 @@ Recompiler::RegisterMetadata& Recompiler::getMetadata(x86_ref_e reg) {
     case X86_REF_CF: {
         return metadata[16];
     }
-    case X86_REF_AF: {
+    case X86_REF_ZF: {
         return metadata[17];
     }
-    case X86_REF_ZF: {
+    case X86_REF_SF: {
         return metadata[18];
     }
-    case X86_REF_SF: {
+    case X86_REF_OF: {
         return metadata[19];
     }
-    case X86_REF_OF: {
-        return metadata[20];
-    }
     case X86_REF_XMM0 ... X86_REF_XMM15: {
-        return metadata[reg - X86_REF_XMM0 + 16 + 5];
+        return metadata[reg - X86_REF_XMM0 + 16 + 4];
     }
     default: {
         UNREACHABLE();
@@ -787,74 +830,12 @@ biscuit::Vec Recompiler::getOperandVec(ZydisDecodedOperand* operand) {
         return reg;
     }
     case ZYDIS_OPERAND_TYPE_MEMORY: {
-        biscuit::GPR address = leaAddBase(operand);
         biscuit::Vec vec = scratchVec();
+        biscuit::GPR address = leaAddBase(operand);
 
-        switch (operand->size) {
-        case 8: {
-            setVectorState(SEW::E8, 1);
-            as.VLE8(vec, address); // These won't need to be patched as they can't be unaligned
-            break;
-        }
-        case 16: {
-            if (g_paranoid) {
-                setVectorState(SEW::E8, 2);
-                as.VLE8(vec, address);
-            } else {
-                if (!setVectorState(SEW::E16, 1)) {
-                    as.NOP(); // Add a NOP in case this load needs to be patched and we need to insert a vsetivli
-                }
-                as.VLE16(vec, address);
-                as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
-            }
-            break;
-        }
-        case 32: {
-            if (g_paranoid) {
-                setVectorState(SEW::E8, 4);
-                as.VLE8(vec, address);
-            } else {
-                if (!setVectorState(SEW::E32, 1)) {
-                    as.NOP(); // Add a NOP in case this load needs to be patched and we need to insert a vsetivli
-                }
-                as.VLE32(vec, address);
-                as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
-            }
-            break;
-        }
-        case 64: {
-            if (g_paranoid) {
-                setVectorState(SEW::E8, 8);
-                as.VLE8(vec, address);
-            } else {
-                if (!setVectorState(SEW::E64, 1)) {
-                    as.NOP(); // Add a NOP in case this load needs to be patched and we need to insert a vsetivli
-                }
-                as.VLE64(vec, address);
-                as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
-            }
-            break;
-        }
-        case 128: {
-            if (g_paranoid) {
-                setVectorState(SEW::E8, 16);
-                as.VLE8(vec, address);
-            } else {
-                if (!setVectorState(SEW::E64, 2)) {
-                    as.NOP(); // Add a NOP in case this load needs to be patched and we need to insert a vsetivli
-                }
-                as.VLE64(vec, address);
-                as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
-            }
-            break;
-        }
-        default: {
-            UNREACHABLE();
-            break;
-        }
-        }
+        readMemoryVectorNoBase(vec, address, operand->size);
 
-        popScratch();
+        popScratch(); // pop lea scratch
 
         return vec;
     }
@@ -874,6 +855,10 @@ biscuit::GPR Recompiler::flag(x86_ref_e ref) {
     if (ref == X86_REF_PF) {
         biscuit::GPR reg = scratch();
         as.LBU(reg, offsetof(ThreadState, pf), threadStatePointer());
+        return reg;
+    } else if (ref == X86_REF_AF) {
+        biscuit::GPR reg = scratch();
+        as.LBU(reg, offsetof(ThreadState, af), threadStatePointer());
         return reg;
     }
 
@@ -1069,42 +1054,18 @@ void Recompiler::setOperandVec(ZydisDecodedOperand* operand, biscuit::Vec vec) {
 
         switch (operand->size) {
         case 128: {
-            if (g_paranoid) { // don't patch vector accesses in paranoid mode
-                setVectorState(SEW::E8, 128 / 8);
-                as.VSE8(vec, address);
-            } else {
-                if (!setVectorState(SEW::E64, 2)) {
-                    as.NOP(); // Add a NOP in case this store needs to be patched and we need to insert a vsetivli
-                }
-                as.VSE64(vec, address);
-                as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
-            }
+            setVectorState(SEW::E8, 128 / 8);
+            as.VSE8(vec, address);
             break;
         }
         case 64: {
-            if (g_paranoid) {
-                setVectorState(SEW::E8, 64 / 8);
-                as.VSE8(vec, address);
-            } else {
-                if (!setVectorState(SEW::E64, 1)) {
-                    as.NOP(); // Add a NOP in case this store needs to be patched and we need to insert a vsetivli
-                }
-                as.VSE64(vec, address);
-                as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
-            }
+            setVectorState(SEW::E8, 64 / 8);
+            as.VSE8(vec, address);
             break;
         }
         case 32: {
-            if (g_paranoid) {
-                setVectorState(SEW::E8, 32 / 8);
-                as.VSE8(vec, address);
-            } else {
-                if (!setVectorState(SEW::E32, 1)) {
-                    as.NOP(); // Add a NOP in case this store needs to be patched and we need to insert a vsetivli
-                }
-                as.VSE32(vec, address);
-                as.NOP(); // in case of a patch, the old vsetivli needs to be moved here to maintain integrity
-            }
+            setVectorState(SEW::E8, 32 / 8);
+            as.VSE8(vec, address);
             break;
         }
         }
@@ -1179,7 +1140,8 @@ bool Recompiler::setVectorState(SEW sew, int vlen, LMUL grouping) {
     current_vlen = vlen;
     current_grouping = grouping;
 
-    as.VSETIVLI(x0, vlen, sew, grouping);
+    // TODO: One day when we have chips that perform better with VTA::Yes, enable it
+    as.VSETIVLI(x0, vlen, sew, grouping, VTA::No, VMA::No);
     return true;
 }
 
@@ -1275,6 +1237,7 @@ biscuit::GPR Recompiler::lea(ZydisDecodedOperand* operand) {
 
     // Address override prefix
     if (instruction.address_width == 32 && !g_mode32) {
+        WARN("Address size override prefix in 64-bit mode?");
         zext(address, address, X86_SIZE_DWORD);
     }
 
@@ -1322,6 +1285,7 @@ void Recompiler::writebackDirtyState() {
     for (int i = 0; i < 16; i++) {
         x86_ref_e ref = (x86_ref_e)(X86_REF_XMM0 + i);
         if (getMetadata(ref).dirty) {
+            // TODO: can we group multiple registers if adjacent ones need to be written
             setVectorState(SEW::E64, maxVlen() / 64);
             as.ADDI(address, threadStatePointer(), offsetof(ThreadState, xmm) + i * 16);
             as.VSE64(allocatedVec(ref), address);
@@ -1331,10 +1295,6 @@ void Recompiler::writebackDirtyState() {
 
     if (getMetadata(X86_REF_CF).dirty) {
         as.SB(allocatedGPR(X86_REF_CF), offsetof(ThreadState, cf), threadStatePointer());
-    }
-
-    if (getMetadata(X86_REF_AF).dirty) {
-        as.SB(allocatedGPR(X86_REF_AF), offsetof(ThreadState, af), threadStatePointer());
     }
 
     if (getMetadata(X86_REF_ZF).dirty) {
@@ -1420,6 +1380,20 @@ void Recompiler::scanFlagUsageAhead(HostAddress rip) {
         bool is_call = mnemonic == ZYDIS_MNEMONIC_CALL;
         bool is_illegal = mnemonic == ZYDIS_MNEMONIC_UD2;
         bool is_hlt = mnemonic == ZYDIS_MNEMONIC_HLT;
+
+        if (!g_safe_flags && !g_paranoid) {
+            if (is_call || is_ret) {
+                // Pretend that the call changes the flags so that we don't calculate the flags
+                // This is most often the case so it's a good optimization.
+                flag_access_cpazso[0].push_back({true, rip});
+                flag_access_cpazso[1].push_back({true, rip});
+                flag_access_cpazso[2].push_back({true, rip});
+                flag_access_cpazso[3].push_back({true, rip});
+                flag_access_cpazso[4].push_back({true, rip});
+                flag_access_cpazso[5].push_back({true, rip});
+                break;
+            }
+        }
 
         if (instruction.attributes & ZYDIS_ATTRIB_CPUFLAG_ACCESS) {
             u32 changed =
@@ -1550,25 +1524,29 @@ void Recompiler::updateOverflowAdd(biscuit::GPR lhs, biscuit::GPR rhs, biscuit::
 }
 
 void Recompiler::updateAuxiliaryAdd(biscuit::GPR lhs, biscuit::GPR result) {
-    biscuit::GPR af = flagW(X86_REF_AF);
+    biscuit::GPR af = scratch();
     biscuit::GPR temp = scratch();
     as.ANDI(af, result, 0xF);
     as.ANDI(temp, lhs, 0xF);
     as.SLTU(af, af, temp);
+    as.SB(af, offsetof(ThreadState, af), threadStatePointer());
+    popScratch();
     popScratch();
 }
 
 void Recompiler::updateAuxiliarySub(biscuit::GPR lhs, biscuit::GPR rhs) {
-    biscuit::GPR af = flagW(X86_REF_AF);
+    biscuit::GPR af = scratch();
     biscuit::GPR temp = scratch();
     as.ANDI(af, rhs, 0xF);
     as.ANDI(temp, lhs, 0xF);
     as.SLTU(af, temp, af);
+    as.SB(af, offsetof(ThreadState, af), threadStatePointer());
+    popScratch();
     popScratch();
 }
 
 void Recompiler::updateAuxiliaryAdc(biscuit::GPR lhs, biscuit::GPR result, biscuit::GPR cf, biscuit::GPR result_2) {
-    biscuit::GPR af = flagW(X86_REF_AF);
+    biscuit::GPR af = scratch();
     biscuit::GPR temp = scratch();
     as.ANDI(af, result, 0xF);
     as.ANDI(temp, lhs, 0xF);
@@ -1576,11 +1554,13 @@ void Recompiler::updateAuxiliaryAdc(biscuit::GPR lhs, biscuit::GPR result, biscu
     as.ANDI(temp, result_2, 0xF);
     as.SLTU(temp, temp, cf);
     as.OR(af, af, temp);
+    as.SB(af, offsetof(ThreadState, af), threadStatePointer());
+    popScratch();
     popScratch();
 }
 
 void Recompiler::updateAuxiliarySbb(biscuit::GPR lhs, biscuit::GPR rhs, biscuit::GPR result, biscuit::GPR cf) {
-    biscuit::GPR af = flagW(X86_REF_AF);
+    biscuit::GPR af = scratch();
     biscuit::GPR temp = scratch();
     as.ANDI(af, rhs, 0xF);
     as.ANDI(temp, lhs, 0xF);
@@ -1588,6 +1568,8 @@ void Recompiler::updateAuxiliarySbb(biscuit::GPR lhs, biscuit::GPR rhs, biscuit:
     as.ANDI(temp, result, 0xF);
     as.SLTU(temp, temp, cf);
     as.OR(af, af, temp);
+    as.SB(af, offsetof(ThreadState, af), threadStatePointer());
+    popScratch();
     popScratch();
 }
 
@@ -2011,6 +1993,40 @@ void Recompiler::readMemory(biscuit::GPR dest, biscuit::GPR address, i64 offset,
     }
 
     readMemoryNoBase(dest, address, offset, size);
+}
+
+void Recompiler::readMemoryVectorNoBase(biscuit::Vec vec, biscuit::GPR address, int size) {
+    switch (size) {
+    case 8: {
+        setVectorState(SEW::E8, 1);
+        as.VLE8(vec, address); // These won't need to be patched as they can't be unaligned
+        break;
+    }
+    case 16: {
+        setVectorState(SEW::E8, 2);
+        as.VLE8(vec, address);
+        break;
+    }
+    case 32: {
+        setVectorState(SEW::E8, 4);
+        as.VLE8(vec, address);
+        break;
+    }
+    case 64: {
+        setVectorState(SEW::E8, 8);
+        as.VLE8(vec, address);
+        break;
+    }
+    case 128: {
+        setVectorState(SEW::E8, 16);
+        as.VLE8(vec, address);
+        break;
+    }
+    default: {
+        UNREACHABLE();
+        break;
+    }
+    }
 }
 
 void Recompiler::readMemoryNoBase(biscuit::GPR dest, biscuit::GPR address, i64 offset, x86_size_e size) {

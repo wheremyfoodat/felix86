@@ -1,8 +1,9 @@
 #pragma once
 
-#include <array>
 #include <csignal>
 #include "felix86/common/address.hpp"
+#include "felix86/common/log.hpp"
+#include "felix86/common/shared_memory.hpp"
 #include "felix86/common/utility.hpp"
 
 #ifndef SA_NODEFER
@@ -15,7 +16,47 @@ struct RegisteredSignal {
     int flags = 0;
 };
 
-using SignalHandlerTable = std::array<RegisteredSignal, 64>;
+struct SignalHandlerTable {
+    SignalHandlerTable(const SignalHandlerTable& other) = delete;
+    SignalHandlerTable& operator=(const SignalHandlerTable& other) = delete;
+    SignalHandlerTable(SignalHandlerTable&& other) = delete;
+    SignalHandlerTable& operator=(SignalHandlerTable&& other) = delete;
+
+    // Allocate the signal handler table in shared memory and return a pointer
+    static SignalHandlerTable* Create(SharedMemory& memory, SignalHandlerTable* copy) {
+        SignalHandlerTable* table = (SignalHandlerTable*)memory.allocate(sizeof(SignalHandlerTable));
+        new (table) SignalHandlerTable();
+        if (copy) {
+            table->copy(copy);
+        }
+        return table;
+    }
+
+    RegisteredSignal* getRegisteredSignal(int sig) {
+        sig -= 1;
+        ASSERT(sig >= 0 && sig <= 63);
+        return &table[sig];
+    }
+
+    void registerSignal(int sig, GuestAddress func, sigset_t mask, int flags) {
+        sig -= 1;
+        ASSERT(sig >= 0 && sig <= 63);
+        table[sig].flags = flags;
+        table[sig].mask = mask;
+        table[sig].func = func;
+    }
+
+private:
+    SignalHandlerTable() = default;
+
+    void copy(SignalHandlerTable* copy) {
+        for (int i = 0; i < 64; i++) {
+            table[i] = copy->table[i];
+        }
+    }
+
+    RegisteredSignal table[64];
+};
 
 struct BlockMetadata;
 
@@ -45,6 +86,8 @@ struct Signals {
     // So we want the signal handler to return here. So the address we give it is to a thunk that jumps here.
     static void sigreturn(ThreadState* state);
 
+    static int sigsuspend(ThreadState* state, sigset_t* mask);
+
     // Our recompiler checks guest addresses using an unordered_map to get the host address with the recompiled piece of code
     // Signal handlers return to an address the kernel pushes to the stack, which calls ra_sigreturn and all that.
     // We obviously can't call sigreturn because x86-64 and RISC-V are different. So we need a function that achieves the same result.
@@ -55,6 +98,6 @@ struct Signals {
         return HostAddress(0x1F00'0000'0000'0000);
     }
 
-    static void setupFrame(BlockMetadata* current_block, GuestAddress rip, uint64_t pc, ThreadState* state, sigset_t new_mask, const u64* host_gprs,
-                           const XmmReg* host_vecs, bool use_altstack, bool in_jit_code, siginfo_t* host_siginfo);
+    static void setupFrame(uint64_t pc, ThreadState* state, sigset_t new_mask, const u64* host_gprs, const XmmReg* host_vecs, bool use_altstack,
+                           bool in_jit_code, siginfo_t* host_siginfo);
 };

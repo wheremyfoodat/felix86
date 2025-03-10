@@ -52,9 +52,11 @@ set(FELIX86_COMMON_SOURCES
 
 set(FELIX86_HLE_SOURCES
     src/felix86/hle/cpuid.cpp
+    src/felix86/hle/libgl_guest_ptrs.cpp
     src/felix86/hle/signals.cpp
     src/felix86/hle/syscall.cpp
     src/felix86/hle/thread.cpp
+    src/felix86/hle/thunks.cpp
 )
 
 set(FELIX86_V2_SOURCES
@@ -92,6 +94,11 @@ add_executable(felix86)
 target_sources(felix86 PRIVATE src/felix86/launcher.cpp src/felix86/common/info.cpp)
 target_include_directories(felix86 PUBLIC ${FELIX86_INCLUDES})
 target_link_libraries(felix86 biscuit git_version)
+
+if (BUILD_THUNKGEN)
+    add_executable(felix86_thunkgen src/felix86/hle/guest_libs/generator.cpp)
+    target_include_directories(felix86_thunkgen PRIVATE src/felix86/hle)
+endif()
 
 if (BUILD_TESTS)
     set(FELIX86_TEST_SOURCES

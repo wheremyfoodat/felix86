@@ -13,6 +13,7 @@
 #include "felix86/common/info.hpp"
 #include "felix86/common/log.hpp"
 #include "felix86/emulator.hpp"
+#include "felix86/hle/thunks.hpp"
 
 #if !defined(__riscv)
 #pragma message("You are compiling for x86-64, felix86 should only be compiled for RISC-V, are you sure you want to do this?")
@@ -162,6 +163,12 @@ int main(int argc, char* argv[]) {
     }
     Signals::initialize();
 
+    static bool initialized = false;
+    if (g_thunking && !initialized) {
+        initialized = true;
+        Thunks::initialize();
+    }
+
     bool purposefully_empty = false;
     const char* env_file = getenv("FELIX86_ENV_FILE");
     if (env_file) {
@@ -195,6 +202,8 @@ int main(int argc, char* argv[]) {
 
         // Dont pass these to the executable itself
         if (env.find("FELIX86_") != std::string::npos) {
+            it = config.envp.erase(it);
+        } else if (env.find("LD_LIBRARY_PATH") != std::string::npos) {
             it = config.envp.erase(it);
         } else {
             it++;

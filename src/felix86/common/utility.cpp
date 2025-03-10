@@ -472,11 +472,13 @@ void update_symbols() {
             if (!std::filesystem::is_regular_file(buffer)) {
                 // Not a regular file, either a library outside the chroot or something like
                 // /dev/zero, so we don't add it
+                VERBOSE("Buffer: %s is not regular file", buffer);
                 continue;
             }
 
             auto it = regions.find(buffer);
             if (it == regions.end() && Elf::Peek(buffer) == Elf::PeekResult::NotElf) {
+                VERBOSE("Buffer: %s is not an ELF", buffer);
                 continue;
             }
 
@@ -486,6 +488,7 @@ void update_symbols() {
             }
 
             if (it == regions.end()) {
+                VERBOSE("Adding new mapping: %s", buffer);
                 regions[buffer] = {UINT64_MAX, 0};
             }
 
@@ -494,8 +497,10 @@ void update_symbols() {
             u64 new_end = std::max(region.second, end);
             region.first = new_start;
             region.second = new_end;
+            VERBOSE("Mapping %s extended: %lx-%lx", buffer, new_start, new_end);
         } else {
             // Failed to parse, is not a map line with a path, skip
+            VERBOSE("While reading mappings, failed to parse line: %s", line.c_str());
         }
     }
 
@@ -588,6 +593,7 @@ std::string get_perf_symbol(u64 address) {
 }
 
 void print_address(u64 address) {
+    update_symbols();
     auto lock = g_process_globals.symbols_lock.lock();
 
     bool found = false;
@@ -634,20 +640,9 @@ void print_address(u64 address) {
     const char* symbol_str = symbol ? symbol->name.c_str() : nullptr;
     std::string symbol_trunc;
     if (symbol_str) {
-        // 16 for each hex number at most
-        // 4 for " in "
-        // 8 more for the parentheses stuff and other characters
-        i64 max_size = 16 + 4 + filename.size() + 8 + 16;
-        max_size = w.ws_col - max_size;
-        max_size -= 8; // give it some extra breathing room too
-
-        if (max_size < 10) {
-            // If we have fewer than 10 characters, the user is just messing around with a tiny terminal or idk
-            // Let's just not truncate it.
-            symbol_trunc = symbol_str;
-        } else {
-            symbol_trunc = symbol_str;
-            symbol_trunc = symbol_trunc.substr(0, max_size);
+        symbol_trunc = symbol_str;
+        if (symbol_trunc.size() > 40) {
+            symbol_trunc = symbol_trunc.substr(0, 39);
             symbol_trunc += "...";
         }
     }
@@ -801,7 +796,25 @@ const char* print_exit_reason(int reason) {
         return "Exit syscall";
     case EXIT_REASON_EXIT_GROUP_SYSCALL:
         return "Exit group syscall";
+    case EXIT_REASON_FRAME_STACK_OVERFLOW:
+        return "Frame stack overflow";
+    case EXIT_REASON_SIGRETURN:
+        return "Sigreturn";
     }
 
     return "Unknown";
+}
+
+void felix86_fsin(ThreadState* state) {
+    double boop;
+    memcpy(&boop, &state->fp[state->fpu_top], sizeof(double));
+    double result = ::sin(boop);
+    memcpy(&state->fp[state->fpu_top], &result, sizeof(double));
+}
+
+void felix86_fcos(ThreadState* state) {
+    double boop;
+    memcpy(&boop, &state->fp[state->fpu_top], sizeof(double));
+    double result = ::cos(boop);
+    memcpy(&state->fp[state->fpu_top], &result, sizeof(double));
 }

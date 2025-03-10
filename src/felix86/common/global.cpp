@@ -24,6 +24,7 @@ bool g_extensions_manually_specified = false;
 bool g_calltrace = false;
 bool g_use_block_cache = true;
 bool g_single_step = false;
+bool g_safe_flags = true;
 bool g_dont_protect_pages = false;
 bool g_print_all_calls = false;
 bool g_no_sse2 = false;
@@ -38,8 +39,11 @@ int g_block_trace = 0;
 bool g_mode32 = false;
 bool g_rsb = true;
 bool g_perf = false;
+bool g_thunking = false;
 bool g_always_tso = false;
+bool g_dont_cache = false;
 bool g_dont_link_indirect = true; // doesn't seem to impact performance from limited testing, so off by default
+int g_vlen = 0;
 std::atomic_bool g_symbols_cached = {false};
 u64 g_initial_brk = 0;
 u64 g_current_brk = 0;
@@ -102,9 +106,12 @@ bool is_running_under_perf() {
     return false;
 }
 
-void ProcessGlobals::initialize() {
-    // Open a new shared memory region
+ProcessGlobals::ProcessGlobals() {
     memory = std::make_unique<SharedMemory>(shared_memory_size);
+}
+
+void ProcessGlobals::initialize() {
+    // Re-initialize these
     states_lock = ProcessLock(*memory);
     symbols_lock = ProcessLock(*memory);
 
@@ -227,6 +234,12 @@ void initialize_globals() {
         environment += "\nFELIX86_QUIET";
     }
 
+    const char* unsafe_flags = getenv("FELIX86_UNSAFE_FLAGS");
+    if (is_truthy(unsafe_flags)) {
+        g_safe_flags = false;
+        environment += "\nFELIX86_UNSAFE_FLAGS";
+    }
+
     const char* dump_regs_env = getenv("FELIX86_DUMP_REGS");
     if (dump_regs_env) {
         g_dump_regs = true;
@@ -249,6 +262,12 @@ void initialize_globals() {
             g_rootfs_path = rootfs_path;
             environment += "\nFELIX86_ROOTFS_PATH=" + std::string(rootfs_path);
         }
+    }
+
+    const char* thunk_env = getenv("FELIX86_THUNKING");
+    if (is_truthy(thunk_env)) {
+        g_thunking = true;
+        environment += "\nFELIX86_THUNKING";
     }
 
     const char* calltrace_env = getenv("FELIX86_CALLTRACE");
@@ -327,6 +346,13 @@ void initialize_globals() {
         environment += "\nFELIX86_DONT_USE_BLOCK_CACHE";
     }
 
+    const char* dont_cache = getenv("FELIX86_DONT_CACHE");
+    if (is_truthy(dont_cache)) {
+        g_dont_cache = true;
+        g_dont_protect_pages = true;
+        environment += "\nFELIX86_DONT_CACHE";
+    }
+
     const char* log_file = getenv("FELIX86_LOG_FILE");
     if (log_file) {
         int fd = open(log_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -393,6 +419,8 @@ void initialize_globals() {
     if (!g_quiet && !environment.empty()) {
         LOG("Environment:%s", environment.c_str());
     }
+
+    g_vlen = biscuit::CPUInfo().GetVlenb() * 8;
 
     ThreadState::InitializeKey();
 }

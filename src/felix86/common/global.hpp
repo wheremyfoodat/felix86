@@ -30,6 +30,7 @@ struct Symbol {
 // Globals that are shared across processes, including threads, that have CLONE_VM set.
 // This means they share the same memory space, which means access needs to be synchronized.
 struct ProcessGlobals {
+    ProcessGlobals();
     void initialize(); // If a clone happens without CLONE_VM, these need to be reinitialized.
 
     std::unique_ptr<SharedMemory> memory{};
@@ -43,7 +44,7 @@ struct ProcessGlobals {
     std::map<u64, Symbol> symbols{};
 
 private:
-    constexpr static size_t shared_memory_size = 0x1000;
+    constexpr static size_t shared_memory_size = 0x10000;
 };
 
 extern ProcessGlobals g_process_globals;
@@ -64,6 +65,7 @@ extern bool g_single_step;
 extern bool g_log_instructions;
 extern bool g_dont_protect_pages;
 extern bool g_print_all_calls;
+extern bool g_safe_flags;
 extern int g_block_trace;
 extern bool g_no_sse2;
 extern bool g_no_sse3;
@@ -76,6 +78,9 @@ extern bool g_rsb;
 extern bool g_perf;
 extern bool g_min_max_accurate;
 extern bool g_always_tso;
+extern bool g_thunking;
+extern bool g_dont_cache;
+extern int g_vlen;
 extern std::atomic_bool g_symbols_cached;
 extern u64 g_initial_brk;
 extern u64 g_current_brk;

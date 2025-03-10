@@ -67,3 +67,38 @@ FAST_HANDLE(FSUB) {
 FAST_HANDLE(FSUBP) {
     OP(&Assembler::FSUB_D, rec, as, instruction, operands, true);
 }
+
+FAST_HANDLE(FSQRT) {
+    biscuit::GPR top = rec.getTOP();
+    biscuit::FPR st0 = rec.getST(top, 0);
+    as.FSQRT_D(st0, st0);
+    rec.setST(top, 0, st0);
+}
+
+FAST_HANDLE(FSIN) {
+    rec.writebackDirtyState();
+    rec.invalidStateUntilJump();
+
+    as.MV(a0, rec.threadStatePointer());
+    rec.call((u64)felix86_fsin);
+}
+
+FAST_HANDLE(FCOS) {
+    rec.writebackDirtyState();
+    rec.invalidStateUntilJump();
+
+    as.MV(a0, rec.threadStatePointer());
+    rec.call((u64)felix86_fcos);
+}
+
+FAST_HANDLE(FPREM) {
+    WARN("Unhandled instruction FPREM, no operation");
+}
+
+FAST_HANDLE(FNSTENV) {
+    WARN("Unhandled instruction FNSTENV, no operation");
+}
+
+FAST_HANDLE(FNSTSW) {
+    WARN("Unhandled instruction FNSTSW, no operation");
+}

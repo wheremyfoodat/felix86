@@ -716,10 +716,15 @@ void Elf::AddSymbols(std::map<u64, Symbol>& symbols, const std::filesystem::path
                 const char* symbol = string_table.data() + index;
                 if (elf_symbols[i]->address() == 0 || elf_symbols[i]->type() != STT_FUNC) {
                     // We don't care about this symbol
+                    VERBOSE("Skipping symbol %s (address: %lx)", symbol, elf_symbols[i]->address());
                     continue;
                 }
 
-                u64 address = (u64)start_of_data + elf_symbols[i]->address();
+                u64 address = elf_symbols[i]->address();
+                if (ehdr.type() != ET_EXEC) {
+                    // Position independent code (I think this is correct)
+                    address += (u64)start_of_data;
+                }
                 u64 size = elf_symbols[i]->size();
                 u64 end = address + size;
                 int status;
@@ -734,6 +739,7 @@ void Elf::AddSymbols(std::map<u64, Symbol>& symbols, const std::filesystem::path
 
                 // For finding with lower_bound
                 symbols[end - 1] = new_symbol;
+                // VERBOSE("Added new static symbol `%s` at %lx-%lx", new_symbol.name.c_str(), new_symbol.start, new_symbol.start + new_symbol.size);
             }
         } else {
             VERBOSE("symtab and strtab not found for file %s", path.c_str());
@@ -827,6 +833,7 @@ void Elf::AddSymbols(std::map<u64, Symbol>& symbols, const std::filesystem::path
                 }
 
                 if (elf_symbol.address() == 0) { // not yet resolved? skip
+                    // VERBOSE("Found symbol %s but address is 0?", symbol);
                     continue;
                 }
 
@@ -850,7 +857,7 @@ void Elf::AddSymbols(std::map<u64, Symbol>& symbols, const std::filesystem::path
                 }
 
                 symbols[end - 1] = new_symbol;
-                VERBOSE("Added new dynamic symbol `%s` at %lx", new_symbol.name.c_str(), new_symbol.start);
+                // VERBOSE("Added new dynamic symbol `%s` at %lx-%lx", new_symbol.name.c_str(), new_symbol.start, new_symbol.start + new_symbol.size);
             }
         } else {
             VERBOSE("symtab > start_of_data && (u8*)strtab > start_of_data failed: %p > %p && %p > %p", symtab, start_of_data, strtab, start_of_data);

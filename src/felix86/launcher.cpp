@@ -6,6 +6,7 @@
 #include <linux/limits.h>
 #include <spawn.h>
 #include <sys/mount.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include "biscuit/cpuinfo.hpp"
@@ -26,20 +27,6 @@
         }                                                                                                                                            \
     } while (false)
 
-std::filesystem::path find_lib(const std::filesystem::path& lib) {
-#define CHECK(dir)                                                                                                                                   \
-    if (std::filesystem::exists(dir / lib)) {                                                                                                        \
-        return dir / lib;                                                                                                                            \
-    }
-
-    CHECK("/lib64")
-    CHECK("/usr/lib")
-    CHECK("/lib")
-    CHECK("/lib/riscv64-linux-gnu")
-
-    return "";
-}
-
 std::vector<std::string> mounts;
 
 void mountme(const char* path, const std::filesystem::path& dest, const char* fs_type, unsigned flags = 0) {
@@ -54,23 +41,23 @@ void mountme(const char* path, const std::filesystem::path& dest, const char* fs
     mounts.push_back(dest);
 }
 
-void copy_lib(const std::filesystem::path& lib, const std::filesystem::path& dest) {
-    if (std::filesystem::exists(dest / lib)) {
-        // Already there
-        return;
-    }
+// void copy_lib(const std::filesystem::path& lib, const std::filesystem::path& dest) {
+//     if (std::filesystem::exists(dest / lib)) {
+//         // Already there
+//         return;
+//     }
 
-    std::filesystem::path full_path = find_lib(lib);
-    if (full_path.empty()) {
-        ERROR("Library not found: %s", lib.c_str());
-    }
+//     std::filesystem::path full_path = find_lib(lib);
+//     if (full_path.empty()) {
+//         ERROR("Library not found: %s", lib.c_str());
+//     }
 
-    std::error_code ec;
-    std::filesystem::copy(full_path, dest / lib, ec);
-    if (ec) {
-        ERROR("Error while copying %s: %s", ec.message().c_str(), full_path.c_str());
-    }
-}
+//     std::error_code ec;
+//     std::filesystem::copy(full_path, dest / lib, ec);
+//     if (ec) {
+//         ERROR("Error while copying %s: %s", ec.message().c_str(), full_path.c_str());
+//     }
+// }
 
 void copy_recursive(const char* dir_cstr, const std::filesystem::path& dest) {
     std::filesystem::path dir = dir_cstr;
@@ -209,15 +196,20 @@ int main(int argc, const char** argv) {
     const std::filesystem::path rootfs = rootfs_env;
     const std::filesystem::path libpath = rootfs / "felix86" / "lib";
     const std::filesystem::path felix_jit_path = current_path.parent_path() / "felix86_jit";
+    ASSERT(std::filesystem::exists(felix_jit_path), "I couldn't find the `felix86_jit` executable, is it in the same directory as `felix86`?");
 
     // Copy every time to make rebuilding less painful
-    std::filesystem::create_directories(rootfs / "felix86" / "lib");
+    std::filesystem::create_directories(libpath);
+    chmod(libpath.c_str(), 0777);
     std::filesystem::copy(felix_jit_path, rootfs / "felix86", std::filesystem::copy_options::overwrite_existing);
-    copy_lib("libstdc++.so.6", libpath);
-    copy_lib("libm.so.6", libpath);
-    copy_lib("libgcc_s.so.1", libpath);
-    copy_lib("libc.so.6", libpath);
-    copy_lib("ld-linux-riscv64-lp64d.so.1", libpath);
+
+    // These are the necessary libraries for felix86_jit. However, instead of copying them
+    // we are just gonna mount /usr/lib
+    // copy_lib("libstdc++.so.6", libpath);
+    // copy_lib("libm.so.6", libpath);
+    // copy_lib("libgcc_s.so.1", libpath);
+    // copy_lib("libc.so.6", libpath);
+    // copy_lib("ld-linux-riscv64-lp64d.so.1", libpath);
 
     copy_recursive("/var/lib/dbus", rootfs / "var" / "lib" / "dbus");
     copy_recursive("/etc/mtab", rootfs / "etc" / "mtab");
@@ -241,7 +233,8 @@ int main(int argc, const char** argv) {
         mountme("udev", rootfs / "dev", "devtmpfs");
         mountme("devpts", rootfs / "dev/pts", "devpts");
         mountme("/run", rootfs / "run", "none", MS_BIND | MS_REC);
-        mountme("/tmp", rootfs / "tmp", "none", MS_BIND); // mounting it for perf
+        mountme("/tmp", rootfs / "tmp", "none", MS_BIND);       // mounting it for perf (the profiler)
+        mountme("/usr/lib", libpath, "none", MS_BIND | MS_REC); // mount /usr/lib (host) to /felix86/lib (in rotfs)
 
         int fd = open(has_mounted_var_path.c_str(), O_CREAT | O_EXCL, 0666);
         if (fd == -1) {
@@ -321,7 +314,7 @@ int main(int argc, const char** argv) {
     jit_args.push_back(nullptr);
 
     constexpr static const char* launched = "__FELIX86_LAUNCHED=1";
-    constexpr static const char* ld_lib_path = "LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/felix86/lib";
+    constexpr static const char* ld_lib_path = "LD_LIBRARY_PATH=/felix86/lib:/felix86/lib/riscv64-linux-gnu";
     char** environ_copy = environ;
     std::vector<const char*> jit_envs;
     while (*environ_copy) {

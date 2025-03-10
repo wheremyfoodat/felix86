@@ -24,6 +24,13 @@
 // We add felix86_${ARCH}_ in front of the linux related identifiers to avoid
 // naming conflicts
 
+struct x86_sigaction {
+    void (*handler)(int, siginfo_t*, void*);
+    u64 sa_flags;
+    void (*restorer)(void);
+    sigset_t sa_mask;
+};
+
 #define felix86_x86_64_ARCH_SET_GS 0x1001
 #define felix86_x86_64_ARCH_SET_FS 0x1002
 #define felix86_x86_64_ARCH_GET_FS 0x1003
@@ -849,19 +856,69 @@ void felix86_syscall(ThreadState* state) {
         break;
     }
     case felix86_x86_64_mmap: {
-        result = HOST_SYSCALL(mmap, rdi, rsi, rdx, r10, r8, r9);
-        STRACE("mmap(%p, %016lx, %d, %d, %d, %d) = %016lx", (void*)rdi, rsi, (int)rdx, (int)r10, (int)r8, (int)r9, (u64)result);
-
         if ((int)r8 != -1) {
             // uses file descriptor, mmaps file to memory, may need to update mappings
             // this can occur when using something like dlopen or when the interpreter initially loads the symbols
             g_symbols_cached = false;
         }
+
+#ifndef MAP_32BIT
+#define MAP_32BIT 0x40
+#endif
+        u64 flags = r10;
+        if ((flags & MAP_32BIT) && !(flags & MAP_FIXED)) {
+            // This flag is x86 only but we need to emulate it
+            // For example, Mono tries to use it to allocate code cache pages near the executable so that it can use
+            // +-2GiB jumps. If it doesn't get them near enough it will eventually crash and die.
+            if (rdi == 0) {
+                // TODO: better less hacky support
+                // We only wanna act in the case there's no hint, otherwise we don't care?
+                r10 &= ~MAP_32BIT;
+                u64 new_flags = r10 | MAP_FIXED_NOREPLACE;
+                u64 aligned_size = (rsi + 0x1000) & ~0xFFF;
+                // MAP_32BIT allocates in the first 2 GiB of memory
+                u64 bottom = 0x4000'0000 - aligned_size;
+                int attempts = (0x4000'0000 / aligned_size) - 1;
+                bool ok = false;
+                while (true) {
+                    LOG("Attemping at: %lx with size %lx", bottom, rsi);
+                    result = HOST_SYSCALL(mmap, bottom, aligned_size, rdx, new_flags, r8, r9);
+
+                    if ((i64)result > 0) {
+                        ok = true;
+                        LOG("Returning mapped region with MAP_32BIT: %lx", (u64)result);
+                        break;
+                    }
+
+                    bottom -= aligned_size;
+
+                    if (attempts-- == 0) {
+                        WARN("Ran out of attempts while allocating with MAP32_BIT, we might crash");
+                        break;
+                    }
+                }
+
+                if (ok) {
+                    break;
+                }
+            } else {
+                WARN("MAP32_BIT with hint: %lx?", rdi);
+                flags |= MAP_FIXED_NOREPLACE; // <= at least fix it so it obeys the hint
+            }
+        }
+
+        result = HOST_SYSCALL(mmap, rdi, rsi, rdx, flags, r8, r9);
+        STRACE("mmap(%p, %016lx, %d, %d, %d, %d) = %016lx", (void*)rdi, rsi, (int)rdx, (int)flags, (int)r8, (int)r9, (u64)result);
         break;
     }
     case felix86_x86_64_munmap: {
         result = HOST_SYSCALL(munmap, rdi, rsi);
         STRACE("munmap(%p, %016lx) = %016lx", (void*)rdi, rsi, (u64)result);
+        break;
+    }
+    case felix86_x86_64_setitimer: {
+        result = HOST_SYSCALL(setitimer, rdi, rsi, rdx);
+        STRACE("setitimer(%d, %p, %p) = %d", (int)rdi, (void*)rdi, (void*)rsi, (int)result);
         break;
     }
     case felix86_x86_64_getuid: {
@@ -1081,11 +1138,15 @@ void felix86_syscall(ThreadState* state) {
         break;
     }
     case felix86_x86_64_rt_sigaction: {
-        struct sigaction* act = (struct sigaction*)rsi;
+        struct x86_sigaction* act = (struct x86_sigaction*)rsi;
         if (act) {
-            bool sigaction = act->sa_flags & SA_SIGINFO;
-            void* handler = sigaction ? (void*)act->sa_sigaction : (void*)act->sa_handler;
+            auto handler = act->handler;
             Signals::registerSignalHandler(state, rdi, GuestAddress{(u64)handler}, act->sa_mask, act->sa_flags);
+            if (g_verbose) {
+                printf("Installed signal handler %s at:\n", strsignal(rdi));
+                print_address((u64)handler);
+                printf("Flags: %lx\n", act->sa_flags);
+            }
         }
 
         struct sigaction* old_act = (struct sigaction*)rdx;
@@ -1117,6 +1178,7 @@ void felix86_syscall(ThreadState* state) {
         break;
     }
     case felix86_x86_64_sigaltstack: {
+        VERBOSE("----- sigaltstack was called -----");
         stack_t host_stack; // save old stack here while we check if guest stack is valid
         stack_t* guest_stack = (stack_t*)rdi;
         stack_t guest_stack_copy = *guest_stack;
@@ -1129,6 +1191,7 @@ void felix86_syscall(ThreadState* state) {
         ASSERT(result_must == 0);
 
         if (result_temp != 0) {
+            WARN("Failed to set sigaltstack");
             result = result_temp;
             break;
         }
@@ -1136,16 +1199,16 @@ void felix86_syscall(ThreadState* state) {
         stack_t* new_ss = (stack_t*)rdi;
         stack_t* old_ss = (stack_t*)rsi;
 
-        if (new_ss) {
-            state->alt_stack.ss_sp = new_ss->ss_sp;
-            state->alt_stack.ss_flags = new_ss->ss_flags;
-            state->alt_stack.ss_size = new_ss->ss_size;
-        }
-
         if (old_ss) {
             old_ss->ss_sp = state->alt_stack.ss_sp;
             old_ss->ss_flags = state->alt_stack.ss_flags;
             old_ss->ss_size = state->alt_stack.ss_size;
+        }
+
+        if (new_ss) {
+            state->alt_stack.ss_sp = new_ss->ss_sp;
+            state->alt_stack.ss_flags = new_ss->ss_flags;
+            state->alt_stack.ss_size = new_ss->ss_size;
         }
 
         result = 0;
@@ -1328,7 +1391,7 @@ void felix86_syscall(ThreadState* state) {
         }
         envp.push_back("__FELIX86_LAUNCHED=1");
         envp.push_back("__FELIX86_EXECVE=1");
-        envp.push_back("LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/felix86/lib");
+        envp.push_back("LD_LIBRARY_PATH=/felix86/lib");
         char** host_environ = environ;
         while (*host_environ) {
             std::string env = *host_environ;
@@ -1386,6 +1449,11 @@ void felix86_syscall(ThreadState* state) {
     case felix86_x86_64_getpeername: {
         result = HOST_SYSCALL(getpeername, rdi, (struct sockaddr*)rsi, (socklen_t*)rdx);
         STRACE("getpeername(%d, %p, %p) = %d", (int)rdi, (void*)rsi, (void*)rdx, (int)result);
+        break;
+    }
+    case felix86_x86_64_rt_sigsuspend: {
+        result = Signals::sigsuspend(state, (sigset_t*)rdi);
+        STRACE("rt_sigsuspend(%p, %d) = %d", (void*)rdi, (int)rsi, (int)result);
         break;
     }
     case felix86_x86_64_rt_sigprocmask: {
