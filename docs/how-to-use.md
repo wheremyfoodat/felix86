@@ -2,6 +2,8 @@
 
 :warning: felix86 is early in development. It can run some simple games. :warning:
 
+:warning: Currently the emulator is only tested on boards with **VLEN=256** :warning:
+
 ## Required architecture
 You need a RISC-V board with `rv64gv` extensions.
 
@@ -44,34 +46,6 @@ qemu-system-riscv64 \
 -drive file=ubuntu-24.04.1-preinstalled-server-riscv64.img,format=raw,if=virtio
 ```
 
-## Debugging
-Because felix86 needs to mount and chroot, it will ask for administrator privileges, which it will drop
-right after mounting. This means you need to run `gdb` as root.
-
-Example:
-```
-sudo -E gdb --args ./felix86 <my felix86 arguments>
-```
-
-Make sure sudo has the `-E` flag so environment variables are passed to felix86!
-
-If you want to force a program to run as admin, set `FELIX86_ALLOW_ROOT=1`
-
-## Profiling
-felix86 can emit JIT symbols for perf. felix86 will try to detect perf if it starts with it attached, but if you want to attach it later you need to set the `FELIX86_PERF` environment variable to `1`!
-
-Example:
-```
-sudo -E perf record -e cpu-clock ./felix86 <my felix86 arguments>
-```
-Or
-```
-# make sure FELIX86_PERF was set when running felix86
-perf record -e cpu-clock -p <felix86 pid> 
-```
-
-The generated perf.data may need administrator permissions to view, either `chmod` it or run `perf report` with sudo.
-
 ## RootFS
 
 felix86 requires an x86-64 "rootfs" which is the filesystem at the root directory on Linux.
@@ -94,7 +68,7 @@ Or, don't prepend the executable path with the rootfs path:
 
 By default, the host environment variables are passed to the executable.
 
-If an executable makes frequent use of the console, you may want to disable felix86's logging via the `-q` flag, or redirect it to a file via the `FELIX86_LOG_FILE` environment variable.
+You can find log files from runs of the emulator in `/tmp/felix86-XXXXXX.log`
 
 Use `--help` to view all the options.
 

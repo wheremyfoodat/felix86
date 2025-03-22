@@ -12,15 +12,21 @@
 // 16 gprs, 5 flags, 16 xmm registers
 constexpr u64 allocated_reg_count = 16 + 5 + 16;
 
-constexpr int block_cache_bits = 16;
+constexpr int address_cache_bits = 16;
 
 struct HandlerMetadata {
     HostAddress rip{};
     HostAddress block_start{};
 };
 
-struct BlockCacheEntry {
+struct AddressCacheEntry {
     HostAddress host{}, guest{};
+};
+
+enum class FlagMode {
+    Default,
+    AlwaysEmit,
+    NeverEmit,
 };
 
 // This struct is for indicating within a block at which points a register contains a value of a guest register,
@@ -101,11 +107,13 @@ struct Recompiler {
 
     void setRefGPR(x86_ref_e ref, x86_size_e size, biscuit::GPR reg);
 
+    void setRefGPR(ZydisRegister ref, x86_size_e size, biscuit::GPR reg) {
+        return setRefGPR(zydisToRef(ref), size, reg);
+    }
+
     void setRefVec(x86_ref_e ref, biscuit::Vec vec);
 
-    biscuit::GPR lea(ZydisDecodedOperand* operand);
-
-    biscuit::GPR leaAddBase(ZydisDecodedOperand* operand);
+    biscuit::GPR lea(ZydisDecodedOperand* operand, bool use_temp = true);
 
     void stopCompiling();
 
@@ -203,7 +211,7 @@ struct Recompiler {
             return biscuit::x18;
         }
         case X86_REF_RSI: {
-            return biscuit::x11; // a1
+            return biscuit::x11; // a1 -- TODO: one day match abi for 32-bit version also
         }
         case X86_REF_RDI: {
             return biscuit::x10; // a0
@@ -324,13 +332,9 @@ struct Recompiler {
 
     void readMemory(biscuit::GPR dest, biscuit::GPR address, i64 offset, x86_size_e size);
 
-    void readMemoryVectorNoBase(biscuit::Vec dest, biscuit::GPR address, int size);
+    void readMemory(biscuit::Vec dest, biscuit::GPR address, int size);
 
     void writeMemory(biscuit::GPR src, biscuit::GPR address, i64 offset, x86_size_e size);
-
-    void readMemoryNoBase(biscuit::GPR dest, biscuit::GPR address, i64 offset, x86_size_e size);
-
-    void writeMemoryNoBase(biscuit::GPR src, biscuit::GPR address, i64 offset, x86_size_e size);
 
     void repPrologue(Label* loop_end, biscuit::GPR rcx);
 
@@ -380,7 +384,7 @@ struct Recompiler {
         return g_mode32 ? 4 : 8;
     }
 
-    x86_size_e addressWidth() {
+    x86_size_e stackWidth() {
         return g_mode32 ? X86_SIZE_DWORD : X86_SIZE_QWORD;
     }
 
@@ -416,29 +420,49 @@ struct Recompiler {
         return unlink_indirect_thunk;
     }
 
+    u8* getSyscallThunk() {
+        return syscall_thunk;
+    }
+
     void clearCodeCache(ThreadState* state);
 
     void call(u64 target) {
         call(as, target);
     }
 
-    static void call(Assembler& as, u64 target) {
+    static void call(Assembler& as, u64 target, bool do_link = true) {
         i64 offset = target - (u64)as.GetCursorPointer();
         if (IsValidJTypeImm(offset)) {
-            as.JAL(offset);
+            if (do_link) {
+                as.JAL(offset);
+            } else {
+                as.J(offset);
+            }
         } else if (IsValid2GBImm(offset)) {
             const auto hi20 = static_cast<int32_t>(((static_cast<uint32_t>(offset) + 0x800) >> 12) & 0xFFFFF);
             const auto lo12 = static_cast<int32_t>(offset << 20) >> 20;
             as.AUIPC(t0, hi20);
-            as.JALR(ra, lo12, t0);
+            if (do_link) {
+                as.JALR(ra, lo12, t0);
+            } else {
+                as.JR(ra, lo12);
+            }
         } else {
             as.LI(t0, target);
-            as.JALR(t0);
+            if (do_link) {
+                as.JALR(t0);
+            } else {
+                as.JR(t0);
+            }
         }
     }
 
-    u8* getStartOfCodeCache() {
+    u8* getStartOfCodeCache() const {
         return (u8*)start_of_code_cache;
+    }
+
+    u8* getEndOfCodeCache() const {
+        return (u8*)as.GetCursorPointer();
     }
 
     static bool isXMM(x86_ref_e ref) {
@@ -507,6 +531,16 @@ struct Recompiler {
 
     void assumeLoaded();
 
+    void markDirty(x86_ref_e ref) {
+        auto& metadata = getMetadata(ref);
+        metadata.dirty = true;
+        metadata.loaded = true; // since the value is fresh it's as if we read it from memory
+    }
+
+    void setFlagMode(FlagMode mode) {
+        flag_mode = mode;
+    }
+
 private:
     struct RegisterMetadata {
         x86_ref_e reg;
@@ -530,6 +564,8 @@ private:
     void resetScratch();
 
     void emitDispatcher();
+
+    void emitSyscallThunk();
 
     void loadGPR(x86_ref_e reg, biscuit::GPR gpr);
 
@@ -568,6 +604,8 @@ private:
 
     u8* unlink_indirect_thunk{};
 
+    u8* syscall_thunk{};
+
     // 16 GPRS followed by 4 flags (CF,OF,ZF,SF) then 16 XMMs
     std::array<RegisterMetadata, 16 + 4 + 16> metadata{};
 
@@ -590,8 +628,6 @@ private:
 
     int rax_value = -1;
 
-    // TODO: replace this method of flag detection with 5 (4? remove AF) assemblers that emit flag calculations seperately.
-    // TODO: Then when a flag is used copy the instructions over from the equivalent assembler, reset it when overwritten
     std::array<std::vector<FlagAccess>, 6> flag_access_cpazso{};
 
     BlockMetadata* current_block_metadata{};
@@ -610,5 +646,9 @@ private:
 
     std::array<bool, 16> zexted_gprs; // gprs that have been set in 32-bit form, to avoid future zexts
 
-    std::array<BlockCacheEntry, 1 << block_cache_bits> block_cache{};
+    std::array<AddressCacheEntry, 1 << address_cache_bits> address_cache{};
+
+    FlagMode flag_mode = FlagMode::Default;
+
+    constexpr static std::array scratch_gprs = {x1, x6, x28, x29, x30, x31, x7};
 };

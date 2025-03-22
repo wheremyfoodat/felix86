@@ -7,84 +7,57 @@
 #include <linux/perf_event.h>
 #include <sys/mman.h>
 #include "biscuit/cpuinfo.hpp"
+#include "felix86/common/config.hpp"
+#include "felix86/common/gdbjit.hpp"
 #include "felix86/common/global.hpp"
+#include "felix86/common/info.hpp"
 #include "felix86/common/log.hpp"
+#include "felix86/common/overlay.hpp"
 #include "felix86/common/state.hpp"
 #include "felix86/hle/filesystem.hpp"
 #include "fmt/format.h"
 
 bool g_paranoid = false;
-bool g_verbose = false;
-bool g_quiet = false;
 bool g_testing = false;
-bool g_strace = false;
-bool g_dump_regs = false;
-bool g_dont_link = false;
 bool g_extensions_manually_specified = false;
-bool g_calltrace = false;
-bool g_use_block_cache = true;
-bool g_single_step = false;
-bool g_safe_flags = true;
-bool g_dont_protect_pages = true; // disabled by default until SMC is fixed and tested
 bool g_print_all_calls = false;
-bool g_no_sse2 = false;
-bool g_no_sse3 = false;
-bool g_no_ssse3 = false;
-bool g_no_sse4_1 = false;
-bool g_no_sse4_2 = false;
 bool g_print_all_insts = false;
-bool g_dont_inline_syscalls = false;
-bool g_min_max_accurate = false;
 int g_block_trace = 0;
 bool g_mode32 = false;
-bool g_rsb = false; // off by default until we fix stack overflow problems ie in Celeste (or probably similar apps with jit)
-bool g_perf = false;
 bool g_thunking = false;
-bool g_always_tso = false;
-bool g_dont_cache = false;
-bool g_dont_link_indirect = true; // doesn't seem to impact performance from limited testing, so off by default
 int g_vlen = 0;
 std::atomic_bool g_symbols_cached = {false};
 u64 g_initial_brk = 0;
 u64 g_current_brk = 0;
 u64 g_current_brk_size = 0;
+u64 g_max_brk_size = 0;
 u64 g_dispatcher_exit_count = 0;
-u64 g_address_space_base = 0;
 std::list<ThreadState*> g_thread_states{};
 std::unordered_map<u64, std::vector<u64>> g_breakpoints{}; // TODO: HostAddress
 pthread_key_t g_thread_state_key = -1;
 ProcessGlobals g_process_globals{};
+std::unique_ptr<Mapper> g_mapper{};
+std::unique_ptr<GDBJIT> g_gdbjit;
+u64 g_program_end;
 HostAddress g_guest_auxv{};
 size_t g_guest_auxv_size = 0;
 bool g_execve_process = false;
 std::unique_ptr<Filesystem> g_fs{};
-Config g_config{};
+std::string g_emulator_path;
+StartParameters g_params{};
 
-int g_output_fd = 1;
-std::filesystem::path g_rootfs_path{};
-u64 g_executable_base_hint = 0;
-u64 g_interpreter_base_hint = 0;
-u64 g_brk_base_hint = 0;
+// g_output_fd should be replaced upon connecting to the server, however if an error occurs before then we should at least log it
+int g_output_fd = STDERR_FILENO;
+int g_rootfs_fd = 0;
 
 HostAddress g_interpreter_start{};
 HostAddress g_interpreter_end{};
 HostAddress g_executable_start{};
 HostAddress g_executable_end{};
 
-bool is_truthy(const char* str) {
-    if (!str) {
-        return false;
-    }
-
-    std::string lower = str;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-    return lower == "true" || lower == "1" || lower == "yes" || lower == "on" || lower == "y" || lower == "enable";
-}
-
 bool is_running_under_perf() {
     // Always enable symbol emission when this is enabled, in case our detection fails
-    const char* perf_env = getenv("FELIX86_PERF");
-    if (is_truthy(perf_env)) {
+    if (g_config.perf) {
         return true;
     }
 
@@ -106,19 +79,46 @@ bool is_running_under_perf() {
     return false;
 }
 
-ProcessGlobals::ProcessGlobals() {
-    memory = std::make_unique<SharedMemory>(shared_memory_size);
+bool is_running_under_gdb() {
+    if (g_config.gdb) {
+        return true;
+    }
+
+    // Don't detect, only enable this when the environment variable is set
+    // int ppid = getppid();
+
+    // std::string line;
+    // std::ifstream ifs("/proc/" + std::to_string(ppid) + "/comm");
+    // if (!ifs) {
+    //     WARN("Failed to check if gdb is a parent process");
+    //     return false;
+    // }
+
+    // std::getline(ifs, line);
+
+    // if (line == "gdb") {
+    //     return true;
+    // }
+
+    return false;
 }
 
 void ProcessGlobals::initialize() {
+    // New address space (clone used without CLONE_VM)
     // Re-initialize these
-    states_lock = ProcessLock(*memory);
-    symbols_lock = ProcessLock(*memory);
+    states_lock = Semaphore();
+    symbols_lock = Semaphore();
 
     // Reset the states stored here
     states = {};
 
-    // Don't reset the mapped regions, we can reuse the ones from parent process
+    // Also reset our allocator
+    g_mapper = std::make_unique<Mapper>();
+
+    // And the GDB mappings
+    g_gdbjit = std::make_unique<GDBJIT>();
+
+    // Don't reset the /proc/self/maps mapped regions, we can reuse the ones from parent process
 }
 
 #define X(ext) bool Extensions::ext = false;
@@ -184,7 +184,11 @@ std::string get_extensions() {
 }
 
 void initialize_globals() {
-    std::string environment;
+    std::string environment = g_config.getEnvironment();
+
+    g_emulator_path.resize(PATH_MAX);
+    int read = readlink("/proc/self/exe", g_emulator_path.data(), PATH_MAX);
+    ASSERT(read != -1);
 
     // Check for FELIX86_EXTENSIONS environment variable
     const char* all_extensions_env = getenv("FELIX86_ALL_EXTENSIONS");
@@ -215,183 +219,77 @@ void initialize_globals() {
         }
     }
 
-    const char* strace_env = getenv("FELIX86_STRACE");
-    if (is_truthy(strace_env)) {
-        g_strace = true;
-        environment += "\nFELIX86_STRACE";
+    ASSERT_MSG(!g_config.rootfs_path.empty(), "Rootfs path is empty?");
+    if (g_config.rootfs_path.string().back() == '/') {
+        // User ended the path with '/', we need to remove it to make sure some of our comparisons
+        // on whether a path is inside the rootfs continue to work
+        g_config.rootfs_path = g_config.rootfs_path.string().substr(0, g_config.rootfs_path.string().size() - 1);
     }
+    ASSERT(std::filesystem::exists(g_config.rootfs_path));
+    ASSERT(std::filesystem::is_directory(g_config.rootfs_path));
+    g_rootfs_fd = open(g_config.rootfs_path.c_str(), O_DIRECTORY);
 
-    const char* verbose_env = getenv("FELIX86_VERBOSE");
-    if (is_truthy(verbose_env)) {
-        g_verbose = true;
-        environment += "\nFELIX86_VERBOSE";
-    }
+    const char* thunk_env = getenv("FELIX86_THUNKS");
+    if (thunk_env && !g_testing) {
+        std::filesystem::path thunks = thunk_env;
+        ASSERT_MSG(std::filesystem::exists(thunks), "The thunks path set with FELIX86_THUNKS %s does not exist", thunk_env);
+        std::string srootfs = g_config.rootfs_path.string();
+        ASSERT_MSG(thunks.string().find(srootfs.c_str()) == 0, "The thunks path set with FELIX86_THUNKS %s is not part of the rootfs (%s)", thunk_env,
+                   srootfs.c_str());
 
-    const char* quiet_env = getenv("FELIX86_QUIET");
-    if (is_truthy(quiet_env)) {
-        if (!g_testing)
-            g_quiet = true;
-        environment += "\nFELIX86_QUIET";
-    }
-
-    const char* unsafe_flags = getenv("FELIX86_UNSAFE_FLAGS");
-    if (is_truthy(unsafe_flags)) {
-        g_safe_flags = false;
-        environment += "\nFELIX86_UNSAFE_FLAGS";
-    }
-
-    const char* dump_regs_env = getenv("FELIX86_DUMP_REGS");
-    if (dump_regs_env) {
-        g_dump_regs = true;
-        environment += "\nFELIX86_DUMP_REGS";
-    }
-
-    const char* rootfs_path = getenv("FELIX86_ROOTFS");
-    if (rootfs_path) {
-        if (!g_rootfs_path.empty()) {
-            WARN("Rootfs overwritten by environment variable FELIX86_ROOTFS");
-        }
-        g_rootfs_path = rootfs_path;
-        environment += "\nFELIX86_ROOTFS=" + std::string(rootfs_path);
-    } else {
-        const char* rootfs_path = getenv("FELIX86_ROOTFS_PATH");
-        if (rootfs_path) {
-            if (!g_rootfs_path.empty()) {
-                WARN("Rootfs overwritten by environment variable FELIX86_ROOTFS_PATH");
-            }
-            g_rootfs_path = rootfs_path;
-            environment += "\nFELIX86_ROOTFS_PATH=" + std::string(rootfs_path);
-        }
-    }
-
-    const char* thunk_env = getenv("FELIX86_THUNKING");
-    if (is_truthy(thunk_env)) {
         g_thunking = true;
-        environment += "\nFELIX86_THUNKING";
-    }
+        environment += "\nFELIX86_THUNKS=";
+        environment += thunk_env;
 
-    const char* calltrace_env = getenv("FELIX86_CALLTRACE");
-    if (is_truthy(calltrace_env)) {
-        g_calltrace = true;
-        environment += "\nFELIX86_CALLTRACE";
-    }
+        // TODO: should probably not be done here?
+        std::filesystem::path glx_thunk;
+        bool found_glx = false;
 
-    const char* paranoid_env = getenv("FELIX86_PARANOID");
-    if (is_truthy(paranoid_env)) {
-        g_paranoid = true;
-        environment += "\nFELIX86_PARANOID";
-    }
+        auto check_glx = [&](const char* path) {
+            if (!found_glx && std::filesystem::exists(thunks / path)) {
+                glx_thunk = thunks / path;
+                found_glx = true;
+            }
+        };
 
-    const char* dont_rsb_env = getenv("FELIX86_RSB");
-    if (!is_truthy(dont_rsb_env)) {
-        g_rsb = true;
-        environment += "\nFELIX86_RSB";
-    }
+        check_glx("libGLX.so.0");
+        check_glx("libGLX.so");
+        check_glx("libGLX-thunked.so");
 
-    const char* min_max_accurate_env = getenv("FELIX86_MIN_MAX_ACCURATE");
-    if (is_truthy(min_max_accurate_env)) {
-        g_min_max_accurate = true;
-        environment += "\nFELIX86_MIN_MAX_ACCURATE";
+        if (!glx_thunk.empty()) {
+            Overlays::addOverlay("libGLX.so.0", glx_thunk);
+        } else {
+            WARN("I couldn't find libGLX-thunked.so in %s", thunks.c_str());
+        }
+
+        std::filesystem::path egl_thunk;
+        bool found_egl = false;
+
+        auto check_egl = [&](const char* path) {
+            if (!found_egl && std::filesystem::exists(thunks / path)) {
+                egl_thunk = thunks / path;
+                found_egl = true;
+            }
+        };
+
+        check_egl("libEGL.so.1");
+        check_egl("libEGL.so");
+        check_egl("libEGL-thunked.so");
+
+        if (!egl_thunk.empty()) {
+            Overlays::addOverlay("libEGL.so.1", egl_thunk);
+        } else {
+            WARN("I couldn't find libEGL-thunked.so in %s", thunks.c_str());
+        }
     }
 
     const char* block_trace = getenv("FELIX86_BLOCK_TRACE");
     if (block_trace) {
         g_block_trace = std::stoi(block_trace);
-        g_dont_link = true; // needed to trace blocks
-        g_dont_link_indirect = true;
+        g_config.link = false; // needed to trace blocks
+        g_config.link_indirect = false;
         environment += "\nFELIX86_BLOCK_TRACE=";
         environment += block_trace;
-    }
-
-    const char* executable_base = getenv("FELIX86_EXECUTABLE_BASE");
-    if (executable_base) {
-        g_executable_base_hint = std::stoull(executable_base, nullptr, 16);
-        environment += "\nFELIX86_EXECUTABLE_BASE=" + fmt::format("{:016x}", g_executable_base_hint);
-    }
-
-    const char* interpreter_base = getenv("FELIX86_INTERPRETER_BASE");
-    if (interpreter_base) {
-        g_interpreter_base_hint = std::stoull(interpreter_base, nullptr, 16);
-        environment += "\nFELIX86_INTERPRETER_BASE=" + fmt::format("{:016x}", g_interpreter_base_hint);
-    }
-
-    const char* brk_base = getenv("FELIX86_BRK_BASE");
-    if (brk_base) {
-        g_brk_base_hint = std::stoull(brk_base, nullptr, 16);
-        environment += "\nFELIX86_BRK_BASE=" + fmt::format("{:016x}", g_brk_base_hint);
-    }
-
-    const char* dont_link = getenv("FELIX86_DONT_LINK");
-    if (is_truthy(dont_link)) {
-        g_dont_link = true;
-        g_dont_link_indirect = true;
-        environment += "\nFELIX86_DONT_LINK";
-    }
-
-    const char* link_indirect = getenv("FELIX86_LINK_INDIRECT");
-    if (is_truthy(link_indirect)) {
-        g_dont_link_indirect = false;
-        environment += "\nFELIX86_LINK_INDIRECT";
-    }
-
-    const char* dont_protect_pages = getenv("FELIX86_DONT_PROTECT_PAGES");
-    if (is_truthy(dont_protect_pages)) {
-        g_dont_protect_pages = true;
-        environment += "\nFELIX86_DONT_PROTECT_PAGES";
-    }
-
-    const char* dont_use_block_cache = getenv("FELIX86_DONT_USE_BLOCK_CACHE");
-    if (is_truthy(dont_use_block_cache)) {
-        g_use_block_cache = false;
-        environment += "\nFELIX86_DONT_USE_BLOCK_CACHE";
-    }
-
-    const char* dont_cache = getenv("FELIX86_DONT_CACHE");
-    if (is_truthy(dont_cache)) {
-        g_dont_cache = true;
-        g_dont_protect_pages = true;
-        environment += "\nFELIX86_DONT_CACHE";
-    }
-
-    const char* log_file = getenv("FELIX86_LOG_FILE");
-    if (log_file) {
-        int fd = open(log_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (fd == -1) {
-            ERROR("Failed to open log file %s: %s", log_file, strerror(errno));
-        } else {
-            g_output_fd = fd;
-            environment += "\nFELIX86_LOG_FILE=" + std::string(log_file);
-        }
-    }
-
-    const char* no_sse2_env = getenv("FELIX86_NO_SSE2");
-    if (is_truthy(no_sse2_env)) {
-        g_no_sse2 = true;
-        environment += "\nFELIX86_NO_SSE2";
-    }
-
-    const char* no_sse3_env = getenv("FELIX86_NO_SSE3");
-    if (is_truthy(no_sse3_env)) {
-        g_no_sse3 = true;
-        environment += "\nFELIX86_NO_SSE3";
-    }
-
-    const char* no_ssse3_env = getenv("FELIX86_NO_SSSE3");
-    if (is_truthy(no_ssse3_env)) {
-        g_no_ssse3 = true;
-        environment += "\nFELIX86_NO_SSSE3";
-    }
-
-    const char* no_sse4_1_env = getenv("FELIX86_NO_SSE4_1");
-    if (is_truthy(no_sse4_1_env)) {
-        g_no_sse4_1 = true;
-        environment += "\nFELIX86_NO_SSE4_1";
-    }
-
-    const char* no_sse4_2_env = getenv("FELIX86_NO_SSE4_2");
-    if (is_truthy(no_sse4_2_env)) {
-        g_no_sse4_2 = true;
-        environment += "\nFELIX86_NO_SSE4_2";
     }
 
     const char* env_file = getenv("FELIX86_ENV_FILE");
@@ -400,24 +298,34 @@ void initialize_globals() {
         environment += "\nFELIX86_ENV_FILE=" + std::string(env_file);
     }
 
-    g_perf = is_running_under_perf();
-    if (g_perf) {
+    g_config.perf = is_running_under_perf();
+    if (g_config.perf) {
         if (!std::filesystem::exists("/tmp")) {
             std::filesystem::create_directory("/tmp");
         }
 
-        LOG("Running under " ANSI_BOLD "perf" ANSI_COLOR_RESET "!");
+        LOG("Emitting symbols for " ANSI_BOLD "perf" ANSI_COLOR_RESET "!");
     }
 
-    const char* single_step = getenv("FELIX86_SINGLE_STEP");
-    const char* single_stepping = getenv("FELIX86_SINGLE_STEPPING");
-    if (is_truthy(single_step) || is_truthy(single_stepping)) {
-        g_single_step = true;
-        environment += "\nFELIX86_SINGLE_STEP";
+    g_config.gdb = is_running_under_gdb();
+    if (g_config.gdb) {
+        if (!std::filesystem::exists("/tmp")) {
+            std::filesystem::create_directory("/tmp");
+        }
+
+        LOG("Emitting symbols for " ANSI_BOLD "gdb" ANSI_COLOR_RESET "!");
     }
 
-    if (!g_quiet && !environment.empty()) {
-        LOG("Environment:%s", environment.c_str());
+    if (!g_execve_process) {
+        LOG("%s", get_version_full());
+        if (!environment.empty()) {
+            LOG("Environment:%s", environment.c_str());
+        }
+
+        std::string extensions = get_extensions();
+        if (!extensions.empty()) {
+            LOG("Extensions enabled for the recompiler: %s", extensions.c_str());
+        }
     }
 
     g_vlen = biscuit::CPUInfo().GetVlenb() * 8;
@@ -437,7 +345,9 @@ void initialize_extensions() {
                         cpuinfo.Has(RISCVExtension::Zbs);
         Extensions::Zacas = cpuinfo.Has(RISCVExtension::Zacas);
         Extensions::Zicond = cpuinfo.Has(RISCVExtension::Zicond);
+        Extensions::Zihintpause = cpuinfo.Has(RISCVExtension::Zihintpause);
         Extensions::Zfa = cpuinfo.Has(RISCVExtension::Zfa);
+        Extensions::Zba = cpuinfo.Has(RISCVExtension::Zba);
         Extensions::Zvbb = cpuinfo.Has(RISCVExtension::Zvbb);
     }
 

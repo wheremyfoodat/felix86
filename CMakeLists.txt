@@ -24,7 +24,6 @@ option(BUILD_THUNKING "Build with thunking support" ON)
 
 if (BUILD_THUNKING)
     message("Building with thunking support")
-    add_compile_definitions(BUILD_THUNKING)
 else()
     message("Building without thunking support")
 endif()
@@ -45,23 +44,32 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 20)
 
 set(FELIX86_COMMON_SOURCES
+    src/felix86/common/alloc.c
+    src/felix86/common/config.cpp
     src/felix86/common/debug.cpp
     src/felix86/common/elf.cpp
     src/felix86/common/exit.cpp
-    src/felix86/common/info.cpp
+    src/felix86/common/gdbjit.cpp
     src/felix86/common/global.cpp
+    src/felix86/common/info.cpp
     src/felix86/common/log.cpp
+    src/felix86/common/overlay.cpp
     src/felix86/common/print.cpp
     src/felix86/common/process_lock.cpp
     src/felix86/common/script.cpp
     src/felix86/common/shared_memory.cpp
     src/felix86/common/state.cpp
+    src/felix86/common/strace.cpp
+    src/felix86/common/sudo.cpp
     src/felix86/common/utility.cpp
 )
 
 set(FELIX86_HLE_SOURCES
+    src/felix86/hle/brk.cpp
     src/felix86/hle/cpuid.cpp
+    src/felix86/hle/filesystem.cpp
     src/felix86/hle/libgl_guest_ptrs.cpp
+    src/felix86/hle/mmap.cpp
     src/felix86/hle/signals.cpp
     src/felix86/hle/syscall.cpp
     src/felix86/hle/thread.cpp
@@ -87,6 +95,7 @@ set(FELIX86_INCLUDES
     external/robin-map/include
     external/json
     external/biscuit/include
+    external/toml11
 )
 
 add_library(felix86_core STATIC)
@@ -94,19 +103,28 @@ target_sources(felix86_core PRIVATE ${FELIX86_CORE_SOURCES})
 target_include_directories(felix86_core PUBLIC ${FELIX86_INCLUDES})
 target_link_libraries(felix86_core PUBLIC Zydis fmt biscuit git_version)
 
-add_executable(felix86_jit)
-target_sources(felix86_jit PRIVATE src/felix86/main.cpp)
-target_link_libraries(felix86_jit PRIVATE felix86_core)
-target_link_options(felix86_jit PRIVATE "-Wl,--dynamic-linker=/felix86/lib/ld-linux-riscv64-lp64d.so.1")
+if (BUILD_THUNKING)
+    target_compile_definitions(felix86_core PUBLIC BUILD_THUNKING)
+endif()
 
 add_executable(felix86)
-target_sources(felix86 PRIVATE src/felix86/launcher.cpp src/felix86/common/info.cpp)
-target_include_directories(felix86 PUBLIC ${FELIX86_INCLUDES})
-target_link_libraries(felix86 biscuit git_version)
+target_sources(felix86 PRIVATE src/felix86/main.cpp)
+target_link_libraries(felix86 PRIVATE felix86_core)
 
 if (BUILD_THUNKGEN)
     add_executable(felix86_thunkgen src/felix86/hle/guest_libs/generator.cpp)
     target_include_directories(felix86_thunkgen PRIVATE src/felix86/hle)
+endif()
+
+if (BUILD_THUNKS)
+    if (NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+        message(FATAL_ERROR "Thunk libraries themselves need to be built in x86-64")
+    endif()
+
+    enable_language(ASM_NASM)
+    set_source_files_properties(src/felix86/hle/guest_libs/libGLX.asm PROPERTIES LANGUAGE ASM_NASM)
+    add_library(GLX-thunked SHARED src/felix86/hle/guest_libs/libGLX.asm src/felix86/hle/guest_libs/libGLX.c)
+    target_link_libraries(GLX-thunked X11)
 endif()
 
 if (BUILD_INSTRUCTION_COUNTER)
@@ -130,6 +148,8 @@ if (BUILD_TESTS)
         tests/FEX/felix86_bugs.cpp
         tests/FEX/x87.cpp
         tests/Binaries/binary_test_loader.cpp
+        tests/Unit/mmap.cpp
+        tests/Unit/paths.cpp
     )
 
     add_executable(felix86_test)
@@ -139,6 +159,7 @@ if (BUILD_TESTS)
     target_compile_options(felix86_test PRIVATE $<$<COMPILE_LANGUAGE:CPP>:-fno-operator-names>)
     target_compile_definitions(felix86_test PRIVATE CATCH_CONFIG_PREFIX_ALL)
     file(COPY external/FEX/ASM DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+    file(COPY external/FEX/32Bit_ASM DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
     file(COPY tests/ASM DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
     file(COPY tests/Binaries DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 endif()

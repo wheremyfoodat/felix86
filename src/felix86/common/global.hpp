@@ -7,17 +7,24 @@
 #include <vector>
 #include <unistd.h>
 #include "felix86/common/address.hpp"
-#include "felix86/common/config.hpp"
 #include "felix86/common/process_lock.hpp"
-#include "felix86/common/shared_memory.hpp"
+#include "felix86/common/start_params.hpp"
 #include "felix86/common/utility.hpp"
+#include "felix86/hle/mmap.hpp"
 
 struct Filesystem;
+
+struct GDBJIT;
 
 struct MappedRegion {
     u64 base{};
     u64 end{};
     std::string file{}; // without rootfs prefix
+};
+
+struct MmapRegion {
+    u64 base{};
+    u64 end{};
 };
 
 struct Symbol {
@@ -30,16 +37,14 @@ struct Symbol {
 // Globals that are shared across processes, including threads, that have CLONE_VM set.
 // This means they share the same memory space, which means access needs to be synchronized.
 struct ProcessGlobals {
-    ProcessGlobals();
     void initialize(); // If a clone happens without CLONE_VM, these need to be reinitialized.
 
-    std::unique_ptr<SharedMemory> memory{};
-    ProcessLock states_lock{};
+    Semaphore states_lock{};
     // States in this memory space. We don't care about states in different memory spaces, as they will have their
     // own copy of the process memory, which means we don't worry about self-modifying code there.
     std::vector<ThreadState*> states{};
 
-    ProcessLock symbols_lock{};
+    Semaphore symbols_lock{};
     std::map<u64, MappedRegion> mapped_regions{};
     std::map<u64, Symbol> symbols{};
 
@@ -48,61 +53,40 @@ private:
 };
 
 extern ProcessGlobals g_process_globals;
+extern std::unique_ptr<Mapper> g_mapper;
 
-extern bool g_verbose;
-extern bool g_quiet;
 extern bool g_testing;
-extern bool g_strace;
-extern bool g_dump_regs;
-extern bool g_calltrace;
 extern bool g_extensions_manually_specified;
 extern bool g_paranoid;
-extern bool g_dont_link;
-extern bool g_dont_link_indirect;
-extern bool g_dont_inline_syscalls;
-extern bool g_use_block_cache;
-extern bool g_single_step;
 extern bool g_log_instructions;
-extern bool g_dont_protect_pages;
 extern bool g_print_all_calls;
-extern bool g_safe_flags;
 extern int g_block_trace;
-extern bool g_no_sse2;
-extern bool g_no_sse3;
-extern bool g_no_ssse3;
-extern bool g_no_sse4_1;
-extern bool g_no_sse4_2;
 extern bool g_print_all_insts;
 extern bool g_mode32;
-extern bool g_rsb;
-extern bool g_perf;
-extern bool g_min_max_accurate;
-extern bool g_always_tso;
 extern bool g_thunking;
-extern bool g_dont_cache;
 extern int g_vlen;
 extern std::atomic_bool g_symbols_cached;
 extern u64 g_initial_brk;
 extern u64 g_current_brk;
 extern u64 g_current_brk_size;
 extern u64 g_dispatcher_exit_count;
-extern u64 g_address_space_base;
+extern u64 g_program_end;
 extern int g_output_fd;
 extern u32 g_spilled_count;
-extern std::filesystem::path g_rootfs_path;
+extern std::string g_emulator_path;
+extern int g_rootfs_fd;
 extern HostAddress g_interpreter_start, g_interpreter_end;
 extern HostAddress g_executable_start, g_executable_end;
-extern u64 g_interpreter_base_hint;
-extern u64 g_executable_base_hint;
-extern u64 g_brk_base_hint;
+extern u64 g_max_brk_size;
 extern const char* g_git_hash;
 extern std::unordered_map<u64, std::vector<u64>> g_breakpoints;
 extern pthread_key_t g_thread_state_key;
 extern HostAddress g_guest_auxv;
 extern size_t g_guest_auxv_size;
 extern bool g_execve_process;
-extern Config g_config;
+extern StartParameters g_params;
 extern std::unique_ptr<Filesystem> g_fs;
+extern std::unique_ptr<GDBJIT> g_gdbjit;
 
 bool parse_extensions(const char* ext);
 void initialize_globals();
@@ -119,6 +103,8 @@ struct Extensions {
     X(Zam)                                                                                                                                           \
     X(Zabha)                                                                                                                                         \
     X(Zicond)                                                                                                                                        \
+    X(Zihintpause)                                                                                                                                   \
+    X(Zba)                                                                                                                                           \
     X(Zfa)                                                                                                                                           \
     X(Zvfh)                                                                                                                                          \
     X(Zvbb)                                                                                                                                          \

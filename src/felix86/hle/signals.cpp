@@ -197,7 +197,7 @@ BlockMetadata* get_block_metadata(ThreadState* state, HostAddress host_pc) {
     ASSERT(it != map.end());
     if (!(host_pc >= it->second->address && host_pc <= it->second->address_end)) {
         // Print all the blocks so we can see what is going on
-        if (g_verbose) {
+        if (g_config.verbose) {
             for (auto& range : map) {
                 printf("Block: %lx-%lx\n", range.second->address.raw(), range.second->address_end.raw());
             }
@@ -666,7 +666,7 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
         }
 
         // It should be safe past this point to use stuff like printf, since this code is guaranteed to be jit code
-        if (g_strace) {
+        if (g_config.strace) {
             STRACE("------- Guest signal %s -------", strsignal(sig));
         }
 
@@ -751,8 +751,9 @@ bool handle_breakpoint(ThreadState* current_state, siginfo_t* info, ucontext_t* 
 }
 
 bool handle_ctrl_c(ThreadState* current_state, siginfo_t* info, ucontext_t* context, u64 pc) {
-    if (!getenv("FELIX86_ALLOW_SIGINT")) {
-        WARN("CTRL+C pressed, terminating...");
+    static bool allowed = !!getenv("FELIX86_ALLOW_SIGINT");
+    if (!allowed) {
+        WARN("SIGINT received and FELIX86_ALLOW_SIGINT not set, terminating...");
         exit(0);
     }
 
@@ -810,6 +811,8 @@ bool dispatch_guest(int sig, siginfo_t* info, void* ctx) {
     }
 
     VERBOSE("------- Guest signal %s (%d) %s -------", sigdescr_np(sig), sig, in_jit_code ? "in jit code" : "not in jit code");
+
+    ASSERT(!g_mode32);
 
     XmmReg* xmms;
 
@@ -932,6 +935,7 @@ RegisteredSignal Signals::getSignalHandler(ThreadState* state, int sig) {
 }
 
 int Signals::sigsuspend(ThreadState* state, sigset_t* mask) {
+    WARN("About to run sigsuspend");
     int result = ::sigsuspend(mask);
     if (result == -1) {
         return -errno;

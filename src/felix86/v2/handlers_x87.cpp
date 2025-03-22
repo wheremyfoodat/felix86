@@ -1,3 +1,4 @@
+#include <cmath>
 #include <Zydis/Zydis.h>
 #include "felix86/v2/recompiler.hpp"
 
@@ -6,9 +7,9 @@
 
 FAST_HANDLE(FLD) {
     if (operands[0].size == 80) {
+        biscuit::GPR address = rec.lea(&operands[0]);
         rec.writebackDirtyState();
         rec.invalidStateUntilJump();
-        biscuit::GPR address = rec.leaAddBase(&operands[0]);
         as.MV(a0, address);
         rec.call((u64)f80_to_64);
         biscuit::GPR top = rec.getTOP();
@@ -34,9 +35,17 @@ void OP(void (Assembler::*func)(FPR, FPR, FPR, RMode), Recompiler& rec, Assemble
     biscuit::FPR lhs = rec.getST(top, &operands[0]);
     biscuit::FPR rhs = rec.getST(top, &operands[1]);
 
+    ZydisDecodedOperand* result_operand = &operands[0];
+
+    if (operands[0].type == ZYDIS_OPERAND_TYPE_MEMORY) {
+        // Funnily, when the operand is memory the operation happens rhs op lhs
+        std::swap(lhs, rhs);
+        result_operand = &operands[1];
+    }
+
     biscuit::FPR result = rec.scratchFPR();
     (as.*func)(result, lhs, rhs, RMode::DYN);
-    rec.setST(top, 0, result);
+    rec.setST(top, result_operand, result);
 
     if (pop) {
         rec.popST(top);
@@ -118,7 +127,11 @@ FAST_HANDLE(FWAIT) {
 }
 
 FAST_HANDLE(FPREM) {
-    WARN("Unhandled instruction FPREM, no operation");
+    rec.writebackDirtyState();
+    rec.invalidStateUntilJump();
+
+    as.MV(a0, rec.threadStatePointer());
+    rec.call((u64)felix86_fprem);
 }
 
 FAST_HANDLE(FNSTENV) {
@@ -126,7 +139,9 @@ FAST_HANDLE(FNSTENV) {
 }
 
 FAST_HANDLE(FNSTSW) {
-    WARN("Unhandled instruction FNSTSW, no operation");
+    biscuit::GPR temp = rec.scratch();
+    as.LWU(temp, offsetof(ThreadState, fpu_sw), rec.threadStatePointer());
+    rec.setOperandGPR(&operands[0], temp);
 }
 
 FAST_HANDLE(FLDENV) {
@@ -218,4 +233,84 @@ FAST_HANDLE(FRNDINT) {
     }
 
     rec.setST(top, 0, st0);
+}
+
+FAST_HANDLE(FLD1) {
+    biscuit::GPR top = rec.getTOP();
+    biscuit::FPR st = rec.scratchFPR();
+
+    if (Extensions::Zfa) {
+        as.FLI_D(st, 1.0);
+    } else {
+        biscuit::GPR temp = rec.scratch();
+        as.LI(temp, 0x3FF0000000000000ull);
+        as.FMV_D_X(st, temp);
+    }
+
+    rec.pushST(top, st);
+}
+
+FAST_HANDLE(FLDL2T) {
+    constexpr u64 value = 0x400A'934F'0979'A371ull;
+    biscuit::GPR top = rec.getTOP();
+    biscuit::FPR st = rec.scratchFPR();
+    biscuit::GPR temp = rec.scratch();
+    as.LI(temp, value);
+    as.FMV_D_X(st, temp);
+    rec.pushST(top, st);
+}
+
+FAST_HANDLE(FLDL2E) {
+    constexpr u64 value = 0x3FF7'1547'652B'82FEull;
+    biscuit::GPR top = rec.getTOP();
+    biscuit::FPR st = rec.scratchFPR();
+    biscuit::GPR temp = rec.scratch();
+    as.LI(temp, value);
+    as.FMV_D_X(st, temp);
+    rec.pushST(top, st);
+}
+
+FAST_HANDLE(FLDPI) {
+    constexpr u64 value = 0x4009'21FB'5444'2D18ull;
+    biscuit::GPR top = rec.getTOP();
+    biscuit::FPR st = rec.scratchFPR();
+    biscuit::GPR temp = rec.scratch();
+    as.LI(temp, value);
+    as.FMV_D_X(st, temp);
+    rec.pushST(top, st);
+}
+
+FAST_HANDLE(FLDLG2) {
+    constexpr u64 value = 0x3FD3'4413'509F'79FFull;
+    biscuit::GPR top = rec.getTOP();
+    biscuit::FPR st = rec.scratchFPR();
+    biscuit::GPR temp = rec.scratch();
+    as.LI(temp, value);
+    as.FMV_D_X(st, temp);
+    rec.pushST(top, st);
+}
+
+FAST_HANDLE(FLDLN2) {
+    constexpr u64 value = 0x3FE6'2E42'FEFA'39EFull;
+    biscuit::GPR top = rec.getTOP();
+    biscuit::FPR st = rec.scratchFPR();
+    biscuit::GPR temp = rec.scratch();
+    as.LI(temp, value);
+    as.FMV_D_X(st, temp);
+    rec.pushST(top, st);
+}
+
+FAST_HANDLE(FLDZ) {
+    biscuit::GPR top = rec.getTOP();
+    biscuit::FPR st = rec.scratchFPR();
+    as.FMV_D_X(st, x0);
+    rec.pushST(top, st);
+}
+
+FAST_HANDLE(FNSTCW) {
+    WARN("FNSTCW is not implemented, ignoring");
+}
+
+FAST_HANDLE(FLDCW) {
+    WARN("FLDCW is not implemented, ignoring");
 }

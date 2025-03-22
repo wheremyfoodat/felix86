@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include "Zydis/Disassembler.h"
 #include "biscuit/decoder.hpp"
+#include "felix86/common/gdbjit.hpp"
 #include "felix86/emulator.hpp"
 #include "felix86/hle/syscall.hpp"
 #include "felix86/v2/recompiler.hpp"
@@ -79,6 +80,7 @@ void Recompiler::emitNecessaryStuff() {
     emitDispatcher();
     emitSigreturnThunk();
     emitUnlinkIndirectThunk();
+    emitSyscallThunk();
     start_of_code_cache = as.GetCursorPointer();
 }
 
@@ -110,7 +112,7 @@ void Recompiler::emitDispatcher() {
 
     as.MV(threadStatePointer(), a0);
 
-    if (g_rsb) {
+    if (g_config.rsb) {
         // Try to lower the chances that our return stack buffer optimizations end up
         // ruining the data in the host stack, if somehow there's multiple returns before any calls
         as.ADDI(sp, sp, -1024);
@@ -124,17 +126,19 @@ void Recompiler::emitDispatcher() {
 
     Label exit_dispatcher_label;
 
+    // Save current stack pointer to clear the RSB data if we clear the code cache
+    if (g_config.rsb) {
+        as.SD(sp, offsetof(ThreadState, current_sp), threadStatePointer());
+    }
+
     as.MV(a0, threadStatePointer());
     // If it's not zero it has some exit reason, exit the dispatcher
     as.LBU(t2, offsetof(ThreadState, exit_reason), threadStatePointer());
     as.BNEZ(t2, &exit_dispatcher_label);
-    if (g_rsb) {
-        as.SD(sp, offsetof(ThreadState, current_sp), threadStatePointer());
-    }
     as.LI(t0, (u64)Emulator::CompileNext);
     as.JALR(t0); // returns the function pointer to the compiled function
     restoreRoundingMode();
-    if (g_rsb) {
+    if (g_config.rsb) {
         as.MV(ra, a0);
         // "return" to the compiled function. This encoding hints to the
         // return stack buffer to pop, which should have been pushed by a jalr
@@ -174,6 +178,15 @@ void Recompiler::emitDispatcher() {
     flush_icache();
 }
 
+void Recompiler::emitSyscallThunk() {
+    syscall_thunk = as.GetCursorPointer();
+    u64 address = g_mode32 ? (u64)felix86_syscall32 : (u64)felix86_syscall;
+    as.MV(a0, threadStatePointer());
+    Recompiler::call(as, address, /* don't link -- tail call */ false);
+    // Do not return here
+    as.GetCodeBuffer().Emit32(0);
+}
+
 HostAddress Recompiler::emitSigreturnThunk() {
     // This piece of code is responsible for moving the thread state pointer to the right place (so we don't have to find it using tid)
     // calling sigreturn, returning and going back to the dispatcher.
@@ -210,11 +223,11 @@ void Recompiler::clearCodeCache(ThreadState* state) {
     as.RewindBuffer();
     block_metadata.clear();
     host_pc_map.clear();
-    std::fill(std::begin(block_cache), std::end(block_cache), BlockCacheEntry{});
+    std::fill(std::begin(address_cache), std::end(address_cache), AddressCacheEntry{});
 
     emitNecessaryStuff();
 
-    if (g_rsb) {
+    if (g_config.rsb) {
         // Need to zero out the stack that rsb has used thus far.
         // Because if the cache is cleared and we hit more RETs than calls,
         // we are gonna be returning to potentially invalid places
@@ -245,7 +258,7 @@ HostAddress Recompiler::compile(ThreadState* state, HostAddress rip) {
     BlockMetadata& block_meta = getBlockMetadata(rip);
     block_meta.address = start;
 
-    // A sequence of code. This is so that we can also call it recursively later.
+    // A sequence of code (ie. basic block). This is so that we can also call it recursively later.
     HostAddress end_rip = compileSequence(rip);
 
     host_pc_map[block_meta.address_end.raw() - 1] = &block_meta;
@@ -256,7 +269,7 @@ HostAddress Recompiler::compile(ThreadState* state, HostAddress rip) {
     // Mark the page as read-only to catch self-modifying code
     markPagesAsReadOnly(rip, end_rip);
 
-    if (g_perf) {
+    if (g_config.perf) {
         if (perf_fd == -1) {
             std::string path = "/tmp/perf-" + std::to_string(getpid()) + ".map";
             FILE* file = fopen(path.c_str(), "w");
@@ -287,7 +300,7 @@ HostAddress Recompiler::compile(ThreadState* state, HostAddress rip) {
 }
 
 void Recompiler::markPagesAsReadOnly(HostAddress start, HostAddress end) {
-    if (g_dont_protect_pages) {
+    if (g_config.dont_protect_pages) {
         return;
     }
 
@@ -301,12 +314,8 @@ void Recompiler::markPagesAsReadOnly(HostAddress start, HostAddress end) {
 }
 
 HostAddress Recompiler::getCompiledBlock(ThreadState* state, HostAddress rip) {
-    if (g_dont_cache) {
-        return compile(state, rip);
-    }
-
-    if (g_use_block_cache) {
-        BlockCacheEntry& entry = block_cache[rip.raw() & ((1 << block_cache_bits) - 1)];
+    if (g_config.address_cache) {
+        AddressCacheEntry& entry = address_cache[rip.raw() & ((1 << address_cache_bits) - 1)];
         if (entry.guest == rip) {
             return entry.host;
         } else if (blockExists(rip)) {
@@ -356,13 +365,13 @@ HostAddress Recompiler::compileSequence(HostAddress rip) {
 
         compileInstruction(meta);
 
-        if (!g_dont_inline_syscalls) {
+        if (g_config.inline_syscalls) {
             checkModifiesRax(instruction, operands);
         }
 
         meta.rip += instruction.length;
 
-        if (g_single_step && compiling) {
+        if (g_config.single_step && compiling) {
             resetScratch();
             biscuit::GPR rip_after = scratch();
             as.LI(rip_after, meta.rip.toGuest().raw());
@@ -375,6 +384,33 @@ HostAddress Recompiler::compileSequence(HostAddress rip) {
 
     current_block_metadata->guest_address_end = meta.rip;
     current_block_metadata->address_end = HostAddress{(u64)as.GetCursorPointer()};
+
+    if (g_config.gdb) {
+        size_t inst_count = current_block_metadata->instruction_spans.size();
+        felix86_jit_block_t* gdb_block = GDBJIT::createBlock(inst_count);
+        gdb_block->host_start = (u64)as.GetCursorPointer();
+
+        for (size_t i = 0; i < inst_count; i++) {
+            GuestAddress guest_address = current_block_metadata->instruction_spans[i].first;
+            HostAddress host_address = current_block_metadata->instruction_spans[i].second;
+            ZydisDisassembledInstruction inst;
+            ZydisDisassembleIntel(decoder.machine_mode, guest_address.raw(), (void*)guest_address.toHost().raw(), 15, &inst);
+            int size = strlen(inst.text);
+            inst.text[size] = '\n';
+            fwrite(inst.text, size + 1, 1, gdb_block->file);
+            gdb_block->lines[i].line = 1 + i;
+            gdb_block->lines[i].pc = host_address.raw();
+        }
+
+        gdb_block->host_start = current_block_metadata->address.raw();
+        gdb_block->host_end = current_block_metadata->address_end.raw();
+        gdb_block->guest_address = current_block_metadata->guest_address.raw();
+        gdb_block->line_count = inst_count;
+
+        fclose(gdb_block->file);
+        g_gdbjit->fire(gdb_block);
+    }
+
     flush_icache();
 
     current_block_metadata = nullptr;
@@ -388,23 +424,23 @@ void Recompiler::compileInstruction(HandlerMetadata& meta) {
 
     ZydisMnemonic mnemonic = decode(meta.rip, instruction, operands);
 
-    if (g_no_sse2 && (instruction.meta.isa_set == ZYDIS_ISA_SET_SSE2)) {
+    if (g_config.no_sse2 && (instruction.meta.isa_set == ZYDIS_ISA_SET_SSE2)) {
         ERROR("SSE2 instruction %s at %016lx when FELIX86_NO_SSE2 is enabled", ZydisMnemonicGetString(mnemonic), meta.rip.raw());
     }
 
-    if (g_no_sse3 && (instruction.meta.isa_set == ZYDIS_ISA_SET_SSE3)) {
+    if (g_config.no_sse3 && (instruction.meta.isa_set == ZYDIS_ISA_SET_SSE3)) {
         ERROR("SSE3 instruction %s at %016lx when FELIX86_NO_SSE3 is enabled", ZydisMnemonicGetString(mnemonic), meta.rip.raw());
     }
 
-    if (g_no_ssse3 && (instruction.meta.isa_set == ZYDIS_ISA_SET_SSSE3)) {
+    if (g_config.no_ssse3 && (instruction.meta.isa_set == ZYDIS_ISA_SET_SSSE3)) {
         ERROR("SSSE3 instruction %s at %016lx when FELIX86_NO_SSSE3 is enabled", ZydisMnemonicGetString(mnemonic), meta.rip.raw());
     }
 
-    if (g_no_sse4_1 && (instruction.meta.isa_set == ZYDIS_ISA_SET_SSE4)) {
+    if (g_config.no_sse4_1 && (instruction.meta.isa_set == ZYDIS_ISA_SET_SSE4)) {
         ERROR("SSE4.1 instruction %s at %016lx when FELIX86_NO_SSE4_1 is enabled", ZydisMnemonicGetString(mnemonic), meta.rip.raw());
     }
 
-    if (g_no_sse4_2 && (instruction.meta.isa_set == ZYDIS_ISA_SET_SSE4)) {
+    if (g_config.no_sse4_2 && (instruction.meta.isa_set == ZYDIS_ISA_SET_SSE4)) {
         ERROR("SSE4.2 instruction %s at %016lx when FELIX86_NO_SSE4_2 is enabled", ZydisMnemonicGetString(mnemonic), meta.rip.raw());
     }
 
@@ -417,7 +453,7 @@ void Recompiler::compileInstruction(HandlerMetadata& meta) {
 #undef X
     default: {
         ZydisDisassembledInstruction disassembled;
-        if (ZYAN_SUCCESS(ZydisDisassembleIntel(ZYDIS_MACHINE_MODE_LONG_64, meta.rip.raw(), (u8*)meta.rip.raw(), 15, &disassembled))) {
+        if (ZYAN_SUCCESS(ZydisDisassembleIntel(decoder.machine_mode, meta.rip.raw(), (u8*)meta.rip.raw(), 15, &disassembled))) {
             ERROR("Unhandled instruction %s (%02x)", disassembled.text, (int)instruction.opcode);
         } else {
             ERROR("Unhandled instruction %s (%02x)", ZydisMnemonicGetString(mnemonic), (int)instruction.opcode);
@@ -428,33 +464,18 @@ void Recompiler::compileInstruction(HandlerMetadata& meta) {
 }
 
 biscuit::GPR Recompiler::scratch() {
-    // TODO: constexpr list of regs
-    switch (scratch_index++) {
-    case 0:
-        return x1;
-    case 1:
-        return x6;
-    case 2:
-        return x28;
-    case 3:
-        return x29;
-    case 4:
-        return x30;
-    case 5:
-        return x31;
-    case 6:
-        return x7;
-    default:
-        ERROR("Tried to use more than 7 scratch GPRs");
-        return x0;
-    }
+    return scratch_gprs[scratch_index++];
 }
 
 bool Recompiler::isScratch(biscuit::GPR reg) {
-    // TODO: constexpr list of regs, std::find
-    return reg == x1 || reg == x6 || reg == x28 || reg == x29 || reg == x30 || reg == x31 || reg == x7;
+    if (std::find(scratch_gprs.begin(), scratch_gprs.end(), reg)) {
+        return true;
+    }
+
+    return false;
 }
 
+// TODO: array like above
 biscuit::Vec Recompiler::scratchVec() {
     switch (vector_scratch_index++) {
     case 0:
@@ -825,8 +846,8 @@ biscuit::GPR Recompiler::getOperandGPR(ZydisDecodedOperand* operand) {
     }
     case ZYDIS_OPERAND_TYPE_MEMORY: {
         biscuit::GPR dest = scratch();
-        biscuit::GPR address = leaAddBase(operand);
-        readMemoryNoBase(dest, address, 0, zydisToSize(operand->size));
+        biscuit::GPR address = lea(operand, false);
+        readMemory(dest, address, 0, zydisToSize(operand->size));
         return dest;
     }
     case ZYDIS_OPERAND_TYPE_IMMEDIATE: {
@@ -850,9 +871,9 @@ biscuit::Vec Recompiler::getOperandVec(ZydisDecodedOperand* operand) {
     }
     case ZYDIS_OPERAND_TYPE_MEMORY: {
         biscuit::Vec vec = scratchVec();
-        biscuit::GPR address = leaAddBase(operand);
+        biscuit::GPR address = lea(operand, false);
 
-        readMemoryVectorNoBase(vec, address, operand->size);
+        readMemory(vec, address, operand->size);
 
         popScratch(); // pop lea scratch
 
@@ -972,17 +993,28 @@ void Recompiler::setRefGPR(x86_ref_e ref, x86_size_e size, biscuit::GPR reg) {
     }
     case X86_SIZE_BYTE_HIGH: {
         ASSERT(reg != allocatedGPR(ref));
-        biscuit::GPR dest = getRefGPR(ref, X86_SIZE_QWORD);
-        biscuit::GPR gpr8 = scratch();
-        biscuit::GPR mask = scratch();
-        as.LI(mask, 0xff00);
-        as.SLLI(gpr8, reg, 8);
-        as.AND(gpr8, gpr8, mask);
-        as.NOT(mask, mask);
-        as.AND(dest, dest, mask);
-        as.OR(dest, dest, gpr8);
-        popScratch();
-        popScratch();
+        if (!Extensions::B) {
+            biscuit::GPR dest = getRefGPR(ref, X86_SIZE_QWORD);
+            biscuit::GPR gpr8 = scratch();
+            biscuit::GPR mask = scratch();
+            as.LI(mask, 0xff00);
+            as.SLLI(gpr8, reg, 8);
+            as.AND(gpr8, gpr8, mask);
+            as.NOT(mask, mask);
+            as.AND(dest, dest, mask);
+            as.OR(dest, dest, gpr8);
+            popScratch();
+            popScratch();
+        } else {
+            biscuit::GPR dest = getRefGPR(ref, X86_SIZE_QWORD);
+            biscuit::GPR gpr8 = scratch();
+            as.ANDI(gpr8, reg, 0xFF);
+            as.RORI(dest, dest, 8);
+            as.ANDI(dest, dest, ~0xFF);
+            as.OR(dest, dest, gpr8);
+            as.RORI(dest, dest, 56);
+            popScratch();
+        }
         break;
     }
     case X86_SIZE_WORD: {
@@ -1025,9 +1057,7 @@ void Recompiler::setRefGPR(x86_ref_e ref, x86_size_e size, biscuit::GPR reg) {
     }
     }
 
-    RegisterMetadata& meta = getMetadata(ref);
-    meta.dirty = true;
-    meta.loaded = true; // since the value is fresh it's as if we read it from memory
+    markDirty(ref);
 }
 
 void Recompiler::setRefVec(x86_ref_e ref, biscuit::Vec vec) {
@@ -1074,8 +1104,8 @@ void Recompiler::setOperandGPR(ZydisDecodedOperand* operand, biscuit::GPR reg) {
         break;
     }
     case ZYDIS_OPERAND_TYPE_MEMORY: {
-        biscuit::GPR address = leaAddBase(operand);
-        writeMemoryNoBase(reg, address, 0, zydisToSize(operand->size));
+        biscuit::GPR address = lea(operand, false);
+        writeMemory(reg, address, 0, zydisToSize(operand->size));
         break;
     }
     default: {
@@ -1092,7 +1122,7 @@ void Recompiler::setOperandVec(ZydisDecodedOperand* operand, biscuit::Vec vec) {
         break;
     }
     case ZYDIS_OPERAND_TYPE_MEMORY: {
-        biscuit::GPR address = leaAddBase(operand);
+        biscuit::GPR address = lea(operand, false);
 
         switch (operand->size) {
         case 256: {
@@ -1195,16 +1225,7 @@ bool Recompiler::setVectorState(SEW sew, int vlen, LMUL grouping) {
     return true;
 }
 
-biscuit::GPR Recompiler::leaAddBase(ZydisDecodedOperand* operand) {
-    // Make sure the lea does an LI including the address space base
-    operand->mem.disp.value += g_address_space_base;
-    biscuit::GPR ret = lea(operand);
-    operand->mem.disp.value -= g_address_space_base;
-
-    return ret;
-}
-
-biscuit::GPR Recompiler::lea(ZydisDecodedOperand* operand) {
+biscuit::GPR Recompiler::lea(ZydisDecodedOperand* operand, bool use_temp) {
     if (cached_lea_operand == operand) {
         ASSERT(cached_lea_operand->mem.base == operand->mem.base);
         ASSERT(cached_lea_operand->mem.index == operand->mem.index);
@@ -1225,105 +1246,9 @@ biscuit::GPR Recompiler::lea(ZydisDecodedOperand* operand) {
         return address;
     }
 
-    // Load displacement first
-    as.LI(address, operand->mem.disp.value);
-
-    if (operand->mem.index != ZYDIS_REGISTER_NONE) {
-        index = gpr(operand->mem.index);
-        u8 scale = operand->mem.scale;
-        if (scale != 1) {
-            if (Extensions::B) {
-                switch (scale) {
-                case 2:
-                    as.SH1ADD(address, index, address);
-                    break;
-                case 4:
-                    as.SH2ADD(address, index, address);
-                    break;
-                case 8: {
-                    as.SH3ADD(address, index, address);
-                    break;
-                }
-                default: {
-                    UNREACHABLE();
-                    break;
-                }
-                }
-            } else {
-                switch (scale) {
-                case 2:
-                    scale = 1;
-                    break;
-                case 4:
-                    scale = 2;
-                    break;
-                case 8:
-                    scale = 3;
-                    break;
-                default:
-                    UNREACHABLE();
-                    break;
-                }
-                if (operand->mem.disp.value == 0) {
-                    // Can use the address register directly as there's only zero there
-                    as.SLLI(address, index, scale);
-                } else {
-                    biscuit::GPR scale_reg = scratch();
-                    as.SLLI(scale_reg, index, scale);
-                    as.ADD(address, address, scale_reg);
-                    popScratch();
-                }
-            }
-        } else {
-            as.ADD(address, address, index);
-        }
-    }
-
-    if (operand->mem.base != ZYDIS_REGISTER_NONE) {
-        base = gpr(operand->mem.base);
-        as.ADD(address, address, base);
-    }
-
-    if (operand->mem.segment == ZYDIS_REGISTER_FS) {
-        biscuit::GPR fs = scratch();
-        as.LD(fs, offsetof(ThreadState, fsbase), threadStatePointer());
-        as.ADD(address, address, fs);
-        popScratch();
-    } else if (operand->mem.segment == ZYDIS_REGISTER_GS) {
-        biscuit::GPR gs = scratch();
-        as.LD(gs, offsetof(ThreadState, gsbase), threadStatePointer());
-        as.ADD(address, address, gs);
-        popScratch();
-    }
-
-    // Address override prefix
-    if (instruction.address_width == 32 && !g_mode32) {
-        WARN("Address size override prefix in 64-bit mode?");
-        zext(address, address, X86_SIZE_DWORD);
-    }
-
-    return address;
-
-#if 0 // Buggy for whatever reason
-    printf("base %d\n", operand->mem.base == ZYDIS_REGISTER_NONE ? -1 : zydisToRef(operand->mem.base));
-    printf("index %d\n", operand->mem.index == ZYDIS_REGISTER_NONE ? -1 : zydisToRef(operand->mem.index));
-    printf("scale %d\n", operand->mem.scale);
-    printf("disp %lx\n", operand->mem.disp.value);
-
-    biscuit::GPR address = scratch();
-    cached_lea = address;
-    cached_lea_operand = operand;
-
-    biscuit::GPR base, index;
-
-    if (operand->mem.base == ZYDIS_REGISTER_RIP) {
-        as.LI(address, current_meta->rip.toGuest().raw() + instruction.length + operand->mem.disp.value);
-        return address;
-    }
-
     bool has_base = operand->mem.base != ZYDIS_REGISTER_NONE;
     bool has_index = operand->mem.index != ZYDIS_REGISTER_NONE;
-    bool has_segment = operand->mem.segment != ZYDIS_REGISTER_NONE;
+    bool has_segment = instruction.attributes & ZYDIS_ATTRIB_HAS_SEGMENT;
     bool has_disp = operand->mem.disp.value != 0;
 
     // Cover the case of just a segment register
@@ -1336,6 +1261,20 @@ biscuit::GPR Recompiler::lea(ZydisDecodedOperand* operand) {
             UNREACHABLE();
         }
         return address;
+    }
+
+    if (!use_temp) {
+        if (!has_segment && has_base && !has_index && !has_disp) {
+            cached_lea_operand = nullptr;
+            biscuit::GPR base = gpr(operand->mem.base);
+            return base;
+        }
+
+        if (!has_segment && !has_base && has_index && !has_disp && operand->mem.scale == 1) {
+            cached_lea_operand = nullptr;
+            biscuit::GPR index = gpr(operand->mem.index);
+            return index;
+        }
     }
 
     if (has_disp) {
@@ -1398,7 +1337,25 @@ biscuit::GPR Recompiler::lea(ZydisDecodedOperand* operand) {
             u8 scale = operand->mem.scale;
             if (!has_base) {
                 // No base, shift directly into address
-                as.SLLI(address, index, scale);
+                if (scale == 1) {
+                    as.MV(address, index);
+                } else {
+                    switch (scale) {
+                    case 2:
+                        scale = 1;
+                        break;
+                    case 4:
+                        scale = 2;
+                        break;
+                    case 8:
+                        scale = 3;
+                        break;
+                    default:
+                        UNREACHABLE();
+                        break;
+                    }
+                    as.SLLI(address, index, scale);
+                }
             } else {
                 // Add index to the base
                 base = gpr(operand->mem.base);
@@ -1451,6 +1408,11 @@ biscuit::GPR Recompiler::lea(ZydisDecodedOperand* operand) {
         }
     }
 
+    // Address override prefix, this needs to happen before adding the segment override
+    if (instruction.address_width != 64) {
+        zext(address, address, zydisToSize(instruction.address_width));
+    }
+
     // Whether or not there's a displacement, at this point it's guaranteed that there's something in `address`
     if (operand->mem.segment == ZYDIS_REGISTER_FS) {
         biscuit::GPR fs = scratch();
@@ -1462,10 +1424,11 @@ biscuit::GPR Recompiler::lea(ZydisDecodedOperand* operand) {
         as.LD(gs, offsetof(ThreadState, gsbase), threadStatePointer());
         as.ADD(address, address, gs);
         popScratch();
+    } else if (has_segment) {
+        UNREACHABLE();
     }
 
     return address;
-#endif
 }
 
 void Recompiler::stopCompiling() {
@@ -1474,7 +1437,7 @@ void Recompiler::stopCompiling() {
 }
 
 void Recompiler::pushCalltrace() {
-    if (g_calltrace) {
+    if (g_config.calltrace) {
         as.LI(t0, (u64)push_calltrace);
         as.MV(a0, threadStatePointer());
         as.LI(a1, current_meta->rip.raw());
@@ -1483,7 +1446,7 @@ void Recompiler::pushCalltrace() {
 }
 
 void Recompiler::popCalltrace() {
-    if (g_calltrace) {
+    if (g_config.calltrace) {
         as.LI(t0, (u64)pop_calltrace);
         as.MV(a0, threadStatePointer());
         as.JALR(t0);
@@ -1546,7 +1509,7 @@ void Recompiler::writebackDirtyState() {
 
 void Recompiler::invalidStateUntilJump() {
     // This instruction hints to the state reconstruction in the signal handler that the state was written back
-    // and is invalid, until a jump. For example, if a block does something like
+    // and is invalid, until a jump. For example, if a block does something like:
     // writebackDirtyState()
     // modify a0, a1, t0
     // jump to function to handle stuff
@@ -1605,9 +1568,9 @@ void Recompiler::scanFlagUsageAhead(HostAddress rip) {
         bool is_illegal = mnemonic == ZYDIS_MNEMONIC_UD2;
         bool is_hlt = mnemonic == ZYDIS_MNEMONIC_HLT;
 
-        if (!g_safe_flags && !g_paranoid) {
+        if (g_config.unsafe_flags && !g_paranoid) {
             if (is_call || is_ret) {
-                // Pretend that the call changes the flags so that we don't calculate the flags
+                // Pretend that the call/ret changes the flags so that we don't calculate the flags
                 // This is most often the case so it's a good optimization.
                 flag_access_cpazso[0].push_back({true, rip});
                 flag_access_cpazso[1].push_back({true, rip});
@@ -1672,6 +1635,12 @@ void Recompiler::scanFlagUsageAhead(HostAddress rip) {
 bool Recompiler::shouldEmitFlag(HostAddress rip, x86_ref_e ref) {
     if (g_paranoid) {
         return true;
+    }
+
+    if (flag_mode == FlagMode::AlwaysEmit) {
+        return true;
+    } else if (flag_mode == FlagMode::NeverEmit) {
+        return false;
     }
 
     int index = 0;
@@ -1918,6 +1887,7 @@ void Recompiler::updateParity(biscuit::GPR result) {
         biscuit::GPR pf = scratch();
 
         // We need another scratch but on many instructions there isn't one available at this point :(
+        // TODO: fix me...
         ASSERT(pf != t0);
         as.LD(pf, &address);
         as.ADDI(sp, sp, -8);
@@ -1958,7 +1928,7 @@ biscuit::GPR Recompiler::getRip() {
 }
 
 void Recompiler::jumpAndLink(HostAddress rip, bool use_rsb) {
-    if (g_dont_link) {
+    if (!g_config.link) {
         // Just emit jump to dispatcher
         backToDispatcher(use_rsb);
         return;
@@ -2027,7 +1997,7 @@ void Recompiler::jumpAndLinkConditional(biscuit::GPR condition, biscuit::GPR gpr
 }
 
 void Recompiler::expirePendingLinks(HostAddress rip) {
-    if (g_dont_link) {
+    if (!g_config.link) {
         return;
     }
 
@@ -2051,7 +2021,7 @@ void Recompiler::expirePendingLinks(HostAddress rip) {
         }
 
         if (instruction.mnemonic == Mnemonic::JALR && operands[0].GPR() == ra) {
-            ASSERT(g_rsb);
+            ASSERT(g_config.rsb);
             use_rsb = true;
         }
 
@@ -2208,18 +2178,35 @@ biscuit::GPR Recompiler::getCond(int cond) {
 }
 
 void Recompiler::readMemory(biscuit::GPR dest, biscuit::GPR address, i64 offset, x86_size_e size) {
-    if (g_address_space_base) {
-        biscuit::GPR temp = scratch();
-        as.LI(temp, g_address_space_base);
-        as.ADD(temp, temp, address);
-        address = temp;
-        popScratch();
+    switch (size) {
+    case X86_SIZE_BYTE: {
+        as.LBU(dest, offset, address);
+        break;
+    }
+    case X86_SIZE_WORD: {
+        as.LHU(dest, offset, address);
+        break;
+    }
+    case X86_SIZE_DWORD: {
+        as.LWU(dest, offset, address);
+        break;
+    }
+    case X86_SIZE_QWORD: {
+        as.LD(dest, offset, address);
+        break;
+    }
+    default: {
+        UNREACHABLE();
+        break;
+    }
     }
 
-    readMemoryNoBase(dest, address, offset, size);
+    if (g_config.always_tso && !Extensions::TSO) {
+        as.FENCE(FenceOrder::R, FenceOrder::RW);
+    }
 }
 
-void Recompiler::readMemoryVectorNoBase(biscuit::Vec vec, biscuit::GPR address, int size) {
+void Recompiler::readMemory(biscuit::Vec vec, biscuit::GPR address, int size) {
     switch (size) {
     case 8: {
         setVectorState(SEW::E8, 1);
@@ -2258,49 +2245,8 @@ void Recompiler::readMemoryVectorNoBase(biscuit::Vec vec, biscuit::GPR address, 
     }
 }
 
-void Recompiler::readMemoryNoBase(biscuit::GPR dest, biscuit::GPR address, i64 offset, x86_size_e size) {
-    switch (size) {
-    case X86_SIZE_BYTE: {
-        as.LBU(dest, offset, address);
-        break;
-    }
-    case X86_SIZE_WORD: {
-        as.LHU(dest, offset, address);
-        break;
-    }
-    case X86_SIZE_DWORD: {
-        as.LWU(dest, offset, address);
-        break;
-    }
-    case X86_SIZE_QWORD: {
-        as.LD(dest, offset, address);
-        break;
-    }
-    default: {
-        UNREACHABLE();
-        break;
-    }
-    }
-
-    if (g_always_tso && !Extensions::TSO) {
-        as.FENCE(FenceOrder::R, FenceOrder::RW);
-    }
-}
-
 void Recompiler::writeMemory(biscuit::GPR src, biscuit::GPR address, i64 offset, x86_size_e size) {
-    if (g_address_space_base) {
-        biscuit::GPR temp = scratch();
-        as.LI(temp, g_address_space_base);
-        as.ADD(temp, temp, address);
-        address = temp;
-        popScratch();
-    }
-
-    writeMemoryNoBase(src, address, offset, size);
-}
-
-void Recompiler::writeMemoryNoBase(biscuit::GPR src, biscuit::GPR address, i64 offset, x86_size_e size) {
-    if (g_always_tso && !Extensions::TSO) {
+    if (g_config.always_tso && !Extensions::TSO) {
         as.FENCE(FenceOrder::RW, FenceOrder::W);
     }
 
@@ -2456,7 +2402,7 @@ void Recompiler::enableSignals() {
     as.SB(x0, offsetof(ThreadState, signals_disabled), threadStatePointer());
 }
 
-biscuit::GPR Recompiler::getTOP() { // TODO: allocate a reg for this maybe
+biscuit::GPR Recompiler::getTOP() { // TODO: allocate a reg for this maybe -- load once at start of block and writeback at end
     biscuit::GPR top = scratch();
     as.LB(top, offsetof(ThreadState, fpu_top), threadStatePointer());
     return top;
@@ -2486,14 +2432,14 @@ biscuit::FPR Recompiler::getST(biscuit::GPR top, ZydisDecodedOperand* operand) {
         switch (operand->size) {
         case 32: {
             biscuit::FPR st = scratchFPR();
-            as.FLW(st, 0, leaAddBase(operand));
+            as.FLW(st, 0, lea(operand, false));
             as.FCVT_D_S(st, st);
             popScratch(); // the gpr address scratch
             return st;
         }
         case 64: {
             biscuit::FPR st = scratchFPR();
-            as.FLD(st, 0, leaAddBase(operand));
+            as.FLD(st, 0, lea(operand, false));
             popScratch(); // the gpr address scratch
             return st;
         }
@@ -2552,12 +2498,12 @@ void Recompiler::setST(biscuit::GPR top, ZydisDecodedOperand* operand, biscuit::
         case 32: {
             biscuit::FPR temp = scratchFPR();
             as.FCVT_S_D(temp, value);
-            as.FSW(temp, 0, leaAddBase(operand));
+            as.FSW(temp, 0, lea(operand, false));
             popScratch(); // the gpr address scratch
             break;
         }
         case 64: {
-            as.FSD(value, 0, leaAddBase(operand));
+            as.FSD(value, 0, lea(operand, false));
             popScratch(); // the gpr address scratch
             break;
         }
@@ -2611,25 +2557,119 @@ void Recompiler::unlinkAt(u8* address_of_jump) {
 }
 
 bool Recompiler::tryInlineSyscall() {
+    if (g_mode32) {
+        // Unimplemented for now
+        return false;
+    }
+
     switch (rax_value) {
 #define CASE(sysno, argcount)                                                                                                                        \
-    case sysno:                                                                                                                                      \
-        inlineSyscall(match_host(sysno), argcount);                                                                                                  \
+    case felix86_x86_64_##sysno:                                                                                                                     \
+        inlineSyscall(x64_to_riscv(felix86_x86_64_##sysno), argcount);                                                                               \
         return true
 
-        CASE(felix86_x86_64_read, 3);
-        CASE(felix86_x86_64_write, 3);
-        CASE(felix86_x86_64_mprotect, 3);
-        CASE(felix86_x86_64_munmap, 2);
-        CASE(felix86_x86_64_ioctl, 3);
-        CASE(felix86_x86_64_pread64, 4);
-        CASE(felix86_x86_64_pwrite64, 4);
-        CASE(felix86_x86_64_ppoll, 5);
-        CASE(felix86_x86_64_readv, 3);
-        CASE(felix86_x86_64_writev, 3);
-        CASE(felix86_x86_64_clock_gettime, 2);
-        CASE(felix86_x86_64_gettimeofday, 2);
-        CASE(felix86_x86_64_futex, 6);
+        CASE(unshare, 1);
+        CASE(setuid, 1);
+        CASE(write, 3);
+        CASE(io_getevents, 4);
+        CASE(get_robust_list, 3);
+        CASE(capset, 2);
+        CASE(getgid, 0);
+        CASE(fsync, 1);
+        CASE(membarrier, 2);
+        CASE(fallocate, 4);
+        CASE(tkill, 2);
+        CASE(set_mempolicy, 3);
+        CASE(set_tid_address, 1);
+        CASE(clock_getres, 2);
+        CASE(setsid, 0);
+        CASE(io_setup, 2);
+        CASE(semctl, 4);
+        CASE(sched_getattr, 4);
+        CASE(getpriority, 2);
+        CASE(waitid, 5);
+        CASE(sendto, 6);
+        CASE(getsockopt, 5);
+        CASE(sched_setaffinity, 3);
+        CASE(getegid, 0);
+        CASE(perf_event_open, 5);
+        CASE(connect, 3);
+        CASE(writev, 3);
+        CASE(ppoll, 5);
+        CASE(rt_sigpending, 2);
+        CASE(tgkill, 3);
+        CASE(geteuid, 0);
+        CASE(rt_tgsigqueueinfo, 4);
+        CASE(socket, 3);
+        CASE(setsockopt, 5);
+        CASE(capget, 2);
+        CASE(get_mempolicy, 5);
+        CASE(getpgid, 1);
+        CASE(setreuid, 2);
+        CASE(setfsuid, 1);
+        CASE(io_submit, 3);
+        CASE(wait4, 4);
+        CASE(sched_getaffinity, 3);
+        CASE(ioctl, 3);
+        CASE(recvmsg, 3);
+        CASE(munlock, 2);
+        CASE(accept, 3);
+        CASE(io_cancel, 3);
+        CASE(io_destroy, 1);
+        CASE(sched_rr_get_interval, 2);
+        CASE(pipe2, 2);
+        CASE(rt_sigtimedwait, 4);
+        CASE(getppid, 0);
+        CASE(pread64, 4);
+        CASE(getsid, 1);
+        CASE(socketpair, 4);
+        CASE(bind, 3);
+        CASE(nanosleep, 2);
+        CASE(prctl, 5);
+        CASE(getdents64, 3);
+        CASE(clock_gettime, 2);
+        CASE(semtimedop, 4);
+        CASE(recvfrom, 6);
+        CASE(setpgid, 2);
+        CASE(clock_nanosleep, 4);
+        CASE(mincore, 3);
+        CASE(readv, 3);
+        CASE(mlock, 2);
+        CASE(pselect6, 6);
+        CASE(set_robust_list, 2);
+        CASE(listen, 2);
+        CASE(mprotect, 3);
+        CASE(sched_yield, 0);
+        CASE(sched_setattr, 3);
+        CASE(read, 3);
+        CASE(pwrite64, 4);
+        CASE(madvise, 3);
+        CASE(inotify_init1, 1);
+        CASE(ptrace, 4);
+        CASE(gettid, 0);
+        CASE(getresuid, 3);
+        CASE(getrandom, 3);
+        CASE(getpeername, 3);
+        CASE(eventfd2, 2);
+        CASE(setgid, 1);
+        CASE(setregid, 2);
+        CASE(getuid, 0);
+        CASE(lookup_dcookie, 3);
+        CASE(setfsgid, 1);
+        CASE(exit_group, 1);
+        CASE(getresgid, 3);
+        CASE(sched_getscheduler, 1);
+        CASE(flock, 2);
+        CASE(mbind, 6);
+        CASE(getsockname, 3);
+        CASE(futex, 6);
+        CASE(sendmsg, 3);
+        CASE(kill, 2);
+        CASE(dup3, 3);
+        CASE(accept4, 4);
+        CASE(getpid, 0);
+        CASE(prlimit64, 4);
+        CASE(gettimeofday, 2);
 
 #undef CASE
     default: {
@@ -2743,7 +2783,7 @@ void Recompiler::printTrace() {
 }
 
 void Recompiler::linkIndirect() {
-    if (g_rsb) {
+    if (g_config.rsb) {
         as.SD(sp, offsetof(ThreadState, current_sp), threadStatePointer());
     }
 

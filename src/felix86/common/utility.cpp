@@ -324,6 +324,7 @@ void felix86_fxrstor(struct ThreadState* state, u64 address, bool fxrstor64) {
 
     state->fpu_cw = data->fcw;
     state->fpu_tw = data->ftw;
+    state->fpu_sw = data->fsw;
     state->fpu_top = (data->fsw >> 11) & 7;
     state->mxcsr = data->mxcsr;
     state->rmode = rounding_mode((x86RoundingMode)((state->mxcsr >> 13) & 3));
@@ -442,7 +443,7 @@ void dump_states() {
         dprintf(g_output_fd, ANSI_COLOR_RED "State %d (%ld):" ANSI_COLOR_RESET "\n", i, state->tid);
         print_address(state->rip.toHost().raw());
 
-        if (g_calltrace) {
+        if (g_config.calltrace) {
             auto it = state->calltrace.rbegin();
             while (it != state->calltrace.rend()) {
                 print_address((*it).raw());
@@ -471,8 +472,7 @@ void update_symbols() {
         int result = sscanf(line.c_str(), "%lx-%lx %*s %*s %*s %*s %s", &start, &end, buffer);
         if (result == 3) {
             if (!std::filesystem::is_regular_file(buffer)) {
-                // Not a regular file, either a library outside the chroot or something like
-                // /dev/zero, so we don't add it
+                // Not a regular file, perhaps something like /dev/zero, so we don't add it
                 VERBOSE("Buffer: %s is not regular file", buffer);
                 continue;
             }
@@ -483,7 +483,7 @@ void update_symbols() {
                 continue;
             }
 
-            if (std::string(buffer).find("/felix86") == 0) {
+            if (std::string(buffer).find(g_config.rootfs_path.string()) != 0) {
                 // It's our emulator or its libraries, skip
                 continue;
             }
@@ -659,7 +659,7 @@ void print_address(u64 address) {
 
     if (symbol_str) {
         u64 offset = address - symbol->start;
-        dprintf(g_output_fd,
+        Logger::log(
             ANSI_COLOR_CYAN "%s+0x%lx" ANSI_COLOR_RESET " in " ANSI_COLOR_YELLOW "%s" ANSI_COLOR_RESET " (0x%lx)\n",
             symbol_trunc.c_str(),
             offset,
@@ -667,7 +667,7 @@ void print_address(u64 address) {
             address
         );
     } else {
-        dprintf(g_output_fd,
+        Logger::log(
             ANSI_COLOR_CYAN "0x%lx" ANSI_COLOR_RESET " in " ANSI_COLOR_YELLOW "%s" ANSI_COLOR_RESET "\n",
             address,
             filename_offset.c_str()
@@ -820,9 +820,8 @@ void felix86_fcos(ThreadState* state) {
     memcpy(&state->fp[state->fpu_top], &result, sizeof(double));
 }
 
-template <class Int, int Size = 128 / (sizeof(Int) * 8), int UpperBound = Size - 1 /* 7 or 15 */, u32 Mask = (1u << Size) - 1u>
+template <class Int, int Count = 128 / (sizeof(Int) * 8), int UpperBound = Count - 1 /* 7 or 15 */, u32 Mask = (1u << Count) - 1u>
 void pcmpxstrx_impl(ThreadState* state, pcmpxstrx type, Int* dst, Int* src, u8 control) {
-    WARN("PCMPxSTRx called, known to have broken functionality ATM");
     enum Mode {
         EqualAny = 0b00,
         Ranges = 0b01,
@@ -847,15 +846,15 @@ void pcmpxstrx_impl(ThreadState* state, pcmpxstrx type, Int* dst, Int* src, u8 c
     Polarity polarity = (Polarity)((control >> 4) & 0b11);
     bool output_selection = (control >> 6) & 1;
 
-    std::array<bool, Size * Size> BoolRes = {0};
+    std::array<bool, Count * Count> BoolRes{};
     if (implicit) {
-        dst_length = Size;
-        src_length = Size;
+        dst_length = Count;
+        src_length = Count;
 
         bool dst_length_found = false;
         bool src_length_found = false;
 
-        for (int i = 0; i < Size; i++) {
+        for (int i = 0; i < Count; i++) {
             if (!dst_length_found && dst[i] == 0) {
                 dst_length = i;
                 dst_length_found = true;
@@ -878,16 +877,16 @@ void pcmpxstrx_impl(ThreadState* state, pcmpxstrx type, Int* dst, Int* src, u8 c
         ASSERT(src_length >= 0);
     }
 
-    for (int j = 0; j < Size; j++) {
-        for (int i = 0; i < Size; i++) {
+    for (int j = 0; j < Count; j++) {
+        for (int i = 0; i < Count; i++) {
             if (mode == Ranges) {
                 if (i % 2 == 0) {
-                    BoolRes[j * Size + i] = src[j] >= dst[i];
+                    BoolRes[j * Count + i] = src[j] >= dst[i];
                 } else {
-                    BoolRes[j * Size + i] = src[j] <= dst[i];
+                    BoolRes[j * Count + i] = src[j] <= dst[i];
                 }
             } else {
-                BoolRes[j * Size + i] = dst[i] == src[j];
+                BoolRes[j * Count + i] = dst[i] == src[j];
             }
         }
     }
@@ -903,13 +902,13 @@ void pcmpxstrx_impl(ThreadState* state, pcmpxstrx type, Int* dst, Int* src, u8 c
         case Ranges:
         case EqualAny: {
             if (!dstinv && !srcinv) {
-                return BoolRes[src_index * Size + dst_index];
+                return BoolRes[src_index * Count + dst_index];
             }
             return false;
         }
         case EqualEach: {
             if (!dstinv && !srcinv) {
-                return BoolRes[src_index * Size + dst_index];
+                return BoolRes[src_index * Count + dst_index];
             }
 
             if (dstinv && srcinv) {
@@ -920,7 +919,7 @@ void pcmpxstrx_impl(ThreadState* state, pcmpxstrx type, Int* dst, Int* src, u8 c
         }
         case EqualOrdered: {
             if (!dstinv && !srcinv) {
-                return BoolRes[src_index * Size + dst_index];
+                return BoolRes[src_index * Count + dst_index];
             }
 
             if ((dstinv && srcinv) || (dstinv && !srcinv)) {
@@ -963,15 +962,20 @@ void pcmpxstrx_impl(ThreadState* state, pcmpxstrx type, Int* dst, Int* src, u8 c
         break;
     }
     case EqualOrdered: {
-        intres1 = Mask;
-        for (int j = 0; j <= UpperBound; j++) {
-            for (int i = 0; i <= UpperBound - j; i++) {
-                for (int k = j; k <= UpperBound; k++) {
-                    u32 bit = overrideIfInvalid(i, k);
-                    intres1 &= bit << j;
+        intres1 = 0;
+        for (int j = 0; j < src_length; j++) {
+            bool match = true;
+            for (int i = 0; i < dst_length && (j + i) < src_length; i++) {
+                if (!overrideIfInvalid(i, j + i)) {
+                    match = false;
+                    break;
                 }
             }
+            if (match) {
+                intres1 |= (1 << j);
+            }
         }
+        break;
     }
     }
 
@@ -999,11 +1003,15 @@ void pcmpxstrx_impl(ThreadState* state, pcmpxstrx type, Int* dst, Int* src, u8 c
     if (index) {
         // pcmpxstri instructions
         static_assert(X86_REF_RCX == 1);
-        if (!output_selection) {
-            state->gprs[1] = __builtin_ctz(intres2);
+        if (intres2 == 0) {
+            state->gprs[1] = Count;
         } else {
-            u32 shifted = intres2 << (32 - Size);
-            state->gprs[1] = (Size - 1) - __builtin_clz(shifted);
+            if (!output_selection) {
+                state->gprs[1] = __builtin_ctz(intres2);
+            } else {
+                u32 shifted = intres2 << (32 - Count);
+                state->gprs[1] = (Count - 1) - __builtin_clz(shifted);
+            }
         }
     } else {
         // pcmpxstrm instructions
@@ -1014,8 +1022,8 @@ void pcmpxstrx_impl(ThreadState* state, pcmpxstrx type, Int* dst, Int* src, u8 c
 
             state->xmm[0].data[0] = intres2;
         } else {
-            static_assert(Size == 8 || Size == 16);
-            if (Size == 8) {
+            static_assert(Count == 8 || Count == 16);
+            if (Count == 16) {
                 u8* xmm0 = (u8*)&state->xmm[0].data[0];
                 for (int i = 0; i < 16; i++) {
                     u32 bit = (intres2 >> i) & 1;
@@ -1040,8 +1048,9 @@ void pcmpxstrx_impl(ThreadState* state, pcmpxstrx type, Int* dst, Int* src, u8 c
     }
 
     state->cf = intres2 != 0;
-    state->zf = src_length < Size;
-    state->sf = dst_length < Size;
+    // Works for both implicit and explicit variants
+    state->zf = src_length < Count;
+    state->sf = dst_length < Count;
     state->of = intres2 & 1;
     state->af = 0;
     state->pf = 0;
@@ -1071,4 +1080,99 @@ void felix86_pcmpxstrx(ThreadState* state, pcmpxstrx type, u8* dst, u8* src, u8 
     }
 
     __builtin_unreachable();
+}
+
+u64 mmap_min_addr() {
+    static u64 addr = -1ull;
+    if (addr == -1ull) {
+        FILE* file = fopen("/proc/sys/vm/mmap_min_addr", "r");
+        if (!file) {
+            WARN("Failed to open /proc/sys/vm/mmap_min_addr");
+            addr = 0x10000;
+        } else {
+            u64 mmap_min_addr;
+            if (fscanf(file, "%lu", &mmap_min_addr) != 1) {
+                WARN("Failed to read mmap_min_addr");
+                addr = 0x10000;
+            } else {
+                addr = mmap_min_addr;
+            }
+            fclose(file);
+        }
+    }
+
+    return addr;
+}
+
+void felix86_set_segment(ThreadState* state, u64 value, ZydisRegister segment) {
+    int index = value >> 3;
+    ASSERT_MSG(index >= 12 && index <= 14, "Segment register index is not 12, 13, 14");
+
+    index -= 12;
+
+    switch (segment) {
+    case ZYDIS_REGISTER_CS: {
+        state->cs = value;
+        state->csbase = state->gdt[index];
+        break;
+    }
+    case ZYDIS_REGISTER_DS: {
+        state->ds = value;
+        state->dsbase = state->gdt[index];
+        break;
+    }
+    case ZYDIS_REGISTER_SS: {
+        state->ss = value;
+        state->ssbase = state->gdt[index];
+        break;
+    }
+    case ZYDIS_REGISTER_ES: {
+        state->es = value;
+        state->esbase = state->gdt[index];
+        break;
+    }
+    case ZYDIS_REGISTER_FS: {
+        state->fs = value;
+        state->fsbase = state->gdt[index];
+        break;
+    }
+    case ZYDIS_REGISTER_GS: {
+        state->gs = value;
+        state->gsbase = state->gdt[index];
+        break;
+    }
+    default: {
+        UNREACHABLE();
+        break;
+    }
+    }
+}
+
+void felix86_fprem(ThreadState* state) {
+    const int top = state->fpu_top;
+    ASSERT(top >= 0 && top <= 7);
+    const u64 st0 = state->fp[top];
+    const u64 st1 = state->fp[(top + 1) & 0b111];
+    double st0d, st1d;
+    memcpy(&st0d, &st0, 8);
+    memcpy(&st1d, &st1, 8);
+    const int exp0 = (st0 >> 52) & 0x7FF;
+    const int exp1 = (st1 >> 52) & 0x7FF;
+    const int D = exp0 - exp1;
+    if (D < 64) {
+        const i64 Q = (i64)(trunc(st0d / st1d));
+        st0d -= st1d * Q;
+        state->fpu_sw &= ~(C0_BIT | C1_BIT | C2_BIT | C3_BIT);
+        state->fpu_sw |= (Q & 1) ? C1_BIT : 0;
+        state->fpu_sw |= (Q & 2) ? C3_BIT : 0;
+        state->fpu_sw |= (Q & 4) ? C0_BIT : 0;
+    } else {
+        const double p2 = exp2(D - 32);
+        const i64 Q = trunc((st0d / st1d) / p2);
+        st0d -= st1d * Q * p2;
+        state->fpu_sw |= C2_BIT;
+    }
+
+    // Writeback the new ST(0) value
+    memcpy(&state->fp[top], &st0d, 8);
 }

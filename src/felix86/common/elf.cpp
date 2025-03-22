@@ -9,10 +9,12 @@
 #include <sys/personality.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
+#include <sys/sysinfo.h>
 #include "felix86/common/debug.hpp"
 #include "felix86/common/elf.hpp"
 #include "felix86/common/global.hpp"
 #include "felix86/common/log.hpp"
+#include "felix86/hle/mmap.hpp"
 
 // Not a full ELF implementation, but one that suits our needs as a loader of
 // both the executable and the dynamic linker, and one that only supports x86/x86_64
@@ -407,11 +409,12 @@ void Elf::Load(const std::filesystem::path& path) {
             interpreter_str.resize(phdr.filesz());
             fseek(file, phdr.offset(), SEEK_SET);
             result = fread(interpreter_str.data(), 1, phdr.filesz(), file);
-            if (result != phdr.filesz()) {
+            if ((u64)result != phdr.filesz()) {
                 ERROR("Failed to read interpreter from file %s", path.c_str());
             }
 
-            interpreter = std::filesystem::path(interpreter_str);
+            ASSERT(!interpreter_str.empty() && interpreter_str[0] == '/');
+            interpreter = g_config.rootfs_path / (&interpreter_str[1]);
             break;
         }
         case PT_GNU_STACK: {
@@ -440,33 +443,22 @@ void Elf::Load(const std::filesystem::path& path) {
     VERBOSE("Highest vaddr: %lx", highest_vaddr);
 
     u8* base_ptr;
-    u64 base_hint = is_interpreter ? g_interpreter_base_hint : g_executable_base_hint;
+    u64 base_hint = is_interpreter ? g_config.interpreter_base : g_config.executable_base;
     if ((base_hint & 0xFFF) != 0) {
         ERROR("Base hint is not page aligned for: %s", is_interpreter ? "Interpreter" : "Executable");
     }
 
     if (ehdr.type() == ET_DYN) {
-        // TODO: fix this hack
-        if (mode32 && !is_interpreter) {
-            WARN("Setting base hint to 0x100000");
-            base_hint = 0x100000 + g_address_space_base;
-        } else if (mode32 && is_interpreter) {
-            WARN("Setting base hint to 0x2000000");
-            base_hint = 0x2000000 + g_address_space_base;
-        }
-
-        // In 32-bit mode the 4GiB address space was already allocated at these addresses so we use MAP_FIXED instead of NOREPLACE
-        auto fixed_flag = mode32 ? MAP_FIXED : MAP_FIXED_NOREPLACE;
+        // In 32-bit mode the Mapper will properly choose a 32-bit address
         if (base_hint) {
-            base_ptr = (u8*)mmap((u8*)base_hint, highest_vaddr, 0, MAP_PRIVATE | MAP_ANONYMOUS | fixed_flag, -1, 0);
+            base_ptr = (u8*)g_mapper->map((u8*)base_hint, highest_vaddr, 0, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
         } else {
-            base_ptr = (u8*)mmap(nullptr, highest_vaddr, 0, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            base_ptr = (u8*)g_mapper->map(nullptr, highest_vaddr, 0, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         }
 
         unmap_me.push_back({base_ptr, highest_vaddr});
     } else {
-        // Start at the address space base. 0 in 64-bit, some address in 32-bit mode.
-        base_ptr = (u8*)g_address_space_base;
+        base_ptr = 0;
     }
 
     if (base_ptr == MAP_FAILED) {
@@ -502,9 +494,7 @@ void Elf::Load(const std::filesystem::path& path) {
             }
 
             if (segment_size) {
-                void* addr = mmap((void*)segment_base, segment_size, prot, MAP_PRIVATE | MAP_FIXED, fd, offset);
-                VERBOSE("Running mmap(%p, %lx, 0, MAP_PRIVATE | MAP_FIXED, %d, %lx)", (void*)segment_base, segment_size, fd, offset);
-
+                void* addr = g_mapper->map((void*)segment_base, segment_size, prot, MAP_PRIVATE | MAP_FIXED, fd, offset);
                 if (addr == MAP_FAILED) {
                     ERROR("Failed to allocate memory for segment in file %s. Error: %s", path.c_str(), strerror(errno));
                 } else if (addr != (void*)segment_base) {
@@ -531,7 +521,7 @@ void Elf::Load(const std::filesystem::path& path) {
 
                 if (bss_page_start != bss_page_end) {
                     size_t excess_size = bss_page_end - bss_page_start;
-                    void* bss_excess = mmap((void*)bss_page_start, excess_size, prot, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0);
+                    void* bss_excess = g_mapper->map((void*)bss_page_start, excess_size, prot, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0);
                     if (bss_excess == MAP_FAILED) {
                         ERROR("Failed to allocate memory for BSS in file %s", path.c_str());
                     }
@@ -552,20 +542,7 @@ void Elf::Load(const std::filesystem::path& path) {
     if (!is_interpreter) {
         // Don't add to unmap_me, unmapped elsewhere
         program_base = base_ptr;
-        if (!g_brk_base_hint) {
-            g_current_brk = (u64)mmap(base_ptr + PAGE_ALIGN(highest_vaddr), brk_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        } else {
-            g_current_brk =
-                (u64)mmap((void*)g_brk_base_hint, brk_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-        }
-        if ((void*)g_current_brk == MAP_FAILED) {
-            ERROR("Failed to allocate memory for brk in file %s", path.c_str());
-        }
-        g_initial_brk = g_current_brk;
-        g_current_brk_size = brk_size;
-        prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, g_current_brk, brk_size, "brk");
-        VERBOSE("BRK base at %p", (void*)g_current_brk);
-
+        g_program_end = (u64)(base_ptr + PAGE_ALIGN(highest_vaddr));
         g_executable_start = HostAddress{(u64)(base_ptr + lowest_vaddr)};
         g_executable_end = HostAddress{PAGE_ALIGN((u64)(base_ptr + highest_vaddr))};
         MemoryMetadata::AddRegion("Executable", g_executable_start.raw(), g_executable_end.raw());
@@ -716,7 +693,7 @@ void Elf::AddSymbols(std::map<u64, Symbol>& symbols, const std::filesystem::path
                 const char* symbol = string_table.data() + index;
                 if (elf_symbols[i]->address() == 0 || elf_symbols[i]->type() != STT_FUNC) {
                     // We don't care about this symbol
-                    VERBOSE("Skipping symbol %s (address: %lx)", symbol, elf_symbols[i]->address());
+                    // VERBOSE("Skipping symbol %s (address: %lx)", symbol, elf_symbols[i]->address());
                     continue;
                 }
 
@@ -860,7 +837,8 @@ void Elf::AddSymbols(std::map<u64, Symbol>& symbols, const std::filesystem::path
                 // VERBOSE("Added new dynamic symbol `%s` at %lx-%lx", new_symbol.name.c_str(), new_symbol.start, new_symbol.start + new_symbol.size);
             }
         } else {
-            VERBOSE("symtab > start_of_data && (u8*)strtab > start_of_data failed: %p > %p && %p > %p", symtab, start_of_data, strtab, start_of_data);
+            // VERBOSE("symtab > start_of_data && (u8*)strtab > start_of_data failed: %p > %p && %p > %p", symtab, start_of_data, strtab,
+            // start_of_data);
         }
     } else {
         VERBOSE("dynamic section not found for file %s", path.c_str());

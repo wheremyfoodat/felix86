@@ -6,19 +6,28 @@
 #include <fmt/format.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+#include <sys/prctl.h>
 #include <sys/random.h>
 #include "felix86/common/script.hpp"
 #include "felix86/emulator.hpp"
+#include "felix86/hle/brk.hpp"
 #include "felix86/hle/thread.hpp"
 #include "felix86/v2/recompiler.hpp"
 
 extern char** environ;
 
+static char x86_string[] = "i686";
 static char x86_64_string[] = "x86_64";
 
-u64 stack_push(u64 stack, u64 value) {
+u64 stack_push64(u64 stack, u64 value) {
     stack -= 8;
     *(u64*)stack = value;
+    return stack;
+}
+
+u64 stack_push32(u64 stack, u64 value) {
+    stack -= 4;
+    *(u32*)stack = value;
     return stack;
 }
 
@@ -29,7 +38,7 @@ u64 stack_push_string(u64 stack, const char* str) {
     return stack;
 }
 
-typedef struct {
+struct auxv64_t {
     int a_type;
 
     union {
@@ -37,18 +46,23 @@ typedef struct {
         void* a_ptr;
         void (*a_fnc)();
     } a_un;
-} auxv_t;
+};
+
+struct auxv32_t {
+    int a_type;
+    u32 a_val;
+};
 
 std::pair<void*, size_t> Emulator::setupMainStack(ThreadState* state) {
-    ssize_t argc = g_config.argv.size();
+    ssize_t argc = g_params.argv.size();
     if (argc > 1) {
         VERBOSE("Passing %zu arguments to guest executable", argc - 1);
         for (ssize_t i = 1; i < argc; i++) {
-            VERBOSE("Guest argument %zu: %s", i, g_config.argv[i].c_str());
+            VERBOSE("Guest argument %zu: %s", i, g_params.argv[i].c_str());
         }
     }
 
-    const char* path = g_config.argv[0].c_str();
+    const char* path = g_params.argv[0].c_str();
 
     std::shared_ptr<Elf> elf = g_fs->GetExecutable();
 
@@ -62,19 +76,19 @@ std::pair<void*, size_t> Emulator::setupMainStack(ThreadState* state) {
     rsp = stack_push_string(rsp, path);
     const char* program_name = (const char*)rsp;
 
-    rsp = stack_push_string(rsp, x86_64_string);
+    rsp = stack_push_string(rsp, g_mode32 ? x86_string : x86_64_string);
     const char* platform_name = (const char*)rsp;
 
     for (ssize_t i = 0; i < argc; i++) {
-        rsp = stack_push_string(rsp, g_config.argv[i].c_str());
+        rsp = stack_push_string(rsp, g_params.argv[i].c_str());
         argv_addresses[i] = rsp;
     }
 
-    size_t envc = g_config.envp.size();
+    size_t envc = g_params.envp.size();
     u64* envp_addresses = (u64*)alloca(envc * sizeof(u64));
 
     for (size_t i = 0; i < envc; i++) {
-        const char* env = g_config.envp[i].c_str();
+        const char* env = g_params.envp[i].c_str();
         rsp = stack_push_string(rsp, env);
         envp_addresses[i] = rsp;
     }
@@ -85,8 +99,8 @@ std::pair<void*, size_t> Emulator::setupMainStack(ThreadState* state) {
     }
 
     // Push 128-bits to stack that are gonna be used as random data
-    rsp = stack_push(rsp, 0);
-    rsp = stack_push(rsp, 0);
+    rsp = stack_push64(rsp, 0);
+    rsp = stack_push64(rsp, 0);
     u64 rand_address = rsp;
 
     int result = getrandom((void*)rand_address, 16, 0);
@@ -95,7 +109,7 @@ std::pair<void*, size_t> Emulator::setupMainStack(ThreadState* state) {
         return pair;
     }
 
-    auxv_t auxv_entries[18] = {
+    std::pair<u64, u64> auxv_entries[18] = {
         {AT_PAGESZ, {4096}},
         {AT_EXECFN, {(u64)program_name}},
         {AT_CLKTCK, {100}},
@@ -116,36 +130,36 @@ std::pair<void*, size_t> Emulator::setupMainStack(ThreadState* state) {
         {AT_NULL, {0}} // null terminator
     };
 
-    VERBOSE("AT_PHDR: %p", auxv_entries[12].a_un.a_ptr);
-    VERBOSE("AT_PHENT: %lu", auxv_entries[13].a_un.a_val);
-    VERBOSE("AT_PHNUM: %lu", auxv_entries[14].a_un.a_val);
-    VERBOSE("AT_RANDOM: %p", auxv_entries[15].a_un.a_ptr);
-    VERBOSE("AT_ENTRY: %p", auxv_entries[3].a_un.a_ptr);
     u16 auxv_count = std::size(auxv_entries);
 
     // This is the varying amount of space needed for the stack
     // past our own information block
     // It's important to calculate this because the RSP final
     // value needs to be aligned to 16 bytes
-    u16 size_needed = 16 * auxv_count + // aux vector entries
-                      8 +               // null terminator
-                      envc * 8 +        // envp
-                      8 +               // null terminator
-                      argc * 8 +        // argv
-                      8;                // argc
+    int pointer_size = g_mode32 ? 4 : 8;
+    u16 size_needed = (2 * pointer_size) * auxv_count + // aux vector entries
+                      pointer_size +                    // null terminator
+                      envc * pointer_size +             // envp
+                      pointer_size +                    // null terminator
+                      argc * pointer_size +             // argv
+                      pointer_size;                     // argc
 
-    u64 final_rsp = rsp - size_needed;
-    if (final_rsp & 0xF) {
-        rsp -= 8;
+    // 16-byte align the RSP
+    if (size_needed & 0xF) {
+        rsp -= 16 - (size_needed & 0xF);
     }
 
+    u64 final_rsp = rsp - size_needed;
+
+    u64 (*stack_push)(u64, u64) = g_mode32 ? stack_push32 : stack_push64;
+
     for (int i = auxv_count - 1; i >= 0; i--) {
-        rsp = stack_push(rsp, (u64)auxv_entries[i].a_un.a_ptr);
-        rsp = stack_push(rsp, auxv_entries[i].a_type);
+        rsp = stack_push(rsp, auxv_entries[i].second);
+        rsp = stack_push(rsp, auxv_entries[i].first);
     }
 
     g_guest_auxv = HostAddress{rsp};
-    g_guest_auxv_size = auxv_count * 16;
+    g_guest_auxv_size = auxv_count * pointer_size;
 
     // End of environment variables
     rsp = stack_push(rsp, 0);
@@ -163,6 +177,7 @@ std::pair<void*, size_t> Emulator::setupMainStack(ThreadState* state) {
     // Argument count
     rsp = stack_push(rsp, argc);
 
+    ASSERT_MSG(rsp == final_rsp, "%lx == %lx", rsp, final_rsp);
     if (rsp & 0xF) {
         ERROR("Stack not aligned to 16 bytes");
         return pair;
@@ -206,76 +221,45 @@ void* Emulator::CompileNext(ThreadState* thread_state) {
         thread_state->recompiler->trace(thread_state->GetRip().toHost().raw());
     }
 
-#if 0
-    if (thread_state->rip.raw() == 0x42F1C0) {
-        u64 rdi = thread_state->gprs[X86_REF_RDI];
-        u64 rsi = thread_state->gprs[X86_REF_RSI];
-        u64 rdx = thread_state->gprs[X86_REF_RDX];
-        printf("Jumping to the thing: amd_patch(%lx, %lx)\n", rdi, rsi, rdx);
-        fflush(stdout);
-    }
-#endif
+    ASSERT_MSG(!next_block.isNull(), "getCompiledBlock returned null?");
 
     return (void*)next_block.raw();
-}
-
-void Emulator::initialize32BitAddressSpace() {
-    constexpr u64 GB = 1024 * 1024 * 1024;
-    constexpr u64 size = 2 * GB + 4 * GB + 2 * GB;
-
-    // Find a 32-bit address space that is not used by the host
-    // We also allocate a guard on either side of 2GB to catch
-    // any out-of-bounds accesses
-    u8* cur = (u8*)0x1'0000'0000;
-    int attempts = 0; // don't try forever
-    while (true) {
-        void* addr = mmap(cur, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
-        if (addr != MAP_FAILED) {
-            ASSERT(addr == cur);
-            break;
-        }
-
-        if (++attempts >= 100) {
-            ERROR("Failed to find a 32-bit address space after %d", attempts);
-            return;
-        }
-
-        cur += size;
-    }
-
-    g_address_space_base = (u64)(cur + 2 * GB);
-    VERBOSE("32-bit address space at %p", (void*)g_address_space_base);
 }
 
 void Emulator::ExitDispatcher(ThreadState* state) {
     state->recompiler->exitDispatcher(state);
 }
 
-void Emulator::uninitialize32BitAddressSpace() {
-    ASSERT(g_address_space_base != 0);
-    constexpr u64 GB = 1024 * 1024 * 1024;
-    constexpr u64 size = 2 * GB + 4 * GB + 2 * GB;
-
-    u8* addr = (u8*)g_address_space_base - 2 * GB;
-    munmap(addr, size);
-}
-
-std::pair<ExitReason, int> Emulator::Start(const Config& config) {
-    g_config = config;
+std::pair<ExitReason, int> Emulator::Start(const StartParameters& config) {
+    g_params = config;
     ExitReason exit_reason;
     int exit_code;
-    g_config = config;
+    g_params = config;
 
     g_process_globals.initialize();
     g_fs = std::make_unique<Filesystem>();
 
-    Elf::PeekResult peek = Elf::Peek(g_config.executable_path);
+    Elf::PeekResult peek = Elf::Peek(g_params.executable_path);
+    std::filesystem::path script_path;
+    bool is_script = false;
     if (peek == Elf::PeekResult::NotElf) {
-        Script::PeekResult peek = Script::Peek(g_config.executable_path);
+        Script::PeekResult peek = Script::Peek(g_params.executable_path);
         if (peek == Script::PeekResult::Script) {
-            Script script(g_config.executable_path);
+            is_script = true;
+            Script script(g_params.executable_path);
+            script_path = g_params.executable_path;
             const std::filesystem::path& interpreter = script.GetInterpreter();
             const std::string& args = script.GetArgs();
+
+            std::string path = g_params.executable_path;
+            ASSERT(path.find(g_config.rootfs_path.string()) == 0);
+
+            // We need to remove the rootfs prefix in the arguments, because the interpreter is going to see it
+            path = path.substr(g_config.rootfs_path.string().size());
+            ASSERT(!path.empty());
+            ASSERT(path[0] == '/');
+
+            g_params.argv[0] = path;
 
             // Scripts start with a line that goes #! (usually) and that means
             // use the interpreter after #!. This can be bash, zsh, python, whatever.
@@ -286,34 +270,70 @@ std::pair<ExitReason, int> Emulator::Start(const Config& config) {
                 if (it->empty())
                     continue;
 
-                g_config.argv.push_front(*it);
+                g_params.argv.push_front(*it);
             }
 
-            g_config.argv.push_front(interpreter.string());
+            g_params.argv.push_front(interpreter.string());
 
             std::string final;
-            for (auto& arg : g_config.argv) {
+            for (auto& arg : g_params.argv) {
                 final += arg + " ";
             }
 
             LOG("I built the script arguments: %s", final.c_str());
 
-            g_config.executable_path = interpreter;
+            g_params.executable_path = interpreter;
         } else {
-            ERROR("Unknown file format: %s", g_config.executable_path.c_str());
+            ERROR("Unknown file format: %s", g_params.executable_path.c_str());
         }
     }
 
     if (peek == Elf::PeekResult::Elf32) {
         g_mode32 = true;
-        initialize32BitAddressSpace();
+        // Allocate a 2GiB guard right after to catch bad addresses (that may need to loop around the address space?)
+        constexpr u64 GB = 1024 * 1024 * 1024;
+        void* guard = mmap((void*)(4 * GB), 2 * GB, PROT_NONE, MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        if (guard == MAP_FAILED) {
+            ERROR("I failed to allocate the 32-bit guard");
+        }
+
+        prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, 4 * GB, 2 * GB, "guard");
     } else {
         g_mode32 = false;
     }
 
-    g_fs->LoadExecutable(g_config.executable_path);
+    g_fs->LoadExecutable(g_params.executable_path);
+
+    BRK::allocate();
+
+    // Only set the CWD for the initial process, don't change it around when new ones come by with execve
+    if (!g_execve_process) {
+        const char* cwd = getenv("FELIX86_CWD");
+
+        if (cwd) {
+            std::string scwd = cwd;
+            ASSERT_MSG(scwd.find(g_config.rootfs_path.string()) == 0, "FELIX86_CWD is not inside FELIX86_ROOTFS!");
+            int res = chdir(cwd);
+            if (res == -1) {
+                WARN("Failed to chdir to %s", cwd);
+            }
+        } else {
+            int res;
+            if (is_script) {
+                // executable_path here is the shell itself, parent path would be /usr/bin, we wanna be where the script is
+                res = chdir(script_path.parent_path().c_str());
+            } else {
+                res = chdir(g_params.executable_path.parent_path().c_str());
+            }
+
+            if (res == -1) {
+                WARN("Failed to chdir to %s", g_params.executable_path.parent_path().c_str());
+            }
+        }
+    }
+
     ThreadState* main_state = ThreadState::Create(nullptr);
-    main_state->signal_table = SignalHandlerTable::Create(*g_process_globals.memory, nullptr);
+    main_state->signal_table = SignalHandlerTable::Create(nullptr);
     main_state->SetRip(g_fs->GetEntrypoint());
 
     auto [stack, size] = setupMainStack(main_state);
@@ -337,10 +357,6 @@ std::pair<ExitReason, int> Emulator::Start(const Config& config) {
     exit_reason = main_state->exit_reason;
     exit_code = main_state->exit_code;
 
-    if (g_mode32) {
-        uninitialize32BitAddressSpace();
-    }
-
     munmap(stack, size);
     munmap((void*)g_initial_brk, g_current_brk_size);
     g_fs.reset();
@@ -357,10 +373,6 @@ void Emulator::StartTest(const TestConfig& config, GuestAddress stack) {
     ThreadState* main_state = ThreadState::Create(nullptr);
     main_state->SetGpr(X86_REF_RSP, stack.raw());
     main_state->SetRip(config.entrypoint.toGuest());
-
-    if (g_mode32) {
-        initialize32BitAddressSpace();
-    }
 
     Threads::StartThread(main_state);
 }
@@ -379,7 +391,7 @@ void Emulator::LinkIndirect(u64 host_address, u64 guest_address, u8* link_addres
     as.LD(t0, &guest);
     as.BNE(t0, t1, &unlink_indirect);
     as.LD(t2, &host);
-    if (g_rsb) {
+    if (g_config.rsb) {
         as.JALR(t2); // push to rsb
     } else {
         as.JR(t2);

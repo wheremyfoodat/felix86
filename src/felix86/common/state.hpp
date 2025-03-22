@@ -6,6 +6,11 @@
 #include "felix86/common/utility.hpp"
 #include "felix86/hle/signals.hpp"
 
+#define C0_BIT (1 << 8)
+#define C1_BIT (1 << 9)
+#define C2_BIT (1 << 10)
+#define C3_BIT (1 << 14)
+
 struct Recompiler;
 
 typedef enum : u8 {
@@ -120,12 +125,25 @@ struct ThreadState {
     bool sf{};
     bool of{};
     bool df{};
+    // Actual segment values
+    u16 gs{};
+    u16 fs{};
+    u16 cs{};
+    u16 ds{};
+    u16 ss{};
+    u16 es{};
+    // Base addresses (either fsbase/gsbase on 64-bit mode or all of them set by ie. mov gs, ax & on set_thread_area in 32-bit mode)
     u64 gsbase{};
     u64 fsbase{};
+    u64 csbase{};
+    u64 dsbase{};
+    u64 ssbase{};
+    u64 esbase{};
     u32 mxcsr{0x1F80}; // default value
     RMode rmode{RMode::RNE};
     u16 fpu_cw{};
     u16 fpu_tw{};
+    u16 fpu_sw{};
     u8 fpu_top{};
 
     pid_t* clear_tid_address = nullptr;
@@ -153,6 +171,10 @@ struct ThreadState {
     bool mode32 = false; // 32-bit execution mode, changes the behavior of some instructions and the decoder
 
     u64 current_sp = 0;
+
+    u32 gdt[3]{};
+
+    u64 persona = 0;
 
     // We need a place to save execution frames so we can return from the JIT back to C code.
     // It can't be the stack, we use that for return stack buffer optimization.

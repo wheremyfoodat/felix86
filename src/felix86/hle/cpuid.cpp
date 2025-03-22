@@ -30,6 +30,18 @@ constexpr u32 NO_SUBLEAF = 0xFFFFFFFF;
     (Cpuid){0x80000004, NO_SUBLEAF, 0x20342029, 0x20555043, 0x30382E32, 0x007A4847},
 };
 
+[[maybe_unused]] constexpr std::array p4_mappings_32 = {
+    // Pentium 4 CPU, no x86-64
+    (Cpuid){0x00000000, NO_SUBLEAF, 0x00000002, 0x756E6547, 0x6C65746E, 0x49656E69},
+    (Cpuid){0x00000001, NO_SUBLEAF, 0x00000F29, 0x00020809, 0x00004400, 0xBFEBFBFF},
+    (Cpuid){0x00000002, NO_SUBLEAF, 0x665B5001, 0x00000000, 0x00000000, 0x007B7040},
+    (Cpuid){0x80000000, NO_SUBLEAF, 0x80000004, 0x00000000, 0x00000000, 0x00000000},
+    (Cpuid){0x80000001, NO_SUBLEAF, 0x00000000, 0x00000000, 0x00000000, 0x00000000},
+    (Cpuid){0x80000002, NO_SUBLEAF, 0x20202020, 0x20202020, 0x20202020, 0x6E492020},
+    (Cpuid){0x80000003, NO_SUBLEAF, 0x286C6574, 0x50202952, 0x69746E65, 0x52286D75},
+    (Cpuid){0x80000004, NO_SUBLEAF, 0x20342029, 0x20555043, 0x30382E32, 0x007A4847},
+};
+
 [[maybe_unused]] constexpr std::array nehalem_mappings = {
     // http://users.atw.hu/instlatx64/GenuineIntel/GenuineIntel00106A2_Nehalem-EP_CPUID.txt
     (Cpuid){0x00000000, NO_SUBLEAF, 0x0000000A, 0x756E6547, 0x6C65746E, 0x49656E69},
@@ -57,6 +69,7 @@ constexpr u32 NO_SUBLEAF = 0xFFFFFFFF;
 };
 
 std::span<const Cpuid> selected_mappings = p4_mappings;
+std::span<const Cpuid> selected_mappings_32 = p4_mappings_32;
 
 void felix86_cpuid(ThreadState* thread_state) {
     u32 eax = 0;
@@ -67,7 +80,8 @@ void felix86_cpuid(ThreadState* thread_state) {
     u32 subleaf = thread_state->GetGpr(X86_REF_RCX);
     bool found = false;
 
-    for (const Cpuid& cpuid : selected_mappings) {
+    auto& mappings = g_mode32 ? selected_mappings_32 : selected_mappings;
+    for (const Cpuid& cpuid : mappings) {
         if (cpuid.leaf == leaf && (cpuid.subleaf == subleaf || cpuid.subleaf == NO_SUBLEAF)) {
             eax = cpuid.eax;
             ebx = cpuid.ebx;
