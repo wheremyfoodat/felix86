@@ -10,8 +10,7 @@
 #include "felix86/v2/recompiler.hpp"
 
 #define X(name)                                                                                                                                      \
-    void fast_##name(Recompiler& rec, const HandlerMetadata& meta, Assembler& as, ZydisDecodedInstruction& instruction,                              \
-                     ZydisDecodedOperand* operands);
+    void fast_##name(Recompiler& rec, HostAddress rip, Assembler& as, ZydisDecodedInstruction& instruction, ZydisDecodedOperand* operands);
 #include "felix86/v2/handlers.inc"
 #undef X
 
@@ -76,11 +75,37 @@ Recompiler::~Recompiler() {
     deallocateCodeCache(code_cache);
 }
 
+void Recompiler::setupJitStack(ThreadState* state) {
+    ASSERT(state->jit_stack == 0);
+    state->jit_stack = (u64)mmap(nullptr, 4096 + jit_stack_size + 4096, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    ASSERT(state->jit_stack != (u64)MAP_FAILED);
+
+    // We need to guard both sides of the JIT stack to catch overflows/underflows
+    // Protect lowest page of the stack
+    state->overflow_page = state->jit_stack;
+    int res = mprotect((void*)state->overflow_page, 4096, PROT_NONE);
+    ASSERT(res == 0);
+
+    // Protect highest page of the stack
+    state->underflow_page = state->jit_stack + 4096 + jit_stack_size;
+    res = mprotect((void*)state->underflow_page, 4096, PROT_NONE);
+    ASSERT(res == 0);
+
+    state->jit_stack += 4096 + jit_stack_size;
+    // Give the stack some extra space in case there's some weird multiple return shenanigans
+    // This value will now be the value we always reset to when clearing the code cache
+    state->jit_stack -= 65536;
+}
+
+void Recompiler::clearJitStack(ThreadState* state) {
+    WARN("Clearing JIT stack");
+    memset((void*)(state->overflow_page + 4096), 0, jit_stack_size);
+}
+
 void Recompiler::emitNecessaryStuff() {
     emitDispatcher();
     emitSigreturnThunk();
     emitUnlinkIndirectThunk();
-    emitSyscallThunk();
     start_of_code_cache = as.GetCursorPointer();
 }
 
@@ -113,22 +138,28 @@ void Recompiler::emitDispatcher() {
     as.MV(threadStatePointer(), a0);
 
     if (g_config.rsb) {
-        // Try to lower the chances that our return stack buffer optimizations end up
-        // ruining the data in the host stack, if somehow there's multiple returns before any calls
-        as.ADDI(sp, sp, -1024);
-        // Also make sure it's aligned
-        as.ANDI(sp, sp, -16);
-        // In exit_dispatcher the original stack pointer is restored so it's fine that we don't
-        // add 1024 to the stack pointer at any point
+        Label already_setup;
+        as.LD(t4, offsetof(ThreadState, jit_stack), threadStatePointer());
+        as.BNEZ(t4, &already_setup);
+        // Purposefully not using Recompiler::call here
+        as.LI(t0, (u64)&Recompiler::setupJitStack);
+        as.JALR(t0);
+        as.SD(sp, offsetof(ThreadState, cpp_stack), threadStatePointer());
+        as.LD(t4, offsetof(ThreadState, jit_stack), threadStatePointer());
+        as.Bind(&already_setup);
+        // Load the JIT stack as that's what the compile_next_handler expects
+        as.MV(sp, t4);
     }
 
     compile_next_handler = as.GetCursorPointer();
 
     Label exit_dispatcher_label;
 
-    // Save current stack pointer to clear the RSB data if we clear the code cache
     if (g_config.rsb) {
-        as.SD(sp, offsetof(ThreadState, current_sp), threadStatePointer());
+        // Save current stack (the JIT stack) so we don't have to LD later
+        as.MV(s0, sp);
+        // Load the C++ stack as we are about to call C++ code
+        as.LD(sp, offsetof(ThreadState, cpp_stack), threadStatePointer());
     }
 
     as.MV(a0, threadStatePointer());
@@ -139,11 +170,14 @@ void Recompiler::emitDispatcher() {
     as.JALR(t0); // returns the function pointer to the compiled function
     restoreRoundingMode();
     if (g_config.rsb) {
-        as.MV(ra, a0);
-        // "return" to the compiled function. This encoding hints to the
+        // Reload the JIT stack which was saved to s0 earlier
+        // Since s0 is a saved register the CompileNext function will not ruin its value
+        as.MV(sp, s0);
+        // "Return" to the compiled function. This encoding hints to the
         // return stack buffer to pop, which should have been pushed by a jalr
         // when doing backToDispatcher or jumpAndLink
-        as.JR(ra);
+        as.MV(ra, a0);
+        as.RET();
     } else {
         as.JR(a0);
     }
@@ -178,15 +212,6 @@ void Recompiler::emitDispatcher() {
     flush_icache();
 }
 
-void Recompiler::emitSyscallThunk() {
-    syscall_thunk = as.GetCursorPointer();
-    u64 address = g_mode32 ? (u64)felix86_syscall32 : (u64)felix86_syscall;
-    as.MV(a0, threadStatePointer());
-    Recompiler::call(as, address, /* don't link -- tail call */ false);
-    // Do not return here
-    as.GetCodeBuffer().Emit32(0);
-}
-
 HostAddress Recompiler::emitSigreturnThunk() {
     // This piece of code is responsible for moving the thread state pointer to the right place (so we don't have to find it using tid)
     // calling sigreturn, returning and going back to the dispatcher.
@@ -196,8 +221,7 @@ HostAddress Recompiler::emitSigreturnThunk() {
     getBlockMetadata(Signals::magicSigreturnAddress()).address = here;
 
     as.MV(a0, threadStatePointer());
-    as.LI(t0, (u64)Signals::sigreturn);
-    as.JALR(t0);
+    call((u64)Signals::sigreturn);
     backToDispatcher();
 
     return here;
@@ -228,20 +252,12 @@ void Recompiler::clearCodeCache(ThreadState* state) {
     emitNecessaryStuff();
 
     if (g_config.rsb) {
-        // Need to zero out the stack that rsb has used thus far.
+        // Need to zero out the JIT stack.
         // Because if the cache is cleared and we hit more RETs than calls,
         // we are gonna be returning to potentially invalid places
         // Our frame pointer (see dispatcher for how it's made) points past
         // the saved registers so we need to point at the start of the frame
-        constexpr int sp_index = 1;
-        u64* frame = (u64*)(state->frame_pointer - saved_gprs.size() * sizeof(u64));
-        u64 stack_start = frame[sp_index];
-        static_assert(saved_gprs[sp_index] == sp);
-        u64 stack_end = state->current_sp;
-
-        for (u64 i = stack_end; i < stack_start; i++) {
-            *(u8*)i = 0;
-        }
+        clearJitStack(state);
     }
 }
 
@@ -284,7 +300,7 @@ HostAddress Recompiler::compile(ThreadState* state, HostAddress rip) {
 
         BlockMetadata& metadata = getBlockMetadata(rip);
         std::string symbol = get_perf_symbol(rip.raw());
-        static char buffer[4096];
+        char buffer[4096];
         size_t size = metadata.address_end.raw() - metadata.address.raw();
         int string_size = snprintf(buffer, 4096, "%lx %lx %s\n", metadata.address.raw(), size, symbol.c_str());
         ASSERT(string_size > 0 && string_size < 4095);
@@ -340,49 +356,53 @@ HostAddress Recompiler::getCompiledBlock(ThreadState* state, HostAddress rip) {
 
 HostAddress Recompiler::compileSequence(HostAddress rip) {
     compiling = true;
-    scanFlagUsageAhead(rip);
-    HandlerMetadata meta = {rip, rip};
+    scanAhead(rip);
     BlockMetadata& block_meta = getBlockMetadata(rip);
 
-    current_meta = &meta;
     current_block_metadata = &block_meta;
     current_sew = SEW::E1024;
     current_vlen = 0;
     current_grouping = LMUL::M1;
 
-    current_block_metadata->guest_address = meta.rip;
+    current_block_metadata->guest_address = rip;
 
     std::fill(zexted_gprs.begin(), zexted_gprs.end(), false);
 
-    while (compiling) {
-        block_meta.instruction_spans.push_back({meta.rip.toGuest(), HostAddress{(u64)as.GetCursorPointer()}});
+    int index = 0;
 
-        if (g_breakpoints.find(meta.rip.raw()) != g_breakpoints.end()) {
+    while (compiling) {
+        auto& [instruction, operands] = instructions[index];
+
+        block_meta.instruction_spans.push_back({rip.toGuest(), HostAddress{(u64)as.GetCursorPointer()}});
+
+        if (g_breakpoints.find(rip.raw()) != g_breakpoints.end()) {
             u64 current_address = (u64)as.GetCursorPointer();
-            g_breakpoints[meta.rip.raw()].push_back(current_address);
+            g_breakpoints[rip.raw()].push_back(current_address);
             as.GetCodeBuffer().Emit32(0); // UNIMP instruction
         }
 
-        compileInstruction(meta);
+        compileInstruction(instruction, operands, rip);
 
         if (g_config.inline_syscalls) {
             checkModifiesRax(instruction, operands);
         }
 
-        meta.rip += instruction.length;
+        rip += instruction.length;
 
         if (g_config.single_step && compiling) {
             resetScratch();
             biscuit::GPR rip_after = scratch();
-            as.LI(rip_after, meta.rip.toGuest().raw());
+            as.LI(rip_after, rip.toGuest().raw());
             setRip(rip_after);
             writebackDirtyState();
             backToDispatcher();
             stopCompiling();
         }
+
+        index += 1;
     }
 
-    current_block_metadata->guest_address_end = meta.rip;
+    current_block_metadata->guest_address_end = rip;
     current_block_metadata->address_end = HostAddress{(u64)as.GetCursorPointer()};
 
     if (g_config.gdb) {
@@ -414,46 +434,48 @@ HostAddress Recompiler::compileSequence(HostAddress rip) {
     flush_icache();
 
     current_block_metadata = nullptr;
-    current_meta = nullptr;
 
-    return meta.rip;
+    return rip;
 }
 
-void Recompiler::compileInstruction(HandlerMetadata& meta) {
+void Recompiler::compileInstruction(ZydisDecodedInstruction& instruction, ZydisDecodedOperand* operands, HostAddress rip) {
+    current_instruction = &instruction;
+    current_operands = operands;
+    current_rip = rip;
     resetScratch();
 
-    ZydisMnemonic mnemonic = decode(meta.rip, instruction, operands);
+    ZydisMnemonic mnemonic = instruction.mnemonic;
 
     if (g_config.no_sse2 && (instruction.meta.isa_set == ZYDIS_ISA_SET_SSE2)) {
-        ERROR("SSE2 instruction %s at %016lx when FELIX86_NO_SSE2 is enabled", ZydisMnemonicGetString(mnemonic), meta.rip.raw());
+        ERROR("SSE2 instruction %s at %016lx when FELIX86_NO_SSE2 is enabled", ZydisMnemonicGetString(mnemonic), rip.raw());
     }
 
     if (g_config.no_sse3 && (instruction.meta.isa_set == ZYDIS_ISA_SET_SSE3)) {
-        ERROR("SSE3 instruction %s at %016lx when FELIX86_NO_SSE3 is enabled", ZydisMnemonicGetString(mnemonic), meta.rip.raw());
+        ERROR("SSE3 instruction %s at %016lx when FELIX86_NO_SSE3 is enabled", ZydisMnemonicGetString(mnemonic), rip.raw());
     }
 
     if (g_config.no_ssse3 && (instruction.meta.isa_set == ZYDIS_ISA_SET_SSSE3)) {
-        ERROR("SSSE3 instruction %s at %016lx when FELIX86_NO_SSSE3 is enabled", ZydisMnemonicGetString(mnemonic), meta.rip.raw());
+        ERROR("SSSE3 instruction %s at %016lx when FELIX86_NO_SSSE3 is enabled", ZydisMnemonicGetString(mnemonic), rip.raw());
     }
 
     if (g_config.no_sse4_1 && (instruction.meta.isa_set == ZYDIS_ISA_SET_SSE4)) {
-        ERROR("SSE4.1 instruction %s at %016lx when FELIX86_NO_SSE4_1 is enabled", ZydisMnemonicGetString(mnemonic), meta.rip.raw());
+        ERROR("SSE4.1 instruction %s at %016lx when FELIX86_NO_SSE4_1 is enabled", ZydisMnemonicGetString(mnemonic), rip.raw());
     }
 
     if (g_config.no_sse4_2 && (instruction.meta.isa_set == ZYDIS_ISA_SET_SSE4)) {
-        ERROR("SSE4.2 instruction %s at %016lx when FELIX86_NO_SSE4_2 is enabled", ZydisMnemonicGetString(mnemonic), meta.rip.raw());
+        ERROR("SSE4.2 instruction %s at %016lx when FELIX86_NO_SSE4_2 is enabled", ZydisMnemonicGetString(mnemonic), rip.raw());
     }
 
     switch (mnemonic) {
 #define X(name)                                                                                                                                      \
     case ZYDIS_MNEMONIC_##name:                                                                                                                      \
-        fast_##name(*this, meta, as, instruction, operands);                                                                                         \
+        fast_##name(*this, rip, as, instruction, operands);                                                                                          \
         break;
 #include "felix86/v2/handlers.inc"
 #undef X
     default: {
         ZydisDisassembledInstruction disassembled;
-        if (ZYAN_SUCCESS(ZydisDisassembleIntel(decoder.machine_mode, meta.rip.raw(), (u8*)meta.rip.raw(), 15, &disassembled))) {
+        if (ZYAN_SUCCESS(ZydisDisassembleIntel(decoder.machine_mode, rip.raw(), (u8*)rip.raw(), 15, &disassembled))) {
             ERROR("Unhandled instruction %s (%02x)", disassembled.text, (int)instruction.opcode);
         } else {
             ERROR("Unhandled instruction %s (%02x)", ZydisMnemonicGetString(mnemonic), (int)instruction.opcode);
@@ -1235,6 +1257,7 @@ biscuit::GPR Recompiler::lea(ZydisDecodedOperand* operand, bool use_temp) {
         return cached_lea;
     }
 
+    ASSERT(operand->type == ZYDIS_OPERAND_TYPE_MEMORY);
     biscuit::GPR address = scratch();
     cached_lea = address;
     cached_lea_operand = operand;
@@ -1242,13 +1265,13 @@ biscuit::GPR Recompiler::lea(ZydisDecodedOperand* operand, bool use_temp) {
     biscuit::GPR base, index;
 
     if (operand->mem.base == ZYDIS_REGISTER_RIP) {
-        as.LI(address, current_meta->rip.toGuest().raw() + instruction.length + operand->mem.disp.value);
+        as.LI(address, current_rip.toGuest().raw() + current_instruction->length + operand->mem.disp.value);
         return address;
     }
 
     bool has_base = operand->mem.base != ZYDIS_REGISTER_NONE;
     bool has_index = operand->mem.index != ZYDIS_REGISTER_NONE;
-    bool has_segment = instruction.attributes & ZYDIS_ATTRIB_HAS_SEGMENT;
+    bool has_segment = current_instruction->attributes & ZYDIS_ATTRIB_HAS_SEGMENT;
     bool has_disp = operand->mem.disp.value != 0;
 
     // Cover the case of just a segment register
@@ -1409,8 +1432,8 @@ biscuit::GPR Recompiler::lea(ZydisDecodedOperand* operand, bool use_temp) {
     }
 
     // Address override prefix, this needs to happen before adding the segment override
-    if (instruction.address_width != 64) {
-        zext(address, address, zydisToSize(instruction.address_width));
+    if (current_instruction->address_width != 64) {
+        zext(address, address, zydisToSize(current_instruction->address_width));
     }
 
     // Whether or not there's a displacement, at this point it's guaranteed that there's something in `address`
@@ -1440,7 +1463,7 @@ void Recompiler::pushCalltrace() {
     if (g_config.calltrace) {
         as.LI(t0, (u64)push_calltrace);
         as.MV(a0, threadStatePointer());
-        as.LI(a1, current_meta->rip.raw());
+        as.LI(a1, current_rip.raw());
         as.JALR(t0);
     }
 }
@@ -1551,16 +1574,15 @@ void* Recompiler::getCompileNext() {
     return compile_next_handler;
 }
 
-// TODO: this is bad. Make it so we emit flags right before an instruction that needs them as we go through emitting them
-// instead of scanning forward
-void Recompiler::scanFlagUsageAhead(HostAddress rip) {
+void Recompiler::scanAhead(HostAddress rip) {
     for (int i = 0; i < 6; i++) {
         flag_access_cpazso[i].clear();
     }
 
+    instructions.clear();
     while (true) {
-        ZydisDecodedInstruction instruction;
-        ZydisDecodedOperand operands[10];
+        instructions.push_back({});
+        auto& [instruction, operands] = instructions.back();
         ZydisMnemonic mnemonic = decode(rip, instruction, operands);
         bool is_jump = instruction.meta.branch_type != ZYDIS_BRANCH_TYPE_NONE;
         bool is_ret = mnemonic == ZYDIS_MNEMONIC_RET;
@@ -1580,6 +1602,16 @@ void Recompiler::scanFlagUsageAhead(HostAddress rip) {
                 flag_access_cpazso[5].push_back({true, rip});
                 break;
             }
+        }
+
+        if (instruction.mnemonic == ZYDIS_MNEMONIC_INVLPG && operands[0].mem.base == ZYDIS_REGISTER_RAX) {
+            // Super hack! After invlpg comes a string which the recompiler skips and we also need to skip here.
+            ASSERT(operands[0].type == ZYDIS_OPERAND_TYPE_MEMORY);
+            const char* string = (const char*)(rip.raw() + instruction.length);
+            size_t size = strlen(string);
+            ASSERT(size > 0);
+            rip += instruction.length + size + 1; // don't forget null terminator
+            continue;
         }
 
         if (instruction.attributes & ZYDIS_ATTRIB_CPUFLAG_ACCESS) {
@@ -1637,7 +1669,7 @@ bool Recompiler::shouldEmitFlag(HostAddress rip, x86_ref_e ref) {
         return true;
     }
 
-    if (flag_mode == FlagMode::AlwaysEmit) {
+    if (flag_mode == FlagMode::AlwaysEmit || g_config.single_step) {
         return true;
     } else if (flag_mode == FlagMode::NeverEmit) {
         return false;
@@ -1982,18 +2014,20 @@ void Recompiler::jumpAndLink(HostAddress rip, bool use_rsb) {
     ASSERT(as.GetCursorPointer() - start == 2 * 4);
 }
 
-void Recompiler::jumpAndLinkConditional(biscuit::GPR condition, biscuit::GPR gpr_true, biscuit::GPR gpr_false, HostAddress rip_true,
-                                        HostAddress rip_false) {
-    Label false_label;
-    as.BEQZ(condition, &false_label);
+void Recompiler::jumpAndLinkConditional(biscuit::GPR condition, HostAddress rip_true, HostAddress rip_false) {
+    Label true_label;
+    as.BNEZ(condition, &true_label);
 
-    setRip(gpr_true);
-    jumpAndLink(rip_true);
-
-    as.Bind(&false_label);
-
+    biscuit::GPR gpr_false = scratch();
+    as.LI(gpr_false, rip_false.toGuest().raw());
     setRip(gpr_false);
     jumpAndLink(rip_false);
+
+    as.Bind(&true_label);
+    biscuit::GPR gpr_true = scratch();
+    as.LI(gpr_true, rip_true.toGuest().raw());
+    setRip(gpr_true);
+    jumpAndLink(rip_true);
 }
 
 void Recompiler::expirePendingLinks(HostAddress rip) {
@@ -2391,6 +2425,42 @@ biscuit::GPR Recompiler::getFlags() {
     return reg;
 }
 
+void Recompiler::setFlags(biscuit::GPR flags) {
+    biscuit::GPR cf = flagW(X86_REF_CF);
+    biscuit::GPR zf = flagW(X86_REF_ZF);
+    biscuit::GPR sf = flagW(X86_REF_SF);
+    biscuit::GPR of = flagW(X86_REF_OF);
+    biscuit::GPR temp = scratch();
+
+    as.ANDI(cf, flags, 1);
+
+    as.SRLI(temp, flags, 2);
+    as.ANDI(temp, temp, 1);
+    as.SB(temp, offsetof(ThreadState, pf), threadStatePointer());
+
+    as.SRLI(zf, flags, 6);
+    as.ANDI(zf, zf, 1);
+
+    as.SRLI(temp, flags, 4);
+    as.ANDI(temp, temp, 1);
+    as.SB(temp, offsetof(ThreadState, af), threadStatePointer());
+
+    as.SRLI(sf, flags, 7);
+    as.ANDI(sf, sf, 1);
+
+    as.SRLI(temp, flags, 10);
+    as.ANDI(temp, temp, 1);
+    as.SB(temp, offsetof(ThreadState, df), threadStatePointer());
+
+    as.SRLI(of, flags, 11);
+    as.ANDI(of, of, 1);
+
+    // CPUID bit may have been modified, which we need to emulate because this is how some programs detect CPUID support
+    as.SRLI(temp, flags, 21);
+    as.ANDI(temp, temp, 1);
+    as.SB(temp, offsetof(ThreadState, cpuid_bit), threadStatePointer());
+}
+
 void Recompiler::disableSignals() {
     biscuit::GPR i_love_risc_architecture = scratch();
     as.LI(i_love_risc_architecture, 1);
@@ -2596,10 +2666,8 @@ bool Recompiler::tryInlineSyscall() {
         CASE(connect, 3);
         CASE(writev, 3);
         CASE(ppoll, 5);
-        CASE(rt_sigpending, 2);
         CASE(tgkill, 3);
         CASE(geteuid, 0);
-        CASE(rt_tgsigqueueinfo, 4);
         CASE(socket, 3);
         CASE(setsockopt, 5);
         CASE(capget, 2);
@@ -2618,7 +2686,6 @@ bool Recompiler::tryInlineSyscall() {
         CASE(io_destroy, 1);
         CASE(sched_rr_get_interval, 2);
         CASE(pipe2, 2);
-        CASE(rt_sigtimedwait, 4);
         CASE(getppid, 0);
         CASE(pread64, 4);
         CASE(getsid, 1);
@@ -2783,42 +2850,43 @@ void Recompiler::printTrace() {
 }
 
 void Recompiler::linkIndirect() {
-    if (g_config.rsb) {
-        as.SD(sp, offsetof(ThreadState, current_sp), threadStatePointer());
-    }
+    ERROR("I've retired this function as it didn't provide any speedup, needs adjustments to work with RSB (save stack and stuff)");
+    // if (g_config.rsb) {
+    //     as.SD(sp, offsetof(ThreadState, current_sp), threadStatePointer());
+    // }
 
-    // Self modifying piece of code that rewrites itself as a check + link, where
-    // if the check fails it unlinks itself and always jumps to dispatcher
-    // We assume that we can use every register as they have been written back at this point.
-    Label back_here;
-    as.Bind(&back_here);
+    // // Self modifying piece of code that rewrites itself as a check + link, where
+    // // if the check fails it unlinks itself and always jumps to dispatcher
+    // // We assume that we can use every register as they have been written back at this point.
+    // Label back_here;
+    // as.Bind(&back_here);
 
-    u8* start = as.GetCursorPointer();
-    Literal link_address((u64)start);
-    Literal compile_next((u64)Emulator::CompileNext);
-    Literal link_indirect((u64)Emulator::LinkIndirect);
+    // u8* start = as.GetCursorPointer();
+    // Literal link_address((u64)start);
+    // Literal compile_next((u64)Emulator::CompileNext);
+    // Literal link_indirect((u64)Emulator::LinkIndirect);
 
-    // Get host address for block we wanna link to, get the guest address that should match when we jump there.
-    // AUIPC + LD + MV + JALR + LD + AUIPC + LD + MV + AUIPC + LD + JALR = 11 instructions we can replace at most
-    as.LD(t0, &compile_next);
-    as.MV(a0, threadStatePointer());
-    as.JALR(t0);
-    // At this point, a0 has the host address, load a1 with the expected guest address
-    as.LD(a1, offsetof(ThreadState, rip), threadStatePointer());
-    // Put link address in a2
-    as.LD(a2, &link_address);
-    as.MV(a3, threadStatePointer());
-    as.LD(t0, &link_indirect);
-    as.JALR(t0); // (guest address, host address, link address, thread state)
+    // // Get host address for block we wanna link to, get the guest address that should match when we jump there.
+    // // AUIPC + LD + MV + JALR + LD + AUIPC + LD + MV + AUIPC + LD + JALR = 11 instructions we can replace at most
+    // as.LD(t0, &compile_next);
+    // as.MV(a0, threadStatePointer());
+    // as.JALR(t0);
+    // // At this point, a0 has the host address, load a1 with the expected guest address
+    // as.LD(a1, offsetof(ThreadState, rip), threadStatePointer());
+    // // Put link address in a2
+    // as.LD(a2, &link_address);
+    // as.MV(a3, threadStatePointer());
+    // as.LD(t0, &link_indirect);
+    // as.JALR(t0); // (guest address, host address, link address, thread state)
 
-    // Emulator::LinkIndirect depends on the above sequence being 11 instructions
-    u8* here = as.GetCursorPointer();
-    ASSERT(here - start == 11 * 4);
+    // // Emulator::LinkIndirect depends on the above sequence being 11 instructions
+    // u8* here = as.GetCursorPointer();
+    // ASSERT(here - start == 11 * 4);
 
-    as.J(&back_here);
-    as.Place(&compile_next);
-    as.Place(&link_indirect);
-    as.Place(&link_address);
+    // as.J(&back_here);
+    // as.Place(&compile_next);
+    // as.Place(&link_indirect);
+    // as.Place(&link_address);
 }
 
 // Assume all registers have been loaded. Only good for instruction count generation.

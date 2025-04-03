@@ -1,5 +1,6 @@
 #include <cstring>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include "felix86/common/overlay.hpp"
 #include "felix86/hle/filesystem.hpp"
 
@@ -23,7 +24,7 @@ int Filesystem::FAccessAt(int fd, const char* filename, int mode, int flags) {
     return faccessatInternal(new_fd, new_filename, mode, flags);
 }
 
-int Filesystem::FStatAt(int fd, const char* filename, x64Stat* guest_stat, int flags) {
+int Filesystem::FStatAt(int fd, const char* filename, x86_stat* guest_stat, int flags) {
     auto [new_fd, new_filename] = resolve(fd, filename);
 
     struct stat host_stat;
@@ -31,7 +32,7 @@ int Filesystem::FStatAt(int fd, const char* filename, x64Stat* guest_stat, int f
     int result = fstatatInternal(new_fd, new_filename, &host_stat, flags);
 
     if (result == 0) {
-        // This will do the marshalling, see stat.hpp
+        // This will do the marshalling, see guest_types.hpp
         *guest_stat = host_stat;
     }
 
@@ -192,6 +193,31 @@ int Filesystem::LGetXAttr(const char* filename, const char* name, void* value, s
     return lgetxattrInternal(path.c_str(), name, value, size);
 }
 
+int Filesystem::GetXAttr(const char* filename, const char* name, void* value, size_t size) {
+    std::filesystem::path path = resolve(filename);
+    return getxattrInternal(path.c_str(), name, value, size);
+}
+
+int Filesystem::LSetXAttr(const char* filename, const char* name, void* value, size_t size, int flags) {
+    std::filesystem::path path = resolve(filename);
+    return lsetxattrInternal(path.c_str(), name, value, size, flags);
+}
+
+int Filesystem::SetXAttr(const char* filename, const char* name, void* value, size_t size, int flags) {
+    std::filesystem::path path = resolve(filename);
+    return setxattrInternal(path.c_str(), name, value, size, flags);
+}
+
+int Filesystem::RemoveXAttr(const char* filename, const char* name) {
+    std::filesystem::path path = resolve(filename);
+    return removexattrInternal(path.c_str(), name);
+}
+
+int Filesystem::LRemoveXAttr(const char* filename, const char* name) {
+    std::filesystem::path path = resolve(filename);
+    return lremovexattrInternal(path.c_str(), name);
+}
+
 int Filesystem::UtimensAt(int fd, const char* filename, struct timespec* spec, int flags) {
     auto [new_fd, new_filename] = resolve(fd, filename);
     return utimensatInternal(new_fd, new_filename, spec, flags);
@@ -229,8 +255,28 @@ int Filesystem::unlinkatInternal(int fd, const char* filename, int flags) {
     return ::syscall(SYS_unlinkat, fd, filename, flags);
 }
 
+int Filesystem::getxattrInternal(const char* filename, const char* name, void* value, size_t size) {
+    return ::syscall(SYS_getxattr, filename, name, value, size);
+}
+
 int Filesystem::lgetxattrInternal(const char* filename, const char* name, void* value, size_t size) {
     return ::syscall(SYS_lgetxattr, filename, name, value, size);
+}
+
+int Filesystem::setxattrInternal(const char* filename, const char* name, void* value, size_t size, int flags) {
+    return ::syscall(SYS_setxattr, filename, name, value, size, flags);
+}
+
+int Filesystem::lsetxattrInternal(const char* filename, const char* name, void* value, size_t size, int flags) {
+    return ::syscall(SYS_lsetxattr, filename, name, value, size, flags);
+}
+
+int Filesystem::removexattrInternal(const char* filename, const char* name) {
+    return ::syscall(SYS_removexattr, filename, name);
+}
+
+int Filesystem::lremovexattrInternal(const char* filename, const char* name) {
+    return ::syscall(SYS_lremovexattr, filename, name);
 }
 
 int Filesystem::utimensatInternal(int fd, const char* filename, struct timespec* spec, int flags) {
@@ -251,6 +297,10 @@ std::pair<int, const char*> Filesystem::resolve(int fd, const char* path) {
     }
 
     if (path[0] == '/') {
+        if (path[1] == '\0') {
+            return {g_rootfs_fd, "."};
+        }
+
         return {g_rootfs_fd, &path[1]}; // return rootfs fd, skip the '/'
     } else {
         return {fd, path};
@@ -265,6 +315,10 @@ std::filesystem::path Filesystem::resolve(const char* path) {
     }
 
     if (path[0] == '/') {
+        if (path[1] == '\0') {
+            return g_config.rootfs_path;
+        }
+
         return g_config.rootfs_path / &path[1];
     }
 

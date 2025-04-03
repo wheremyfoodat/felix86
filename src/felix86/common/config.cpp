@@ -57,6 +57,7 @@ bool Config::initialize() {
     }
 
     g_config = load(config_path);
+    g_config.config_path = config_path;
 
     return true;
 }

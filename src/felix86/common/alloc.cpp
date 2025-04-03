@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -8,22 +9,13 @@
 
 #define ALIAS(name) __attribute__((alias(#name), visibility("default")))
 
+extern "C" {
 extern void* __libc_malloc(size_t);
 extern void* __libc_calloc(size_t, size_t);
 extern void __libc_free(void*);
 extern void* __libc_memalign(size_t, size_t);
 extern void* __libc_realloc(void*, size_t);
 extern void* __libc_valloc(size_t);
-extern int __posix_memalign(void**, size_t, size_t);
-
-void* malloc(size_t) ALIAS(felix86_malloc);
-void* calloc(size_t, size_t) ALIAS(felix86_calloc);
-void free(void*) ALIAS(felix86_free);
-void* memalign(size_t, size_t) ALIAS(felix86_memalign);
-void* realloc(void*, size_t) ALIAS(felix86_realloc);
-void* valloc(size_t) ALIAS(felix86_valloc);
-int posix_memalign(void**, size_t, size_t) ALIAS(felix86_posix_memalign);
-void* aligned_alloc(size_t, size_t) ALIAS(felix86_aligned_alloc);
 
 void* validate(void* ptr) {
     uint64_t address = (uint64_t)ptr;
@@ -76,12 +68,25 @@ void* felix86_valloc(size_t size) {
 }
 
 int felix86_posix_memalign(void** memptr, size_t alignment, size_t size) {
-    int result = posix_memalign(memptr, alignment, size);
-    void* address = *memptr;
-    validate(address);
-    return result;
+    void* ptr = __libc_memalign(alignment, size);
+    if (!ptr) {
+        return -errno;
+    }
+
+    *memptr = validate(ptr);
+    return 0;
 }
 
 void* felix86_aligned_alloc(size_t alignment, size_t size) {
     return validate(__libc_memalign(alignment, size));
+}
+
+void* malloc(size_t) ALIAS(felix86_malloc);
+void* calloc(size_t, size_t) ALIAS(felix86_calloc);
+void free(void*) ALIAS(felix86_free);
+void* memalign(size_t, size_t) ALIAS(felix86_memalign);
+void* realloc(void*, size_t) ALIAS(felix86_realloc);
+void* valloc(size_t) ALIAS(felix86_valloc);
+int posix_memalign(void**, size_t, size_t) ALIAS(felix86_posix_memalign);
+void* aligned_alloc(size_t, size_t) ALIAS(felix86_aligned_alloc);
 }

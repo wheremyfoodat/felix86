@@ -3,7 +3,7 @@
 #include "felix86/v2/recompiler.hpp"
 
 #define FAST_HANDLE(name)                                                                                                                            \
-    void fast_##name(Recompiler& rec, const HandlerMetadata& meta, Assembler& as, ZydisDecodedInstruction& instruction, ZydisDecodedOperand* operands)
+    void fast_##name(Recompiler& rec, HostAddress rip, Assembler& as, ZydisDecodedInstruction& instruction, ZydisDecodedOperand* operands)
 
 FAST_HANDLE(FLD) {
     if (operands[0].size == 80) {
@@ -58,6 +58,14 @@ FAST_HANDLE(FDIV) {
 
 FAST_HANDLE(FDIVP) {
     OP(&Assembler::FDIV_D, rec, as, instruction, operands, true);
+}
+
+FAST_HANDLE(FMUL) {
+    OP(&Assembler::FMUL_D, rec, as, instruction, operands, false);
+}
+
+FAST_HANDLE(FMULP) {
+    OP(&Assembler::FMUL_D, rec, as, instruction, operands, true);
 }
 
 FAST_HANDLE(FST) {
@@ -148,7 +156,41 @@ FAST_HANDLE(FLDENV) {
     WARN("Unhandled instruction FLDENV, no operation");
 }
 
-void FCOM(Recompiler& rec, const HandlerMetadata& meta, Assembler& as, ZydisDecodedOperand* operands, bool pop) {
+void FIST(Recompiler& rec, HostAddress rip, Assembler& as, ZydisDecodedOperand* operands, bool pop, RMode mode = RMode::DYN) {
+    biscuit::GPR top = rec.getTOP();
+    biscuit::FPR st0 = rec.getST(top, 0);
+    biscuit::GPR address = rec.lea(&operands[0]);
+    biscuit::GPR integer = rec.scratch();
+
+    if (operands[0].size == 16) {
+        as.FCVT_W_D(integer, st0, mode);
+        rec.writeMemory(integer, address, 0, X86_SIZE_WORD);
+    } else if (operands[0].size == 32) {
+        as.FCVT_W_D(integer, st0, mode);
+        rec.writeMemory(integer, address, 0, X86_SIZE_DWORD);
+    } else if (operands[0].size == 32) {
+        as.FCVT_L_D(integer, st0, mode);
+        rec.writeMemory(integer, address, 0, X86_SIZE_QWORD);
+    }
+
+    if (pop) {
+        rec.popST(top);
+    }
+}
+
+FAST_HANDLE(FIST) {
+    FIST(rec, rip, as, operands, false);
+}
+
+FAST_HANDLE(FISTP) {
+    FIST(rec, rip, as, operands, true);
+}
+
+FAST_HANDLE(FISTTP) {
+    FIST(rec, rip, as, operands, true, RMode::RTZ);
+}
+
+void FCOM(Recompiler& rec, HostAddress rip, Assembler& as, ZydisDecodedOperand* operands, bool pop) {
     u8 index = operands[1].reg.value - ZYDIS_REGISTER_ST0;
     ASSERT(index >= 1 && index <= 7);
     biscuit::GPR top = rec.getTOP();
@@ -205,19 +247,19 @@ void FCOM(Recompiler& rec, const HandlerMetadata& meta, Assembler& as, ZydisDeco
 
 // We don't support exceptions ATM, same as FUCOMI
 FAST_HANDLE(FCOMI) {
-    FCOM(rec, meta, as, operands, false);
+    FCOM(rec, rip, as, operands, false);
 }
 
 FAST_HANDLE(FUCOMI) {
-    FCOM(rec, meta, as, operands, false);
+    FCOM(rec, rip, as, operands, false);
 }
 
 FAST_HANDLE(FCOMIP) {
-    FCOM(rec, meta, as, operands, true);
+    FCOM(rec, rip, as, operands, true);
 }
 
 FAST_HANDLE(FUCOMIP) {
-    FCOM(rec, meta, as, operands, true);
+    FCOM(rec, rip, as, operands, true);
 }
 
 FAST_HANDLE(FRNDINT) {

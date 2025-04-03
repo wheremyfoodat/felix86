@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <fmt/format.h>
 #include <linux/futex.h>
+#include <linux/sem.h>
 #include <poll.h>
 #include <sched.h>
 #include <sys/epoll.h>
@@ -25,7 +26,6 @@
 #include "felix86/hle/brk.hpp"
 #include "felix86/hle/filesystem.hpp"
 #include "felix86/hle/guest_types.hpp"
-#include "felix86/hle/stat.hpp"
 #include "felix86/hle/syscall.hpp"
 #include "felix86/hle/thread.hpp"
 
@@ -254,15 +254,33 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_epoll_ctl: {
-        result = SYSCALL(epoll_ctl, arg1, arg2, arg3, arg4, arg5, arg6);
+        epoll_event host_event = *(x86_epoll_event*)arg4;
+        result = SYSCALL(epoll_ctl, arg1, arg2, arg3, &host_event);
+        if (result == 0) {
+            *(x86_epoll_event*)arg4 = host_event;
+        }
         break;
     }
     case felix86_riscv64_epoll_pwait: {
-        result = SYSCALL(epoll_pwait, arg1, arg2, arg3, arg4, arg5, arg6);
+        std::vector<epoll_event> host_events(std::max(0, (int)arg3));
+        result = SYSCALL(epoll_pwait, arg1, host_events.data(), arg3, arg4, arg5, arg6);
+        if (result >= 0) {
+            x86_epoll_event* guest_event = (x86_epoll_event*)arg2;
+            for (int i = 0; i < result; i++) {
+                guest_event[i] = host_events[i];
+            }
+        }
         break;
     }
     case felix86_riscv64_epoll_pwait2: {
-        result = SYSCALL(epoll_pwait2, arg1, arg2, arg3, arg4, arg5, arg6);
+        std::vector<epoll_event> host_events(std::max(0, (int)arg3));
+        result = SYSCALL(epoll_pwait2, arg1, host_events.data(), arg3, arg4, arg5, arg6);
+        if (result >= 0) {
+            x86_epoll_event* guest_event = (x86_epoll_event*)arg2;
+            for (int i = 0; i < result; i++) {
+                guest_event[i] = host_events[i];
+            }
+        }
         break;
     }
     case felix86_riscv64_mount: {
@@ -350,11 +368,11 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_dup3: {
-        result = SYSCALL(dup3, arg1, arg2, x86_to_riscv_flags(arg3));
+        result = SYSCALL(dup3, arg1, arg2, arg3);
         break;
     }
     case felix86_riscv64_fstat: {
-        x64Stat* guest_stat = (x64Stat*)arg2;
+        x86_stat* guest_stat = (x86_stat*)arg2;
         struct stat host_stat;
         result = SYSCALL(fstat, arg1, &host_stat);
         if (result >= 0) {
@@ -399,24 +417,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_fcntl: {
-        switch (arg2) {
-        case F_GETFL: {
-            result = SYSCALL(fcntl, arg1, arg2, arg3);
-            if (result >= 0) {
-                result = riscv_to_x86_flags(result);
-            }
-            break;
-        }
-        case F_SETFL: {
-            result = SYSCALL(fcntl, arg1, arg2, x86_to_riscv_flags(arg3));
-            break;
-        }
-        default: {
-            result = SYSCALL(fcntl, arg1, arg2, arg3);
-            break;
-        }
-        }
-
+        result = SYSCALL(fcntl, arg1, arg2, arg3);
         break;
     }
     case felix86_riscv64_pselect6: {
@@ -440,7 +441,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_newfstatat: {
-        result = Filesystem::FStatAt((int)arg1, (char*)arg2, (x64Stat*)arg3, (int)arg4);
+        result = Filesystem::FStatAt((int)arg1, (char*)arg2, (x86_stat*)arg3, (int)arg4);
         break;
     }
     case felix86_riscv64_sysinfo: {
@@ -475,7 +476,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_pipe2: {
-        result = SYSCALL(pipe2, arg1, x86_to_riscv_flags(arg2));
+        result = SYSCALL(pipe2, arg1, arg2);
         break;
     }
     case felix86_riscv64_memfd_create: {
@@ -498,6 +499,38 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         result = Filesystem::LGetXAttr((char*)arg1, (char*)arg2, (void*)arg3, arg4);
         break;
     }
+    case felix86_riscv64_getxattr: {
+        result = Filesystem::GetXAttr((char*)arg1, (char*)arg2, (void*)arg3, arg4);
+        break;
+    }
+    case felix86_riscv64_fgetxattr: {
+        result = SYSCALL(fgetxattr, arg1, arg2, arg3, arg4);
+        break;
+    }
+    case felix86_riscv64_setxattr: {
+        result = Filesystem::SetXAttr((char*)arg1, (char*)arg2, (void*)arg3, arg4, arg5);
+        break;
+    }
+    case felix86_riscv64_lsetxattr: {
+        result = Filesystem::LSetXAttr((char*)arg1, (char*)arg2, (void*)arg3, arg4, arg5);
+        break;
+    }
+    case felix86_riscv64_fsetxattr: {
+        result = SYSCALL(fsetxattr, arg1, arg2, arg3, arg4, arg5);
+        break;
+    }
+    case felix86_riscv64_removexattr: {
+        result = Filesystem::RemoveXAttr((char*)arg1, (char*)arg2);
+        break;
+    }
+    case felix86_riscv64_lremovexattr: {
+        result = Filesystem::LRemoveXAttr((char*)arg1, (char*)arg2);
+        break;
+    }
+    case felix86_riscv64_fremovexattr: {
+        result = SYSCALL(fremovexattr, arg1, arg2);
+        break;
+    }
     case felix86_riscv64_pwrite64: {
         result = SYSCALL(pwrite64, arg1, arg2, arg3, arg4, arg5, arg6);
         break;
@@ -513,7 +546,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
             break;
         }
 
-        result = Filesystem::OpenAt((int)arg1, (char*)arg2, x86_to_riscv_flags((int)arg3), arg4);
+        result = Filesystem::OpenAt((int)arg1, (char*)arg2, (int)arg3, arg4);
         break;
     }
     case felix86_riscv64_tgkill: {
@@ -744,7 +777,47 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_semctl: {
-        result = SYSCALL(semctl, arg1, arg2, arg3, arg4, arg5, arg6);
+        x86_semid64_ds* guest_semi = (x86_semid64_ds*)arg4;
+        switch (arg3) {
+        case IPC_SET: {
+            ASSERT(guest_semi);
+            struct semid64_ds host_semi{};
+            host_semi = *guest_semi;
+            result = SYSCALL(semctl, arg1, arg2, arg3, &host_semi);
+            if (result == 0) {
+                *guest_semi = host_semi;
+            }
+            break;
+        }
+        case SEM_STAT:
+        case SEM_STAT_ANY:
+        case IPC_STAT: {
+            struct semid64_ds host_semi{};
+            result = SYSCALL(semctl, arg1, arg2, arg3, &host_semi);
+            if (result == 0) {
+                ASSERT(guest_semi);
+                *guest_semi = host_semi;
+            }
+            break;
+        }
+        case SEM_INFO:
+        case IPC_INFO:
+        case IPC_RMID:
+        case GETPID:
+        case GETNCNT:
+        case GETZCNT:
+        case GETVAL:
+        case GETALL:
+        case SETALL:
+        case SETVAL: {
+            result = SYSCALL(semctl, arg1, arg2, arg3, arg4, arg5, arg6);
+            break;
+        }
+        default: {
+            UNREACHABLE();
+            break;
+        }
+        }
         break;
     }
     case felix86_riscv64_flock: {
@@ -915,6 +988,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_clone: {
+        // TODO: remove all usages of clone_args struct, use our own CloneArgs struct
         clone_args args;
         memset(&args, 0, sizeof(clone_args));
         args.flags = arg1;
@@ -1079,7 +1153,8 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
 
             sigset_t host_mask;
             sigandset(&host_mask, &state->signal_mask, Signals::hostSignalMask());
-            pthread_sigmask(SIG_SETMASK, &host_mask, nullptr);
+            int result = pthread_sigmask(SIG_SETMASK, &host_mask, nullptr);
+            ASSERT(result == 0);
         }
 
         if (oldset) {
@@ -1143,7 +1218,14 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
         case felix86_x86_64_epoll_wait: {
-            result = epoll_wait((int)arg1, (struct epoll_event*)arg2, (int)arg3, (int)arg3);
+            std::vector<epoll_event> host_events(std::max(0, (int)arg3));
+            result = epoll_wait((int)arg1, host_events.data(), (int)arg3, (int)arg4);
+            if (result >= 0) {
+                x86_epoll_event* guest_event = (x86_epoll_event*)arg2;
+                for (int i = 0; i < result; i++) {
+                    guest_event[i] = host_events[i];
+                }
+            }
             break;
         }
         case felix86_x86_64_chmod: {
@@ -1163,7 +1245,7 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
         case felix86_x86_64_lstat: {
-            result = Filesystem::FStatAt(AT_FDCWD, (char*)arg1, (x64Stat*)arg2, AT_SYMLINK_NOFOLLOW);
+            result = Filesystem::FStatAt(AT_FDCWD, (char*)arg1, (x86_stat*)arg2, AT_SYMLINK_NOFOLLOW);
             break;
         }
         case felix86_x86_64_chown: {
@@ -1183,7 +1265,7 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
         case felix86_x86_64_open: {
-            result = Filesystem::OpenAt(AT_FDCWD, (char*)arg1, x86_to_riscv_flags((int)arg2), arg3);
+            result = Filesystem::OpenAt(AT_FDCWD, (char*)arg1, (int)arg2, arg3);
             break;
         }
         case felix86_x86_64_alarm: {
@@ -1195,11 +1277,14 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
         case felix86_x86_64_stat: {
-            result = Filesystem::FStatAt(AT_FDCWD, (char*)arg1, (x64Stat*)arg2, 0);
+            result = Filesystem::FStatAt(AT_FDCWD, (char*)arg1, (x86_stat*)arg2, 0);
             break;
         }
         case felix86_x86_64_vfork: {
-            result = -ENOSYS; // make it use clone instead
+            clone_args args = {};
+            memset(&args, 0, sizeof(clone_args));
+            args.flags = CLONE_VM | CLONE_VFORK | SIGCLD;
+            result = Threads::Clone(state, &args);
             break;
         }
         case felix86_x86_64_arch_prctl: {
@@ -1306,7 +1391,7 @@ void felix86_syscall32(ThreadState* state) {
             break;
         }
         case felix86_x86_32_open: {
-            result = Filesystem::OpenAt(AT_FDCWD, (char*)arg1, x86_to_riscv_flags((int)arg2), arg3);
+            result = Filesystem::OpenAt(AT_FDCWD, (char*)arg1, (int)arg2, arg3);
             break;
         }
         case felix86_x86_32_set_thread_area: {
@@ -1398,6 +1483,13 @@ void felix86_syscall32(ThreadState* state) {
             if (result == 0) {
                 *(u32*)arg1 = time;
             }
+            break;
+        }
+        case felix86_x86_32_readlink: {
+            if (arg1 == arg2) {
+                WARN("arg1 == arg2 during readlink");
+            }
+            result = Filesystem::ReadlinkAt(AT_FDCWD, (char*)arg1, (char*)arg2, (int)arg3);
             break;
         }
         case felix86_x86_32_clock_nanosleep_time32: {

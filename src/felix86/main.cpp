@@ -31,9 +31,6 @@ static char args_doc[] = "TARGET_BINARY [TARGET_ARGS...]";
 
 static struct argp_option options[] = {
     {"info", 'i', 0, 0, "Print system info"},
-    {"verbose", 'V', 0, 0, "Produce verbose output"},
-    {"quiet", 'q', 0, 0, "Don't produce any output"},
-    {"strace", 't', 0, 0, "Trace emulated application syscalls"},
     {"all-extensions", 'X', "EXTS", 0,
      "Manually specify every available RISC-V extension. When using this, any extension not specified will be considered unavailable. "
      "Usage example: -X g,c,v,b,zacas"},
@@ -129,20 +126,8 @@ static error_t parse_opt(int key, char* arg, struct argp_state* state) {
     }
 
     switch (key) {
-    case 'V': {
-        g_config.verbose = true;
-        break;
-    }
-    case 'q': {
-        g_config.quiet = true;
-        break;
-    }
     case 'i': {
         exit(print_system_info());
-        break;
-    }
-    case 't': {
-        g_config.strace = true;
         break;
     }
     case 'X': {
@@ -328,9 +313,9 @@ int main(int argc, char* argv[]) {
     auto [exit_reason, exit_code] = Emulator::Start(params);
 
     if (!g_execve_process) {
-        LOG("Main process exited with reason: %s. Exit code: %d", print_exit_reason(exit_reason), exit_code);
+        LOG("Main process %d exited with reason: %s. Exit code: %d", getpid(), print_exit_reason(exit_reason), exit_code);
     } else {
-        LOG("Execve process exited with reason: %s. Exit code: %d", print_exit_reason(exit_reason), exit_code);
+        LOG("Execve process %d exited with reason: %s. Exit code: %d", getpid(), print_exit_reason(exit_reason), exit_code);
     }
 
     return exit_code;

@@ -3,7 +3,6 @@
 #include <csignal>
 #include "felix86/common/address.hpp"
 #include "felix86/common/log.hpp"
-#include "felix86/common/shared_memory.hpp"
 #include "felix86/common/utility.hpp"
 
 #ifndef SA_NODEFER
@@ -14,6 +13,18 @@ struct RegisteredSignal {
     GuestAddress func = {}; // handler function of signal
     sigset_t mask = {};     // blocked during execution of this handler
     int flags = 0;
+};
+
+struct real_sigaction {
+    union {
+        void (*handler)(int);
+        void (*sigaction)(int, siginfo_t*, void*);
+    };
+
+    uint64_t sa_flags;
+
+    void (*restorer)();
+    uint64_t sa_mask;
 };
 
 struct SignalHandlerTable {
@@ -63,6 +74,8 @@ struct XmmReg;
 
 struct Signals {
     static void initialize();
+    static void initializeAltstack();
+    static void uninitializeAltstack();
     static void registerSignalHandler(ThreadState* state, int sig, GuestAddress handler, sigset_t mask, int flags);
     [[nodiscard]] static RegisteredSignal getSignalHandler(ThreadState* state, int sig);
 
@@ -72,7 +85,7 @@ struct Signals {
         static bool initialized = false;
         if (!initialized) {
             sigfillset(&mask);
-            sigdelset(&mask, SIGBUS);
+            sigdelset(&mask, SIGINT);
             sigdelset(&mask, SIGILL);
             sigdelset(&mask, SIGSEGV);
             initialized = true;
