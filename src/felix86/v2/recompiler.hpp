@@ -9,9 +9,6 @@
 #include "felix86/common/state.hpp"
 #include "felix86/common/utility.hpp"
 
-// 16 gprs, 5 flags, 16 xmm registers
-constexpr u64 allocated_reg_count = 16 + 5 + 16;
-
 constexpr int address_cache_bits = 16;
 
 constexpr static u64 jit_stack_size = 1024 * 1024;
@@ -120,6 +117,8 @@ struct Recompiler {
 
     void writebackDirtyState();
 
+    void writebackMMXState();
+
     void restoreRoundingMode();
 
     void backToDispatcher(bool use_rsb = false);
@@ -182,10 +181,6 @@ struct Recompiler {
     static x86_size_e zydisToSize(ZydisRegister reg);
 
     static x86_size_e zydisToSize(ZyanU8 size);
-
-    std::lock_guard<std::mutex> lock() {
-        return std::lock_guard{block_map_mutex};
-    }
 
     // Get the allocated register for the given register reference
     static constexpr biscuit::GPR allocatedGPR(x86_ref_e reg) {
@@ -308,6 +303,30 @@ struct Recompiler {
         case X86_REF_XMM15: {
             return biscuit::v16;
         }
+        case X86_REF_MM0: {
+            return biscuit::v17;
+        }
+        case X86_REF_MM1: {
+            return biscuit::v18;
+        }
+        case X86_REF_MM2: {
+            return biscuit::v19;
+        }
+        case X86_REF_MM3: {
+            return biscuit::v20;
+        }
+        case X86_REF_MM4: {
+            return biscuit::v21;
+        }
+        case X86_REF_MM5: {
+            return biscuit::v22;
+        }
+        case X86_REF_MM6: {
+            return biscuit::v23;
+        }
+        case X86_REF_MM7: {
+            return biscuit::v24;
+        }
         default: {
             UNREACHABLE();
             return v0;
@@ -407,7 +426,7 @@ struct Recompiler {
 
     void updateCarryAdc(biscuit::GPR dst, biscuit::GPR result, biscuit::GPR result_2, x86_size_e size);
 
-    void zeroFlag(x86_ref_e flag);
+    void clearFlag(x86_ref_e flag);
 
     void setFlag(x86_ref_e flag);
 
@@ -461,8 +480,8 @@ struct Recompiler {
         return (u8*)as.GetCursorPointer();
     }
 
-    static bool isXMM(x86_ref_e ref) {
-        return ref >= X86_REF_XMM0 && ref <= X86_REF_XMM15;
+    static bool isXMMOrMM(x86_ref_e ref) {
+        return (ref >= X86_REF_XMM0 && ref <= X86_REF_XMM15) || (ref >= X86_REF_MM0 && ref <= X86_REF_MM7);
     }
 
     static bool isYMM(x86_ref_e ref) {
@@ -541,7 +560,6 @@ struct Recompiler {
 
 private:
     struct RegisterMetadata {
-        x86_ref_e reg;
         bool dirty = false;  // whether an instruction modified this value, so we know to store it to memory before exiting execution
         bool loaded = false; // whether a previous instruction loaded this value from memory, so we don't load it again
                              // if a syscall happens for example, this would be set to false so we load it again
@@ -604,11 +622,10 @@ private:
 
     u8* unlink_indirect_thunk{};
 
-    // 16 GPRS followed by 4 flags (CF,OF,ZF,SF) then 16 XMMs
-    std::array<RegisterMetadata, 16 + 4 + 16> metadata{};
-
-    // This may be locked by a different thread on a signal handler to unlink a block
-    std::mutex block_map_mutex{};
+    std::array<RegisterMetadata, 16> gpr_metadata{};
+    std::array<RegisterMetadata, 16> xmm_metadata{};
+    std::array<RegisterMetadata, 8> mm_metadata{};
+    std::array<RegisterMetadata, 4> flag_metadata{};
 
     std::unordered_map<u64, BlockMetadata> block_metadata{};
 
@@ -641,11 +658,16 @@ private:
     std::vector<u64> block_trace;
     size_t block_trace_index = 0;
 
-    std::array<bool, 16> zexted_gprs; // gprs that have been set in 32-bit form, to avoid future zexts
-
     std::array<AddressCacheEntry, 1 << address_cache_bits> address_cache{};
 
     FlagMode flag_mode = FlagMode::Default;
 
     constexpr static std::array scratch_gprs = {x1, x6, x28, x29, x30, x31, x7};
+
+    // TODO: For better or for worst (definitely for worst) we rely on the fact that we start with an even
+    // register and go sequentially like this
+    // This has to do with the fact we want even registers sometimes so widening operations can use
+    // the register group. In the future with a proper allocator we can make it so the order here doesn't
+    // matter and the order picks an available group.
+    constexpr static std::array scratch_vec = {v26, v27, v28, v29, v30, v31, v25}; // If changed, also change hardcoded in punpckh
 };

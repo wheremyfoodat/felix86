@@ -48,16 +48,6 @@ static bool flag_passthrough(ZydisMnemonic mnemonic, x86_ref_e flag) {
 }
 
 Recompiler::Recompiler() : code_cache(allocateCodeCache()), as(code_cache, code_cache_size) {
-    for (int i = 0; i < 16; i++) {
-        metadata[i].reg = (x86_ref_e)(X86_REF_RAX + i);
-        metadata[i + 16 + 4].reg = (x86_ref_e)(X86_REF_XMM0 + i);
-    }
-
-    metadata[16].reg = X86_REF_CF;
-    metadata[17].reg = X86_REF_ZF;
-    metadata[18].reg = X86_REF_SF;
-    metadata[19].reg = X86_REF_OF;
-
     emitNecessaryStuff();
 
     ZydisMachineMode mode = g_mode32 ? ZYDIS_MACHINE_MODE_LONG_COMPAT_32 : ZYDIS_MACHINE_MODE_LONG_64;
@@ -242,7 +232,6 @@ HostAddress Recompiler::emitUnlinkIndirectThunk() {
 }
 
 void Recompiler::clearCodeCache(ThreadState* state) {
-    std::lock_guard lock(block_map_mutex);
     WARN("Clearing cache on thread %u", gettid());
     as.RewindBuffer();
     block_metadata.clear();
@@ -267,7 +256,6 @@ HostAddress Recompiler::compile(ThreadState* state, HostAddress rip) {
         clearCodeCache(state);
     }
 
-    std::lock_guard lock(block_map_mutex);
     HostAddress start{(u64)as.GetCursorPointer()};
 
     // Map it immediately so we can optimize conditional branch to self
@@ -365,8 +353,6 @@ HostAddress Recompiler::compileSequence(HostAddress rip) {
     current_grouping = LMUL::M1;
 
     current_block_metadata->guest_address = rip;
-
-    std::fill(zexted_gprs.begin(), zexted_gprs.end(), false);
 
     int index = 0;
 
@@ -486,6 +472,7 @@ void Recompiler::compileInstruction(ZydisDecodedInstruction& instruction, ZydisD
 }
 
 biscuit::GPR Recompiler::scratch() {
+    ASSERT(scratch_index != (int)scratch_gprs.size());
     return scratch_gprs[scratch_index++];
 }
 
@@ -497,35 +484,12 @@ bool Recompiler::isScratch(biscuit::GPR reg) {
     return false;
 }
 
-// TODO: array like above
 biscuit::Vec Recompiler::scratchVec() {
-    switch (vector_scratch_index++) {
-    case 0:
-        return v22;
-    case 1:
-        return v23;
-    case 2:
-        return v24;
-    case 3:
-        return v25;
-    case 4:
-        return v26;
-    case 5:
-        return v27;
-    case 6:
-        return v28;
-    case 7:
-        return v29;
-    case 8:
-        return v30;
-    case 9:
-        return v31;
-    default:
-        ERROR("Tried to use more than 10 scratch vecs");
-        return v0;
-    }
+    ASSERT(vector_scratch_index != (int)scratch_vec.size());
+    return scratch_vec[vector_scratch_index++];
 }
 
+// TODO: register list like above
 biscuit::FPR Recompiler::scratchFPR() {
     switch (fpu_scratch_index++) {
     case 0:
@@ -696,6 +660,10 @@ x86_ref_e Recompiler::zydisToRef(ZydisRegister reg) {
         ref = (x86_ref_e)(X86_REF_XMM0 + (reg - ZYDIS_REGISTER_XMM0));
         break;
     }
+    case ZYDIS_REGISTER_MM0 ... ZYDIS_REGISTER_MM7: {
+        ref = (x86_ref_e)(X86_REF_MM0 + (reg - ZYDIS_REGISTER_MM0));
+        break;
+    }
     case ZYDIS_REGISTER_RIP: {
         return X86_REF_RIP;
     }
@@ -762,6 +730,9 @@ x86_size_e Recompiler::zydisToSize(ZydisRegister reg) {
     case ZYDIS_REGISTER_XMM0 ... ZYDIS_REGISTER_XMM15: {
         return X86_SIZE_XMM;
     }
+    case ZYDIS_REGISTER_MM0 ... ZYDIS_REGISTER_MM7: {
+        return X86_SIZE_QWORD;
+    }
     default: {
         UNREACHABLE();
         return X86_SIZE_BYTE;
@@ -776,7 +747,7 @@ biscuit::GPR Recompiler::gpr(ZydisRegister reg) {
 }
 
 biscuit::Vec Recompiler::vec(ZydisRegister reg) {
-    ASSERT(reg >= ZYDIS_REGISTER_XMM0 && reg <= ZYDIS_REGISTER_XMM15);
+    ASSERT((reg >= ZYDIS_REGISTER_XMM0 && reg <= ZYDIS_REGISTER_XMM15) || (reg >= ZYDIS_REGISTER_MM0 && reg <= ZYDIS_REGISTER_MM7));
     x86_ref_e ref = zydisToRef(reg);
     return getRefVec(ref);
 }
@@ -792,26 +763,29 @@ ZydisMnemonic Recompiler::decode(HostAddress rip, ZydisDecodedInstruction& instr
 Recompiler::RegisterMetadata& Recompiler::getMetadata(x86_ref_e reg) {
     switch (reg) {
     case X86_REF_RAX ... X86_REF_R15: {
-        return metadata[reg - X86_REF_RAX];
+        return gpr_metadata[reg - X86_REF_RAX];
     }
     case X86_REF_CF: {
-        return metadata[16];
+        return flag_metadata[0];
     }
     case X86_REF_ZF: {
-        return metadata[17];
+        return flag_metadata[1];
     }
     case X86_REF_SF: {
-        return metadata[18];
+        return flag_metadata[2];
     }
     case X86_REF_OF: {
-        return metadata[19];
+        return flag_metadata[3];
     }
     case X86_REF_XMM0 ... X86_REF_XMM15: {
-        return metadata[reg - X86_REF_XMM0 + 16 + 4];
+        return xmm_metadata[reg - X86_REF_XMM0];
+    }
+    case X86_REF_MM0 ... X86_REF_MM7: {
+        return mm_metadata[reg - X86_REF_MM0];
     }
     default: {
         UNREACHABLE();
-        return metadata[0];
+        return gpr_metadata[0];
     }
     }
 }
@@ -969,13 +943,13 @@ biscuit::GPR Recompiler::getRefGPR(x86_ref_e ref, x86_size_e size) {
         return gpr16;
     }
     case X86_SIZE_DWORD: {
-        if (!zexted_gprs[ref - X86_REF_RAX] || g_paranoid) {
+        if (!g_mode32) {
             // Need to zext and store in scratch
             biscuit::GPR gpr32 = scratch();
             zext(gpr32, gpr, X86_SIZE_DWORD);
             return gpr32;
         } else {
-            // Already zexted when this was last stored in this block
+            // Already loaded as 32-bit zero-extended register
             return gpr;
         }
     }
@@ -1063,14 +1037,12 @@ void Recompiler::setRefGPR(x86_ref_e ref, x86_size_e size, biscuit::GPR reg) {
             as.SLLI(dest, reg, 32);
             as.SRLI(dest, dest, 32);
         }
-        zexted_gprs[ref - X86_REF_RAX] = true;
         break;
     }
     case X86_SIZE_QWORD: {
         biscuit::GPR dest = allocatedGPR(ref); // don't need to load as the entire register is overwritten
         if (dest != reg)
             as.MV(dest, reg);
-        zexted_gprs[ref - X86_REF_RAX] = false;
         break;
     }
     default: {
@@ -1087,10 +1059,10 @@ void Recompiler::setRefVec(x86_ref_e ref, biscuit::Vec vec) {
 
     if (dest != vec) {
         if (Extensions::VLEN == 128) {
-            ASSERT_MSG(isXMM(ref), "setRefVec dealing with YMM registers but your VLEN is 128");
+            ASSERT_MSG(isXMMOrMM(ref), "setRefVec dealing with YMM registers but your VLEN is 128");
             as.VMV1R(dest, vec);
         } else if (Extensions::VLEN >= 256) {
-            if (isXMM(ref)) {
+            if (isXMMOrMM(ref)) {
                 if (!isCurrentLength128()) {
                     setVectorState(SEW::E8, 16);
                 }
@@ -1109,6 +1081,8 @@ void Recompiler::setRefVec(x86_ref_e ref, biscuit::Vec vec) {
             } else {
                 UNREACHABLE();
             }
+        } else {
+            UNREACHABLE();
         }
     }
 
@@ -1187,7 +1161,10 @@ void Recompiler::loadGPR(x86_ref_e reg, biscuit::GPR gpr) {
 
     meta.loaded = true;
     if (reg >= X86_REF_RAX && reg <= X86_REF_R15) {
-        as.LD(gpr, offsetof(ThreadState, gprs) + (reg - X86_REF_RAX) * sizeof(u64), threadStatePointer());
+        if (!g_mode32)
+            as.LD(gpr, offsetof(ThreadState, gprs) + (reg - X86_REF_RAX) * sizeof(u64), threadStatePointer());
+        else
+            as.LWU(gpr, offsetof(ThreadState, gprs) + (reg - X86_REF_RAX) * sizeof(u64), threadStatePointer());
     } else {
         switch (reg) {
         case X86_REF_CF: {
@@ -1265,6 +1242,7 @@ biscuit::GPR Recompiler::lea(ZydisDecodedOperand* operand, bool use_temp) {
     biscuit::GPR base, index;
 
     if (operand->mem.base == ZYDIS_REGISTER_RIP) {
+        ASSERT(!g_mode32);
         as.LI(address, current_rip.toGuest().raw() + current_instruction->length + operand->mem.disp.value);
         return address;
     }
@@ -1451,6 +1429,11 @@ biscuit::GPR Recompiler::lea(ZydisDecodedOperand* operand, bool use_temp) {
         UNREACHABLE();
     }
 
+    if (g_mode32) {
+        // The additions may have overflown the address
+        as.ZEXTW(address, address);
+    }
+
     return address;
 }
 
@@ -1483,6 +1466,19 @@ void Recompiler::setExitReason(ExitReason reason) {
     popScratch();
 }
 
+void Recompiler::writebackMMXState() {
+    biscuit::GPR address = scratch();
+    for (int i = 0; i < 8; i++) {
+        x86_ref_e ref = (x86_ref_e)(X86_REF_MM0 + i);
+        if (getMetadata(ref).dirty) {
+            setVectorState(SEW::E64, maxVlen() / 64);
+            as.ADDI(address, threadStatePointer(), offsetof(ThreadState, fp) + i * sizeof(u64));
+            as.VSE64(allocatedVec(ref), address);
+        }
+    }
+    popScratch();
+}
+
 void Recompiler::writebackDirtyState() {
     for (int i = 0; i < 16; i++) {
         x86_ref_e ref = (x86_ref_e)(X86_REF_RAX + i);
@@ -1497,11 +1493,13 @@ void Recompiler::writebackDirtyState() {
         if (getMetadata(ref).dirty) {
             // TODO: can we group multiple registers if adjacent ones need to be written
             setVectorState(SEW::E64, maxVlen() / 64);
-            as.ADDI(address, threadStatePointer(), offsetof(ThreadState, xmm) + i * 16);
+            as.ADDI(address, threadStatePointer(), offsetof(ThreadState, xmm) + i * sizeof(XmmReg));
             as.VSE64(allocatedVec(ref), address);
         }
     }
     popScratch();
+
+    writebackMMXState();
 
     if (getMetadata(X86_REF_CF).dirty) {
         as.SB(allocatedGPR(X86_REF_CF), offsetof(ThreadState, cf), threadStatePointer());
@@ -1519,9 +1517,21 @@ void Recompiler::writebackDirtyState() {
         as.SB(allocatedGPR(X86_REF_OF), offsetof(ThreadState, of), threadStatePointer());
     }
 
-    for (size_t i = 0; i < metadata.size(); i++) {
-        metadata[i].dirty = false;
-        metadata[i].loaded = false;
+    for (size_t i = 0; i < 16; i++) {
+        gpr_metadata[i].dirty = false;
+        gpr_metadata[i].loaded = false;
+        xmm_metadata[i].dirty = false;
+        xmm_metadata[i].loaded = false;
+    }
+
+    for (size_t i = 0; i < 8; i++) {
+        mm_metadata[i].dirty = false;
+        mm_metadata[i].loaded = false;
+    }
+
+    for (size_t i = 0; i < 4; i++) {
+        flag_metadata[i].dirty = false;
+        flag_metadata[i].loaded = false;
     }
 
     current_sew = SEW::E1024;
@@ -1822,7 +1832,7 @@ void Recompiler::updateCarryAdc(biscuit::GPR lhs, biscuit::GPR result, biscuit::
     popScratch();
 }
 
-void Recompiler::zeroFlag(x86_ref_e flag) {
+void Recompiler::clearFlag(x86_ref_e flag) {
     biscuit::GPR f = flagW(flag);
     as.LI(f, 0);
 }
@@ -2638,19 +2648,11 @@ bool Recompiler::tryInlineSyscall() {
         inlineSyscall(x64_to_riscv(felix86_x86_64_##sysno), argcount);                                                                               \
         return true
 
-        CASE(unshare, 1);
         CASE(setuid, 1);
         CASE(write, 3);
-        CASE(io_getevents, 4);
-        CASE(get_robust_list, 3);
-        CASE(capset, 2);
         CASE(getgid, 0);
         CASE(fsync, 1);
-        CASE(membarrier, 2);
         CASE(fallocate, 4);
-        CASE(tkill, 2);
-        CASE(set_mempolicy, 3);
-        CASE(set_tid_address, 1);
         CASE(clock_getres, 2);
         CASE(setsid, 0);
         CASE(io_setup, 2);
@@ -2891,7 +2893,19 @@ void Recompiler::linkIndirect() {
 
 // Assume all registers have been loaded. Only good for instruction count generation.
 void Recompiler::assumeLoaded() {
-    for (auto& meta : metadata) {
+    for (auto& meta : gpr_metadata) {
+        meta.loaded = true;
+    }
+
+    for (auto& meta : xmm_metadata) {
+        meta.loaded = true;
+    }
+
+    for (auto& meta : mm_metadata) {
+        meta.loaded = true;
+    }
+
+    for (auto& meta : flag_metadata) {
         meta.loaded = true;
     }
 }

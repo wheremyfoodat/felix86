@@ -1,5 +1,6 @@
 #include <cstring>
 #include <fcntl.h>
+#include <sys/inotify.h>
 #include <sys/stat.h>
 #include "felix86/common/overlay.hpp"
 #include "felix86/hle/filesystem.hpp"
@@ -103,14 +104,28 @@ int Filesystem::Rename(const char* oldname, const char* newname) {
     return result;
 }
 
-int Filesystem::Symlink(const char* oldname, const char* newname) {
+int Filesystem::SymlinkAt(const char* oldname, int newfd, const char* newname) {
     if (!oldname || !newname) {
         return -EINVAL;
     }
 
     std::filesystem::path oldpath = resolve(oldname);
-    std::filesystem::path newpath = resolve(newname);
-    int result = ::symlink(oldpath.c_str(), newpath.c_str());
+    auto [newfd2, newpath] = resolve(newfd, newname);
+    int result = ::symlinkat(oldpath.c_str(), newfd2, newpath);
+    if (result == -1) {
+        result = -errno;
+    }
+    return result;
+}
+
+int Filesystem::RenameAt2(int oldfd, const char* oldname, int newfd, const char* newname, int flags) {
+    if (!oldname || !newname) {
+        return -EINVAL;
+    }
+
+    auto [oldfd2, oldpath] = resolve(oldfd, oldname);
+    auto [newfd2, newpath] = resolve(newfd, newname);
+    int result = ::renameat2(oldfd2, oldpath, newfd2, newpath, flags);
     if (result == -1) {
         result = -errno;
     }
@@ -223,6 +238,16 @@ int Filesystem::UtimensAt(int fd, const char* filename, struct timespec* spec, i
     return utimensatInternal(new_fd, new_filename, spec, flags);
 }
 
+int Filesystem::Rmdir(const char* dir) {
+    std::filesystem::path path = resolve(dir);
+    return rmdirInternal(path.c_str());
+}
+
+int Filesystem::INotifyAddWatch(int fd, const char* path, u32 mask) {
+    std::filesystem::path file = resolve(path);
+    return inotify_add_watch(fd, file.c_str(), mask);
+}
+
 int Filesystem::openatInternal(int fd, const char* filename, int flags, u64 mode) {
     return ::syscall(SYS_openat, fd, filename, flags, mode);
 }
@@ -285,6 +310,10 @@ int Filesystem::utimensatInternal(int fd, const char* filename, struct timespec*
 
 int Filesystem::fchmodatInternal(int fd, const char* filename, u64 mode) {
     return ::syscall(SYS_fchmodat, fd, filename, mode);
+}
+
+int Filesystem::rmdirInternal(const char* path) {
+    return ::rmdir(path);
 }
 
 std::pair<int, const char*> Filesystem::resolve(int fd, const char* path) {

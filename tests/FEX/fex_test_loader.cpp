@@ -139,6 +139,24 @@ FEXTestLoader::FEXTestLoader(const std::filesystem::path& path) {
         fill(XMM14);
         fill(XMM15);
 #undef fill
+
+#define fill(x)                                                                                                                                      \
+    if (regs.find(#x) != regs.end()) {                                                                                                               \
+        int base = 10;                                                                                                                               \
+        std::string str = regs[#x].get<std::string>();                                                                                               \
+        if (str.size() > 2 && str[0] == '0' && str[1] == 'x')                                                                                        \
+            base = 16;                                                                                                                               \
+        expected_mm[X86_REF_##x - X86_REF_MM0] = std::stoull(regs[#x].get<std::string>(), nullptr, base);                                            \
+    }
+        fill(MM0);
+        fill(MM1);
+        fill(MM2);
+        fill(MM3);
+        fill(MM4);
+        fill(MM5);
+        fill(MM6);
+        fill(MM7);
+#undef fill
     }
 
     bool is_mode32 = false;
@@ -219,11 +237,22 @@ void FEXTestLoader::Validate() {
         if (pexpected.has_value()) {
             XmmReg expected = *pexpected;
             x86_ref_e ref = (x86_ref_e)(X86_REF_XMM0 + i);
-            XmmReg actual = state->GetXmmReg(ref);
+            XmmReg actual = state->GetXmm(ref);
             for (int j = 0; j < 2; j++) {
                 CATCH_INFO(fmt::format("Checking XMM{}[{}]", i, j));
                 CATCH_REQUIRE(expected.data[j] == actual.data[j]);
             }
+        }
+    }
+
+    for (size_t i = 0; i < expected_mm.size(); i++) {
+        auto& pexpected = expected_mm[i];
+        if (pexpected.has_value()) {
+            u64 expected = *pexpected;
+            x86_ref_e ref = (x86_ref_e)(X86_REF_MM0 + i);
+            u64 actual = state->GetMm(ref);
+            CATCH_INFO(fmt::format("Checking {}", print_guest_register(ref)));
+            CATCH_REQUIRE(expected == actual);
         }
     }
 

@@ -38,7 +38,7 @@ pthread_key_t g_thread_state_key = -1;
 ProcessGlobals g_process_globals{};
 std::unique_ptr<Mapper> g_mapper{};
 std::unique_ptr<GDBJIT> g_gdbjit;
-u64 g_program_end;
+u64 g_program_end = 0;
 HostAddress g_guest_auxv{};
 size_t g_guest_auxv_size = 0;
 bool g_execve_process = false;
@@ -179,8 +179,45 @@ std::string get_extensions() {
             extensions += ",";
         extensions += "zfa";
     }
+    if (Extensions::Zvbb) {
+        if (!extensions.empty())
+            extensions += ",";
+        extensions += "zvbb";
+    }
+    if (Extensions::Zvkned) {
+        if (!extensions.empty())
+            extensions += ",";
+        extensions += "zvkned";
+    }
 
     return extensions;
+}
+
+void initialize_extensions() {
+    if (!g_extensions_manually_specified) {
+        biscuit::CPUInfo cpuinfo;
+        Extensions::VLEN = cpuinfo.GetVlenb() * 8;
+        Extensions::G = cpuinfo.Has(RISCVExtension::I) && cpuinfo.Has(RISCVExtension::M) && cpuinfo.Has(RISCVExtension::A) &&
+                        cpuinfo.Has(RISCVExtension::F) && cpuinfo.Has(RISCVExtension::D);
+        Extensions::V = cpuinfo.Has(RISCVExtension::V);
+        Extensions::C = cpuinfo.Has(RISCVExtension::C);
+        Extensions::B = cpuinfo.Has(RISCVExtension::Zba) && cpuinfo.Has(RISCVExtension::Zbb) && cpuinfo.Has(RISCVExtension::Zbc) &&
+                        cpuinfo.Has(RISCVExtension::Zbs);
+        Extensions::Zacas = cpuinfo.Has(RISCVExtension::Zacas);
+        Extensions::Zicond = cpuinfo.Has(RISCVExtension::Zicond);
+        Extensions::Zihintpause = cpuinfo.Has(RISCVExtension::Zihintpause);
+        Extensions::Zfa = cpuinfo.Has(RISCVExtension::Zfa);
+        Extensions::Zba = cpuinfo.Has(RISCVExtension::Zba);
+        Extensions::Zvbb = cpuinfo.Has(RISCVExtension::Zvbb);
+        Extensions::Zvkned = cpuinfo.Has(RISCVExtension::Zvkned);
+    }
+
+#ifdef __x86_64__
+    // Just so we can run some unit tests fine
+    Extensions::G = true;
+    Extensions::V = true;
+    Extensions::VLEN = 128;
+#endif
 }
 
 void initialize_globals() {
@@ -317,39 +354,11 @@ void initialize_globals() {
         LOG("Emitting symbols for " ANSI_BOLD "gdb" ANSI_COLOR_RESET "!");
     }
 
-    if (!g_execve_process) {
-        LOG("%s", get_version_full());
-        if (!environment.empty()) {
-            LOG("Environment:%s", environment.c_str());
-        }
-
-        std::string extensions = get_extensions();
-        if (!extensions.empty()) {
-            LOG("Extensions enabled for the recompiler: %s", extensions.c_str());
-        }
-    }
-
-    g_vlen = biscuit::CPUInfo().GetVlenb() * 8;
-
-    ThreadState::InitializeKey();
-}
-
-void initialize_extensions() {
-    if (!g_extensions_manually_specified) {
-        biscuit::CPUInfo cpuinfo;
-        Extensions::VLEN = cpuinfo.GetVlenb() * 8;
-        Extensions::G = cpuinfo.Has(RISCVExtension::I) && cpuinfo.Has(RISCVExtension::M) && cpuinfo.Has(RISCVExtension::A) &&
-                        cpuinfo.Has(RISCVExtension::F) && cpuinfo.Has(RISCVExtension::D);
-        Extensions::V = cpuinfo.Has(RISCVExtension::V);
-        Extensions::C = cpuinfo.Has(RISCVExtension::C);
-        Extensions::B = cpuinfo.Has(RISCVExtension::Zba) && cpuinfo.Has(RISCVExtension::Zbb) && cpuinfo.Has(RISCVExtension::Zbc) &&
-                        cpuinfo.Has(RISCVExtension::Zbs);
-        Extensions::Zacas = cpuinfo.Has(RISCVExtension::Zacas);
-        Extensions::Zicond = cpuinfo.Has(RISCVExtension::Zicond);
-        Extensions::Zihintpause = cpuinfo.Has(RISCVExtension::Zihintpause);
-        Extensions::Zfa = cpuinfo.Has(RISCVExtension::Zfa);
-        Extensions::Zba = cpuinfo.Has(RISCVExtension::Zba);
-        Extensions::Zvbb = cpuinfo.Has(RISCVExtension::Zvbb);
+    std::string extensions = get_extensions();
+    if (extensions.empty()) {
+        initialize_extensions();
+        extensions = get_extensions();
+        ASSERT(!extensions.empty());
     }
 
 #ifdef __riscv
@@ -362,6 +371,19 @@ void initialize_extensions() {
         ERROR("V extension is required for SSE instructions");
     }
 #endif
+
+    if (!g_execve_process) {
+        LOG("%s", get_version_full());
+        if (!environment.empty()) {
+            LOG("Environment:%s", environment.c_str());
+        }
+
+        LOG("Extensions enabled for the recompiler: %s", extensions.c_str());
+    }
+
+    g_vlen = biscuit::CPUInfo().GetVlenb() * 8;
+
+    ThreadState::InitializeKey();
 }
 
 bool parse_extensions(const char* arg) {

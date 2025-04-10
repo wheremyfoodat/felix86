@@ -10,6 +10,11 @@
         FEXTestLoader::RunTest("ASM/H0F38/" #opcode ".asm");                                                                                         \
     }
 
+H0F38_TEST(XX_00)
+H0F38_TEST(XX_00_2)
+H0F38_TEST(XX_08)
+H0F38_TEST(XX_09)
+H0F38_TEST(XX_0A)
 H0F38_TEST(66_00)
 H0F38_TEST(66_00_2)
 H0F38_TEST(66_08)
@@ -47,6 +52,9 @@ H0F38_TEST(66_3E)
 H0F38_TEST(66_3F)
 H0F38_TEST(66_40)
 H0F38_TEST(66_40_2)
+// H0F38_TEST(66_DC) // AES stuff
+// H0F38_TEST(66_DD)
+// H0F38_TEST(66_DF)
 
 H0F3A_TEST(66_0A)
 H0F3A_TEST(66_0B)

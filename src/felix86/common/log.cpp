@@ -1,5 +1,6 @@
 #include <csignal>
 #include <cstdarg>
+#include <thread>
 #include <sys/file.h>
 #include <sys/inotify.h>
 #include <sys/prctl.h>
@@ -47,6 +48,7 @@ void Logger::startServer() {
         // When the parent dies (main emulator thread), make sure the logging "server" also dies
         prctl(PR_SET_PDEATHSIG, SIGTERM);
         int read_pipe = open(pipe_name.c_str(), O_RDONLY, 0666);
+        ASSERT(read_pipe > 0);
         FILE* f = fdopen(fd, "w"); // create the log file to store the log if we need it later
         constexpr size_t buffer_size = 0x10000;
         char buffer[buffer_size];
@@ -74,6 +76,7 @@ void Logger::startServer() {
     } else {
         // Open write end of pipe -- we need to do it here otherwise the thing will hang (both ends need to be opened simultaneously)
         g_output_fd = open(pipe_name.c_str(), O_WRONLY, 0644);
+        ASSERT(g_output_fd > 0);
     }
 }
 

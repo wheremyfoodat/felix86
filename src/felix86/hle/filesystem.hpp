@@ -79,7 +79,9 @@ struct Filesystem {
 
     static int Rename(const char* oldname, const char* newname);
 
-    static int Symlink(const char* oldname, const char* newname);
+    static int SymlinkAt(const char* oldname, int newfd, const char* newname);
+
+    static int RenameAt2(int oldfd, const char* oldname, int newfd, const char* newname, int flags);
 
     static int Chmod(const char* path, u64 mode);
 
@@ -112,6 +114,10 @@ struct Filesystem {
     static int UtimensAt(int fd, const char* filename, struct timespec* spec, int flags);
 
     static int FChmodAt(int fd, const char* filename, u64 mode);
+
+    static int Rmdir(const char* path);
+
+    static int INotifyAddWatch(int fd, const char* path, u32 mask);
 
     static std::filesystem::path resolve(const char* path);
 
@@ -149,6 +155,8 @@ private:
     static int utimensatInternal(int fd, const char* filename, struct timespec* spec, int flags);
 
     static int fchmodatInternal(int fd, const char* filename, u64 mode);
+
+    static int rmdirInternal(const char* path);
 
     static std::pair<int, const char*> resolve(int fd, const char* path);
 

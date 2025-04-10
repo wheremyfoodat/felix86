@@ -12,6 +12,7 @@
 #include <sys/personality.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
@@ -26,6 +27,7 @@
 #include "felix86/hle/brk.hpp"
 #include "felix86/hle/filesystem.hpp"
 #include "felix86/hle/guest_types.hpp"
+#include "felix86/hle/socket.hpp"
 #include "felix86/hle/syscall.hpp"
 #include "felix86/hle/thread.hpp"
 
@@ -251,6 +253,14 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
     }
     case felix86_riscv64_getcwd: {
         result = Filesystem::Getcwd((char*)arg1, arg2);
+        break;
+    }
+    case felix86_riscv64_symlinkat: {
+        result = Filesystem::SymlinkAt((char*)arg1, arg2, (char*)arg3);
+        break;
+    }
+    case felix86_riscv64_renameat2: {
+        result = Filesystem::RenameAt2(arg1, (char*)arg2, arg3, (char*)arg4, arg5);
         break;
     }
     case felix86_riscv64_epoll_ctl: {
@@ -574,7 +584,9 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
             // For example, Mono tries to use it to allocate code cache pages near the executable so that it can use
             // +-2GiB jumps. If it doesn't get them near enough it will eventually crash and die.
             // We need to also track fixed mappings in the 32-bit address space
+            state->signals_disabled = true;
             result = (ssize_t)g_mapper->map32((void*)arg1, arg2, arg3, (int)arg4, (int)arg5, arg6);
+            state->signals_disabled = false;
         } else {
             // No need to use mapper
             result = SYSCALL(mmap, arg1, arg2, arg3, (int)arg4, (int)arg5, arg6);
@@ -943,8 +955,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_inotify_add_watch: {
-        ERROR("TODO: inotify_add_watch move me to Filesystem");
-        result = SYSCALL(inotify_add_watch, arg1, arg2, arg3);
+        result = Filesystem::INotifyAddWatch(arg1, (char*)arg2, arg3);
         break;
     }
     case felix86_riscv64_inotify_rm_watch: {
@@ -988,14 +999,20 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_clone: {
-        // TODO: remove all usages of clone_args struct, use our own CloneArgs struct
-        clone_args args;
-        memset(&args, 0, sizeof(clone_args));
-        args.flags = arg1;
-        args.stack = arg2;
-        args.parent_tid = arg3;
-        args.child_tid = arg4;
-        args.tls = arg5;
+        u64 child_tid = arg4;
+        u64 parent_tid = arg3;
+        u64 guest_flags = arg1;
+        CloneArgs args{
+            .parent_state = state,
+            .guest_flags = guest_flags,
+            .parent_tid = (pid_t*)parent_tid,
+            .child_tid = (pid_t*)child_tid,
+            .new_tls = arg5,
+            .new_rsp = arg2,
+            .new_rip = state->gprs[X86_REF_RCX],
+            .new_thread = 0,
+            .new_tid = 0,
+        };
         result = Threads::Clone(state, &args);
         break;
     }
@@ -1233,7 +1250,11 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
         case felix86_x86_64_symlink: {
-            result = Filesystem::Symlink((char*)arg1, (char*)arg2);
+            result = Filesystem::SymlinkAt((char*)arg1, AT_FDCWD, (char*)arg2);
+            break;
+        }
+        case felix86_x86_64_renameat: {
+            result = Filesystem::RenameAt2(arg1, (char*)arg2, arg3, (char*)arg4, 0);
             break;
         }
         case felix86_x86_64_poll: {
@@ -1280,10 +1301,14 @@ void felix86_syscall(ThreadState* state) {
             result = Filesystem::FStatAt(AT_FDCWD, (char*)arg1, (x86_stat*)arg2, 0);
             break;
         }
+        case felix86_x86_64_rmdir: {
+            result = Filesystem::Rmdir((char*)arg1);
+            break;
+        }
         case felix86_x86_64_vfork: {
-            clone_args args = {};
-            memset(&args, 0, sizeof(clone_args));
-            args.flags = CLONE_VM | CLONE_VFORK | SIGCLD;
+            CloneArgs args = {};
+            u64 guest_flags = CLONE_VM | CLONE_VFORK | SIGCLD;
+            args.guest_flags = guest_flags;
             result = Threads::Clone(state, &args);
             break;
         }
@@ -1337,7 +1362,7 @@ void felix86_syscall(ThreadState* state) {
     }
 }
 
-void felix86_syscall32(ThreadState* state) {
+void felix86_syscall32(ThreadState* state, u32 rip_next) {
     u64 syscall_number = state->GetGpr(X86_REF_RAX);
     u64 arg1 = state->GetGpr(X86_REF_RBX);
     u64 arg2 = state->GetGpr(X86_REF_RCX);
@@ -1366,6 +1391,24 @@ void felix86_syscall32(ThreadState* state) {
             result = ::alarm(arg1);
             break;
         }
+        case felix86_x86_32_clone: {
+            u64 child_tid = arg5;
+            u64 parent_tid = arg3;
+            u64 guest_flags = arg1;
+            CloneArgs args{
+                .parent_state = state,
+                .guest_flags = guest_flags,
+                .parent_tid = (pid_t*)parent_tid,
+                .child_tid = (pid_t*)child_tid,
+                .new_tls = arg4, // in this case it's a x86_user_desc*
+                .new_rsp = arg2,
+                .new_rip = rip_next,
+                .new_thread = 0,
+                .new_tid = 0,
+            };
+            result = Threads::Clone(state, &args);
+            break;
+        }
         case felix86_x86_32_rename: {
             result = Filesystem::Rename((char*)arg1, (char*)arg2);
             break;
@@ -1387,7 +1430,9 @@ void felix86_syscall32(ThreadState* state) {
         case felix86_x86_32_mmap_pgoff: {
             // mmap2 is like mmap but file offset is in pages (4096 bytes) to help with the lack of big enough integers in x86-32
             u64 offset = arg6 * 4096;
+            state->signals_disabled = true;
             result = (ssize_t)g_mapper->map((void*)arg1, arg2, arg3, arg4, arg5, offset);
+            state->signals_disabled = false;
             break;
         }
         case felix86_x86_32_open: {
@@ -1396,36 +1441,7 @@ void felix86_syscall32(ThreadState* state) {
         }
         case felix86_x86_32_set_thread_area: {
             x86_user_desc* udesc = (x86_user_desc*)arg1;
-            int index = udesc->entry_number;
-            if (index == -1) {
-                for (int i = 0; i < 3; i++) {
-                    if (state->gdt[i] == 0) {
-                        index = i;
-                        break;
-                    }
-                }
-            }
-
-            if (index == -1) {
-                result = -ESRCH;
-                break;
-            }
-
-            state->gdt[index] = udesc->base_addr;
-            udesc->entry_number = 12 + index;
-            result = 0;
-
-#define CHECK_SEG(name)                                                                                                                              \
-    if ((state->name >> 3) == index) {                                                                                                               \
-        state->name##base = udesc->base_addr;                                                                                                        \
-    }
-            CHECK_SEG(fs);
-            CHECK_SEG(gs);
-            CHECK_SEG(es);
-            CHECK_SEG(ss);
-            CHECK_SEG(cs);
-            CHECK_SEG(ds);
-#undef CHECK_SEG
+            result = state->SetUserDesc(udesc);
             break;
         }
         case felix86_x86_32_get_thread_area: {
@@ -1472,6 +1488,83 @@ void felix86_syscall32(ThreadState* state) {
             result = Filesystem::UnlinkAt(AT_FDCWD, (char*)arg1, 0);
             break;
         }
+        case felix86_x86_32_fcntl:
+        case felix86_x86_32_fcntl64: {
+            constexpr int X86_GETLK64 = 12;
+            constexpr int X86_SETLK64 = 13;
+            constexpr int X86_SETLKW64 = 14;
+            const int fd = arg1;
+            struct flock host_flock;
+            x86_flock64* guest_flock64 = (x86_flock64*)arg3;
+            x86_flock* guest_flock32 = (x86_flock*)arg3;
+            switch (arg2) {
+            case X86_GETLK64: {
+                host_flock = *guest_flock64;
+                result = ::fcntl(fd, F_GETLK, &host_flock);
+                if (result >= 0) {
+                    *guest_flock64 = host_flock;
+                }
+                break;
+            }
+            case X86_SETLK64: {
+                host_flock = *guest_flock64;
+                result = ::fcntl(fd, F_SETLK, &host_flock);
+                break;
+            }
+            case X86_SETLKW64: {
+                host_flock = *guest_flock64;
+                result = ::fcntl(fd, F_SETLKW, &host_flock);
+                break;
+            }
+            case F_OFD_GETLK: {
+                host_flock = *guest_flock64;
+                result = ::fcntl(fd, F_OFD_GETLK, &host_flock);
+                if (result >= 0) {
+                    *guest_flock64 = host_flock;
+                }
+                break;
+            }
+            case F_OFD_SETLK:
+            case F_OFD_SETLKW: {
+                host_flock = *guest_flock64;
+                result = ::fcntl(fd, arg2, &host_flock);
+                break;
+            }
+            case F_GETLK: {
+                host_flock = *guest_flock32;
+                result = ::fcntl(fd, F_GETLK, &host_flock);
+                if (result >= 0) {
+                    *guest_flock32 = host_flock;
+                }
+                break;
+            }
+            case F_SETLK: {
+                host_flock = *guest_flock32;
+                result = ::fcntl(fd, F_SETLK, &host_flock);
+                break;
+            }
+            case F_SETLKW: {
+                host_flock = *guest_flock32;
+                result = ::fcntl(fd, F_SETLKW, &host_flock);
+                break;
+            }
+            case F_SETFL:
+            case F_DUPFD:
+            case F_DUPFD_CLOEXEC:
+            case F_GETFD:
+            case F_SETFD:
+            case F_GETFL: {
+                result = ::fcntl(arg1, arg2, arg3);
+                break;
+            }
+            default: {
+                WARN("Unknown fcntl: %d", arg2);
+                result = -EINVAL;
+                break;
+            }
+            }
+            break;
+        }
         case felix86_x86_32_waitpid: {
             result = ::waitpid((pid_t)arg1, (int*)arg2, (int)arg3);
             break;
@@ -1492,6 +1585,10 @@ void felix86_syscall32(ThreadState* state) {
             result = Filesystem::ReadlinkAt(AT_FDCWD, (char*)arg1, (char*)arg2, (int)arg3);
             break;
         }
+        case felix86_x86_32_stat64: {
+            result = Filesystem::FStatAt(AT_FDCWD, (char*)arg1, (x86_stat*)arg2, 0);
+            break;
+        }
         case felix86_x86_32_clock_nanosleep_time32: {
             timespec rqtp, rmtp;
             const x86_timespec* guest_rqtp = (x86_timespec*)arg3;
@@ -1509,6 +1606,21 @@ void felix86_syscall32(ThreadState* state) {
             }
             break;
         }
+        case felix86_x86_32_clock_getres: {
+            timespec tp;
+            x86_timespec* guest_tp = (x86_timespec*)arg2;
+            if (!guest_tp) {
+                result = -EFAULT;
+                break;
+            }
+
+            result = SYSCALL(clock_getres, arg1, &tp);
+
+            if (result == 0) {
+                *guest_tp = tp;
+            }
+            break;
+        }
         case felix86_x86_32_futex_time32: {
             const x86_timespec* guest_spec = (x86_timespec*)arg4;
             if (guest_spec) {
@@ -1516,6 +1628,104 @@ void felix86_syscall32(ThreadState* state) {
                 result = SYSCALL(futex, arg1, arg2, arg3, &host_spec, arg4, arg5);
             } else {
                 result = SYSCALL(futex, arg1, arg2, arg3, arg4, arg5, arg6);
+            }
+            break;
+        }
+        case felix86_x86_32_poll: {
+            result = ::poll((pollfd*)(u64)arg1, arg2, arg3);
+            break;
+        }
+        case felix86_x86_32_socketcall: { // Funny syscall before the functions were seperated
+            enum {
+                SYS_SOCKET = 1,
+                SYS_BIND = 2,
+                SYS_CONNECT = 3,
+                SYS_LISTEN = 4,
+                SYS_ACCEPT = 5,
+                SYS_GETSOCKNAME = 6,
+                SYS_GETPEERNAME = 7,
+                SYS_SOCKETPAIR = 8,
+                SYS_SEND = 9,
+                SYS_RECV = 10,
+                SYS_SENDTO = 11,
+                SYS_RECVFROM = 12,
+                SYS_SHUTDOWN = 13,
+                SYS_SETSOCKOPT = 14,
+                SYS_GETSOCKOPT = 15,
+                SYS_SENDMSG = 16,
+                SYS_RECVMSG = 17,
+                SYS_ACCEPT4 = 18,
+                SYS_RECVMMSG = 19,
+                SYS_SENDMMSG = 20,
+            };
+
+            u32* args = (u32*)arg2;
+            switch (arg1) {
+            case SYS_SOCKET: {
+                result = ::socket(args[0], args[1], args[2]);
+                break;
+            }
+            case SYS_BIND: {
+                result = ::bind(args[0], (sockaddr*)(u64)args[1], args[2]);
+                break;
+            }
+            case SYS_CONNECT: {
+                result = ::connect(args[0], (sockaddr*)(u64)args[1], args[2]);
+                break;
+            }
+            case SYS_LISTEN: {
+                result = ::listen(args[0], args[1]);
+                break;
+            }
+            case SYS_ACCEPT: {
+                result = ::accept(args[0], (sockaddr*)(u64)args[1], (socklen_t*)(u64)args[2]);
+                break;
+            }
+            case SYS_GETSOCKNAME: {
+                result = ::getsockname(args[0], (sockaddr*)(u64)args[1], (socklen_t*)(u64)args[2]);
+                break;
+            }
+            case SYS_GETPEERNAME: {
+                result = ::getpeername(args[0], (sockaddr*)(u64)args[1], (socklen_t*)(u64)args[2]);
+                break;
+            }
+            case SYS_SOCKETPAIR: {
+                result = ::socketpair(args[0], args[1], args[2], (i32*)(u64)args[3]);
+                break;
+            }
+            case SYS_SEND: {
+                result = ::send(args[0], (void*)(u64)args[1], args[2], args[3]);
+                break;
+            }
+            case SYS_RECV: {
+                result = ::recv(args[0], (void*)(u64)args[1], args[2], args[3]);
+                break;
+            }
+            case SYS_SENDTO: {
+                result = ::sendto(args[0], (void*)(u64)args[1], args[2], args[3], (sockaddr*)(u64)args[4], args[5]);
+                break;
+            }
+            case SYS_RECVFROM: {
+                result = ::recvfrom(args[0], (void*)(u64)args[1], args[2], args[3], (sockaddr*)(u64)args[4], (socklen_t*)(u64)args[5]);
+                break;
+            }
+            case SYS_SHUTDOWN: {
+                result = ::shutdown(args[0], args[1]);
+                break;
+            }
+            case SYS_SENDMSG: {
+                result = ::sendmsg32(args[0], (x86_msghdr*)(u64)args[1], args[2]);
+                break;
+            }
+            case SYS_ACCEPT4: {
+                result = ::accept4(args[0], (sockaddr*)(u64)args[1], (socklen_t*)(u64)args[2], args[3]);
+                break;
+            }
+            default: {
+                ERROR("Unimplemented socketcall command: %d", arg1);
+                result = -EINVAL;
+                break;
+            }
             }
             break;
         }
