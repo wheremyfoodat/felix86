@@ -6,7 +6,7 @@
     void fast_##name(Recompiler& rec, HostAddress rip, Assembler& as, ZydisDecodedInstruction& instruction, ZydisDecodedOperand* operands)
 
 FAST_HANDLE(FLD) {
-    if (operands[0].size == 80) {
+    if (operands[0].size == 80 && operands[0].type == ZYDIS_OPERAND_TYPE_MEMORY) {
         biscuit::GPR address = rec.lea(&operands[0]);
         rec.writebackDirtyState();
         rec.invalidStateUntilJump();
@@ -227,6 +227,23 @@ FAST_HANDLE(FISTTP) {
     FIST(rec, rip, as, operands, true, RMode::RTZ);
 }
 
+FAST_HANDLE(FIMUL) {
+    biscuit::GPR top = rec.getTOP();
+    biscuit::FPR st0 = rec.getST(top, 0);
+    biscuit::GPR integer = rec.getOperandGPR(&operands[0]);
+    biscuit::FPR scratch = rec.scratchFPR();
+    biscuit::FPR result = rec.scratchFPR();
+
+    if (operands[0].size == 16) {
+        rec.sext(integer, integer, X86_SIZE_WORD);
+    }
+
+    as.FCVT_D_W(scratch, integer);
+    as.FMUL_D(result, st0, scratch);
+
+    rec.setST(top, 0, result);
+}
+
 void FCOM(Recompiler& rec, HostAddress rip, Assembler& as, ZydisDecodedOperand* operands, bool pop) {
     u8 index = operands[1].reg.value - ZYDIS_REGISTER_ST0;
     ASSERT(index >= 1 && index <= 7);
@@ -314,6 +331,15 @@ FAST_HANDLE(FRNDINT) {
     rec.setST(top, 0, st0);
 }
 
+FAST_HANDLE(FCHS) {
+    biscuit::GPR top = rec.getTOP();
+    biscuit::FPR st0 = rec.getST(top, 0);
+
+    as.FNEG_D(st0, st0);
+
+    rec.setST(top, 0, st0);
+}
+
 FAST_HANDLE(FLD1) {
     biscuit::GPR top = rec.getTOP();
     biscuit::FPR st = rec.scratchFPR();
@@ -392,4 +418,66 @@ FAST_HANDLE(FNSTCW) {
 
 FAST_HANDLE(FLDCW) {
     WARN("FLDCW is not implemented, ignoring");
+}
+
+void FCMOV(Recompiler& rec, Assembler& as, ZydisDecodedOperand* operands, biscuit::GPR cond) {
+    biscuit::Label not_true;
+    as.BEQZ(cond, &not_true);
+    biscuit::GPR top = rec.getTOP();
+    biscuit::FPR sti = rec.getST(top, &operands[1]);
+    rec.setST(top, 0, sti);
+    as.Bind(&not_true);
+}
+
+FAST_HANDLE(FCMOVB) {
+    biscuit::GPR cf = rec.flag(X86_REF_CF);
+    FCMOV(rec, as, operands, cf);
+}
+
+FAST_HANDLE(FCMOVE) {
+    biscuit::GPR zf = rec.flag(X86_REF_ZF);
+    FCMOV(rec, as, operands, zf);
+}
+
+FAST_HANDLE(FCMOVBE) {
+    biscuit::GPR cf = rec.flag(X86_REF_CF);
+    biscuit::GPR zf = rec.flag(X86_REF_ZF);
+    biscuit::GPR cond = rec.scratch();
+    as.OR(cond, cf, zf);
+    FCMOV(rec, as, operands, cond);
+}
+
+FAST_HANDLE(FCMOVU) {
+    biscuit::GPR pf = rec.flag(X86_REF_PF);
+    FCMOV(rec, as, operands, pf);
+}
+
+FAST_HANDLE(FCMOVNB) {
+    biscuit::GPR cf = rec.flag(X86_REF_CF);
+    biscuit::GPR cond = rec.scratch();
+    as.XORI(cond, cf, 1);
+    FCMOV(rec, as, operands, cond);
+}
+
+FAST_HANDLE(FCMOVNE) {
+    biscuit::GPR zf = rec.flag(X86_REF_ZF);
+    biscuit::GPR cond = rec.scratch();
+    as.XORI(cond, zf, 1);
+    FCMOV(rec, as, operands, cond);
+}
+
+FAST_HANDLE(FCMOVNBE) {
+    biscuit::GPR cf = rec.flag(X86_REF_CF);
+    biscuit::GPR zf = rec.flag(X86_REF_ZF);
+    biscuit::GPR cond = rec.scratch();
+    as.OR(cond, cf, zf);
+    as.XORI(cond, cond, 1);
+    FCMOV(rec, as, operands, cond);
+}
+
+FAST_HANDLE(FCMOVNU) {
+    biscuit::GPR pf = rec.flag(X86_REF_PF);
+    biscuit::GPR cond = rec.scratch();
+    as.XORI(cond, pf, 1);
+    FCMOV(rec, as, operands, cond);
 }

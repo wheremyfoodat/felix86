@@ -1,6 +1,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <sys/inotify.h>
+#include <sys/mount.h>
 #include <sys/stat.h>
 #include "felix86/common/overlay.hpp"
 #include "felix86/hle/filesystem.hpp"
@@ -61,6 +62,14 @@ int Filesystem::ReadlinkAt(int fd, const char* filename, char* buf, int bufsiz) 
         int bytes = std::min((int)stem_size, bufsiz);
         memcpy(buf, path.c_str() + rootfs_size, bytes);
         return bytes;
+    }
+
+    // For the emulator to work we symlink some stuff like /proc to the rootfs, if we allow readlink to
+    // return `/proc` when `readlink(/proc)` happens we'd get infinite recursion and stuff would not behave
+    // For example the `realpath` function will cause problems if used on /proc
+    if (isOurSymlinks(filename)) {
+        // If the file is not a symlink we are supposed to return -EINVAL
+        return -EINVAL;
     }
 
     auto [new_fd, new_filename] = resolve(fd, filename);
@@ -180,6 +189,15 @@ int Filesystem::Chown(const char* filename, u64 owner, u64 group) {
     return result;
 }
 
+int Filesystem::LChown(const char* filename, u64 owner, u64 group) {
+    std::filesystem::path path = resolve(filename);
+    int result = ::lchown(path.c_str(), owner, group);
+    if (result == -1) {
+        result = -errno;
+    }
+    return result;
+}
+
 int Filesystem::Chdir(const char* filename) {
     std::filesystem::path path = resolve(filename);
     int result = ::chdir(path.c_str());
@@ -189,9 +207,9 @@ int Filesystem::Chdir(const char* filename) {
     return result;
 }
 
-int Filesystem::Mkdir(const char* filename, u64 mode) {
-    std::filesystem::path path = resolve(filename);
-    int result = ::mkdir(path.c_str(), mode);
+int Filesystem::MkdirAt(int fd, const char* filename, u64 mode) {
+    auto [new_fd, new_path] = resolve(fd, filename);
+    int result = ::mkdirat(new_fd, new_path, mode);
     if (result == -1) {
         result = -errno;
     }
@@ -241,6 +259,12 @@ int Filesystem::UtimensAt(int fd, const char* filename, struct timespec* spec, i
 int Filesystem::Rmdir(const char* dir) {
     std::filesystem::path path = resolve(dir);
     return rmdirInternal(path.c_str());
+}
+
+int Filesystem::Mount(const char* source, const char* target, const char* fstype, u64 flags, const void* data) {
+    std::filesystem::path rsource = resolve(source);
+    std::filesystem::path rtarget = resolve(target);
+    return ::mount(rsource.c_str(), rtarget.c_str(), fstype, flags, data);
 }
 
 int Filesystem::INotifyAddWatch(int fd, const char* path, u32 mask) {
@@ -378,6 +402,14 @@ bool Filesystem::isProcSelfExe(const char* path) {
     std::string spath = path;
     std::string pidpath = "/proc/" + std::to_string(getpid()) + "/exe";
     if (spath == "/proc/self/exe" || spath == "/proc/thread-self/exe" || spath == pidpath) {
+        return true;
+    }
+    return false;
+}
+
+bool Filesystem::isOurSymlinks(const char* path) {
+    std::string spath = path;
+    if (spath == "/proc" || spath == "/run" || spath == "/sys" || spath == "/dev") {
         return true;
     }
     return false;

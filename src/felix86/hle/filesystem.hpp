@@ -93,9 +93,11 @@ struct Filesystem {
 
     static int Chown(const char* filename, u64 owner, u64 group);
 
+    static int LChown(const char* filename, u64 owner, u64 group);
+
     static int Chdir(const char* filename);
 
-    static int Mkdir(const char* filename, u64 mode);
+    static int MkdirAt(int fd, const char* filename, u64 mode);
 
     static int Getcwd(char* buf, size_t size);
 
@@ -116,6 +118,8 @@ struct Filesystem {
     static int FChmodAt(int fd, const char* filename, u64 mode);
 
     static int Rmdir(const char* path);
+
+    static int Mount(const char* source, const char* target, const char* fstype, u64 flags, const void* data);
 
     static int INotifyAddWatch(int fd, const char* path, u32 mask);
 
@@ -161,6 +165,8 @@ private:
     static std::pair<int, const char*> resolve(int fd, const char* path);
 
     static bool isProcSelfExe(const char* path);
+
+    static bool isOurSymlinks(const char* path);
 
     std::filesystem::path executable_path;
     std::shared_ptr<Elf> elf;

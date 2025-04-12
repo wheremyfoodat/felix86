@@ -27,12 +27,12 @@
 #include "felix86/hle/brk.hpp"
 #include "felix86/hle/filesystem.hpp"
 #include "felix86/hle/guest_types.hpp"
-#include "felix86/hle/socket.hpp"
+#include "felix86/hle/ipc32.hpp"
+#include "felix86/hle/socket32.hpp"
 #include "felix86/hle/syscall.hpp"
 #include "felix86/hle/thread.hpp"
 
 // Annoyingly, the ::syscall function returns -1 instead of the actual error number.
-// But we also don't wanna check at the end because the // We need to check the moment result gets set
 struct Result {
     Result& operator=(ssize_t inner) {
         if (inner == -1) {
@@ -187,12 +187,16 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_set_robust_list: {
-        result = -ENOSYS;
+        result = SYSCALL(set_robust_list, arg1, arg2);
         break;
     }
     case felix86_riscv64_rseq: {
         // Couldn't find any solid documentation and FEX doesn't support it either
         result = -ENOSYS;
+        break;
+    }
+    case felix86_riscv64_personality: {
+        result = SYSCALL(personality, arg1 & ~PER_LINUX32);
         break;
     }
     case felix86_riscv64_prlimit64: {
@@ -264,10 +268,14 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_epoll_ctl: {
-        epoll_event host_event = *(x86_epoll_event*)arg4;
-        result = SYSCALL(epoll_ctl, arg1, arg2, arg3, &host_event);
-        if (result == 0) {
-            *(x86_epoll_event*)arg4 = host_event;
+        if (arg4) {
+            epoll_event host_event = *(x86_epoll_event*)arg4;
+            result = SYSCALL(epoll_ctl, arg1, arg2, arg3, &host_event);
+            if (result == 0) {
+                *(x86_epoll_event*)arg4 = host_event;
+            }
+        } else {
+            result = SYSCALL(epoll_ctl, arg1, arg2, arg3, nullptr);
         }
         break;
     }
@@ -294,7 +302,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_mount: {
-        result = SYSCALL(mount, arg1, arg2, arg3, arg4, arg5, arg6);
+        result = Filesystem::Mount((char*)arg1, (char*)arg2, (char*)arg3, arg4, (void*)arg5);
         break;
     }
     case felix86_riscv64_accept: {
@@ -317,12 +325,24 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         result = SYSCALL(setreuid, arg1, arg2, arg3, arg4, arg5, arg6);
         break;
     }
+    case felix86_riscv64_capset: {
+        result = SYSCALL(capset, arg1, arg2, arg3, arg4, arg5, arg6);
+        break;
+    }
+    case felix86_riscv64_capget: {
+        result = SYSCALL(capget, arg1, arg2, arg3, arg4, arg5, arg6);
+        break;
+    }
     case felix86_riscv64_setresuid: {
         result = SYSCALL(setresuid, arg1, arg2, arg3, arg4, arg5, arg6);
         break;
     }
     case felix86_riscv64_setregid: {
         result = SYSCALL(setregid, arg1, arg2, arg3, arg4, arg5, arg6);
+        break;
+    }
+    case felix86_riscv64_setresgid: {
+        result = SYSCALL(setresgid, arg1, arg2, arg3, arg4, arg5, arg6);
         break;
     }
     case felix86_riscv64_setgroups: {
@@ -550,12 +570,6 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_openat: {
-        if (std::string((char*)arg2) == "/run/systemd/userdb/") { // TODO: There's some bug in Qt apps with this path??
-            WARN("Accessing /run/systemd/userdb/, returning -ENOENT");
-            result = -ENOENT;
-            break;
-        }
-
         result = Filesystem::OpenAt((int)arg1, (char*)arg2, (int)arg3, arg4);
         break;
     }
@@ -596,7 +610,9 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
     case felix86_riscv64_munmap: {
         if (arg1 < Mapper::addressSpaceEnd32 || g_mode32) {
             // Track unmaps in the 32-bit address space for MAP_32BIT in 64-bit mode
+            state->signals_disabled = true;
             result = g_mapper->unmap32((void*)arg1, arg2);
+            state->signals_disabled = false;
         } else {
             result = SYSCALL(munmap, arg1, arg2, arg3, arg4, arg5, arg6);
         }
@@ -679,7 +695,9 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_mremap: {
-        result = SYSCALL(mremap, arg1, arg2, arg3, arg4, arg5, arg6);
+        state->signals_disabled = true;
+        result = (u64)g_mapper->remap((void*)arg1, arg2, arg3, arg4, (void*)arg5);
+        state->signals_disabled = false;
         break;
     }
     case felix86_riscv64_msync: {
@@ -877,25 +895,24 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         result = SYSCALL(sched_yield);
         break;
     }
+    case felix86_riscv64_get_mempolicy: {
+        result = SYSCALL(get_mempolicy, arg1, arg2, arg3, arg4, arg5, arg6);
+        break;
+    }
+    case felix86_riscv64_set_mempolicy: {
+        result = SYSCALL(set_mempolicy, arg1, arg2, arg3, arg4, arg5, arg6);
+        break;
+    }
+    case felix86_riscv64_membarrier: {
+        result = SYSCALL(membarrier, arg1, arg2, arg3, arg4, arg5, arg6);
+        break;
+    }
+    case felix86_riscv64_mknodat: {
+        result = SYSCALL(mknodat, arg1, arg2, arg3, arg4, arg5, arg6);
+        break;
+    }
     case felix86_riscv64_sigaltstack: {
         VERBOSE("----- sigaltstack was called -----");
-        stack_t host_stack; // save old stack here while we check if guest stack is valid
-        stack_t* guest_stack = (stack_t*)arg1;
-        stack_t guest_stack_copy = *guest_stack;
-
-        // Let the kernel decide if the guest_stack is valid
-        int result_temp = sigaltstack(&guest_stack_copy, &host_stack);
-
-        // Restore old stack
-        int result_must = sigaltstack(&host_stack, nullptr);
-        ASSERT(result_must == 0);
-
-        if (result_temp != 0) {
-            WARN("Failed to set sigaltstack");
-            result = result_temp;
-            break;
-        }
-
         stack_t* new_ss = (stack_t*)arg1;
         stack_t* old_ss = (stack_t*)arg2;
 
@@ -1020,6 +1037,18 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         result = SYSCALL(wait4, arg1, arg2, arg3, arg4, arg5, arg6);
         break;
     }
+    case felix86_riscv64_fchownat: {
+        result = SYSCALL(fchownat, arg1, arg2, arg3, arg4, arg5, arg6);
+        break;
+    }
+    case felix86_riscv64_sync_file_range: {
+        result = SYSCALL(sync_file_range, arg1, arg2, arg3, arg4, arg5, arg6);
+        break;
+    }
+    case felix86_riscv64_mkdirat: {
+        result = Filesystem::MkdirAt(arg1, (char*)arg2, arg3);
+        break;
+    }
     case felix86_riscv64_execve: {
         if (!arg1) {
             WARN("execve with nullptr as executable path?");
@@ -1141,6 +1170,10 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         result = Signals::sigsuspend(state, (sigset_t*)arg1);
         break;
     }
+    case felix86_riscv64_epoll_create1: {
+        result = SYSCALL(epoll_create1, arg1);
+        break;
+    }
     case felix86_riscv64_rt_sigprocmask: {
         int how = arg1;
         sigset_t* set = (sigset_t*)arg2;
@@ -1210,6 +1243,10 @@ void felix86_syscall(ThreadState* state) {
             result = ::time((time_t*)arg1);
             break;
         }
+        case felix86_x86_64_link: {
+            result = Filesystem::SymlinkAt((char*)arg1, AT_FDCWD, (char*)arg2);
+            break;
+        }
         case felix86_x86_64_readlink: {
             if (arg1 == arg2) {
                 WARN("arg1 == arg2 during readlink");
@@ -1228,10 +1265,6 @@ void felix86_syscall(ThreadState* state) {
         case felix86_x86_64_epoll_create: {
             // epoll_create has obsolete and ignored argument size, acts the same as epoll_create1 with flags=0
             result = SYSCALL(epoll_create1, 0);
-            break;
-        }
-        case felix86_x86_64_epoll_create1: {
-            result = SYSCALL(epoll_create1, arg1, arg2, arg3, arg4, arg5, arg6);
             break;
         }
         case felix86_x86_64_epoll_wait: {
@@ -1273,6 +1306,10 @@ void felix86_syscall(ThreadState* state) {
             result = Filesystem::Chown((char*)arg1, arg2, arg3);
             break;
         }
+        case felix86_x86_64_lchown: {
+            result = Filesystem::LChown((char*)arg1, arg2, arg3);
+            break;
+        }
         case felix86_x86_64_access: {
             result = Filesystem::FAccessAt(AT_FDCWD, (char*)arg1, (int)arg2, 0);
             break;
@@ -1282,7 +1319,7 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
         case felix86_x86_64_mkdir: {
-            result = Filesystem::Mkdir((char*)arg1, arg2);
+            result = Filesystem::MkdirAt(AT_FDCWD, (char*)arg1, arg2);
             break;
         }
         case felix86_x86_64_open: {
@@ -1414,11 +1451,25 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
             break;
         }
         case felix86_x86_32_mkdir: {
-            result = Filesystem::Mkdir((char*)arg1, arg2);
+            result = Filesystem::MkdirAt(AT_FDCWD, (char*)arg1, arg2);
             break;
         }
         case felix86_x86_32_pipe: {
             result = ::pipe((int*)arg1);
+            break;
+        }
+        case felix86_x86_32_llseek: {
+            int fd = arg1;
+            u64 offset_high = arg2;
+            u64 offset_low = arg3;
+            loff_t* res = (loff_t*)arg4;
+            u64 whence = arg5;
+            u64 offset = (offset_high << 32) | offset_low;
+            result = ::lseek(fd, offset, whence);
+            if (result >= 0) {
+                *res = result;
+                result = 0;
+            }
             break;
         }
         case felix86_x86_32_writev: {
@@ -1432,6 +1483,12 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
             u64 offset = arg6 * 4096;
             state->signals_disabled = true;
             result = (ssize_t)g_mapper->map((void*)arg1, arg2, arg3, arg4, arg5, offset);
+            state->signals_disabled = false;
+            break;
+        }
+        case felix86_x86_32_mremap: {
+            state->signals_disabled = true;
+            result = (ssize_t)g_mapper->remap32((void*)arg1, arg2, arg3, arg4, (void*)arg5);
             state->signals_disabled = false;
             break;
         }
@@ -1569,6 +1626,17 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
             result = ::waitpid((pid_t)arg1, (int*)arg2, (int)arg3);
             break;
         }
+        case felix86_x86_32_statfs64: {
+            ASSERT(arg2 == sizeof(x86_statfs64));
+
+            struct statfs statfs;
+            x86_statfs64* guest_statfs = (x86_statfs64*)arg3;
+            result = Filesystem::StatFs((char*)arg1, &statfs);
+            if (result >= 0) {
+                *guest_statfs = statfs;
+            }
+            break;
+        }
         case felix86_x86_32_time32: {
             time_t time;
             result = ::time(&time);
@@ -1583,6 +1651,10 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
                 WARN("arg1 == arg2 during readlink");
             }
             result = Filesystem::ReadlinkAt(AT_FDCWD, (char*)arg1, (char*)arg2, (int)arg3);
+            break;
+        }
+        case felix86_x86_32_ipc: {
+            result = ipc32(arg1, arg2, arg3, arg4, (void*)arg5, arg6);
             break;
         }
         case felix86_x86_32_stat64: {
@@ -1632,7 +1704,67 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
             break;
         }
         case felix86_x86_32_poll: {
-            result = ::poll((pollfd*)(u64)arg1, arg2, arg3);
+            result = ::poll((pollfd*)arg1, arg2, arg3);
+            break;
+        }
+        case felix86_x86_32_sendmsg: {
+            result = ::sendmsg32(arg1, (x86_msghdr*)arg2, arg3);
+            break;
+        }
+        case felix86_x86_32_recvmsg: {
+            result = ::recvmsg32(arg1, (x86_msghdr*)arg2, arg3);
+            break;
+        }
+        case felix86_x86_32_getsockopt: {
+            result = ::getsockopt32(arg1, arg2, arg3, (char*)arg4, (u32*)arg5);
+            break;
+        }
+        case felix86_x86_32_setsockopt: {
+            result = ::setsockopt32(arg1, arg2, arg3, (char*)arg4, arg5);
+            break;
+        }
+        case felix86_x86_32_wait4: {
+            x86_rusage* guest_rusage = (x86_rusage*)arg4;
+            rusage host_rusage;
+            rusage* host_rusage_ptr = nullptr;
+            if (guest_rusage) {
+                host_rusage = *guest_rusage;
+                host_rusage_ptr = &host_rusage;
+            }
+
+            result = ::wait4(arg1, (int*)arg2, arg3, host_rusage_ptr);
+
+            if (guest_rusage) {
+                *guest_rusage = host_rusage;
+            }
+            break;
+        }
+        case felix86_x86_32_dup2: {
+            result = ::dup2(arg1, arg2);
+            break;
+        }
+        case felix86_x86_32_utimensat_time32: {
+            struct timespec host_times[2];
+            int dirfd = arg1;
+            const char* pathname = (const char*)arg2;
+            x86_timespec* guest_times = (x86_timespec*)arg3;
+            int flags = arg4;
+
+            if (guest_times) {
+                host_times[0] = guest_times[0];
+                host_times[1] = guest_times[1];
+                result = Filesystem::UtimensAt(dirfd, pathname, host_times, flags);
+            } else {
+                result = Filesystem::UtimensAt(dirfd, pathname, nullptr, flags);
+            }
+            break;
+        }
+        case felix86_x86_32_ia32_ftruncate64: {
+            int fd = arg1;
+            u64 offset_low = arg2;
+            u64 offset_high = arg3;
+            u64 offset = (offset_high << 32) | offset_low;
+            result = ftruncate(fd, offset);
             break;
         }
         case felix86_x86_32_socketcall: { // Funny syscall before the functions were seperated
@@ -1713,8 +1845,20 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
                 result = ::shutdown(args[0], args[1]);
                 break;
             }
+            case SYS_SETSOCKOPT: {
+                result = ::setsockopt32(args[0], args[1], args[2], (char*)(u64)args[3], args[4]);
+                break;
+            }
+            case SYS_GETSOCKOPT: {
+                result = ::getsockopt32(args[0], args[1], args[2], (char*)(u64)args[3], (u32*)(u64)args[4]);
+                break;
+            }
             case SYS_SENDMSG: {
                 result = ::sendmsg32(args[0], (x86_msghdr*)(u64)args[1], args[2]);
+                break;
+            }
+            case SYS_RECVMSG: {
+                result = ::recvmsg32(args[0], (x86_msghdr*)(u64)args[1], args[2]);
                 break;
             }
             case SYS_ACCEPT4: {

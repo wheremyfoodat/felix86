@@ -706,10 +706,6 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
         // Now we just need to set RIP to the handler function
         current_state->SetRip(handler.func);
 
-        if (sig == SIGCHLD) {
-            WARN("SIGCHLD, are we copying siginfo correctly?");
-        }
-
         // Block the signals specified in the sa_mask until the signal handler returns
         sigset_t new_mask;
         sigandset(&new_mask, &mask_during_signal, Signals::hostSignalMask());
@@ -827,6 +823,10 @@ bool dispatch_guest(int sig, siginfo_t* info, void* ctx) {
         return false;
     }
 
+    if (g_mode32) {
+        WARN("WARN: Signals (%d) in 32-bit apps are currently not well supported", sig);
+    }
+
     if (handler->func.raw() == (u64)SIG_IGN || handler->func.raw() == (u64)SIG_DFL) {
         ERROR("Signal %d hit but signal handler is %s", sig, handler->func.raw() ? "SIG_IGN" : "SIG_DFL");
         return true;
@@ -884,10 +884,6 @@ bool dispatch_guest(int sig, siginfo_t* info, void* ctx) {
 
     // Now we just need to set RIP to the handler function
     state->SetRip(handler->func);
-
-    if (sig == SIGCHLD) {
-        WARN("SIGCHLD, are we copying siginfo correctly?");
-    }
 
     // Block the signals specified in the sa_mask until the signal handler returns
     sigset_t new_mask;
