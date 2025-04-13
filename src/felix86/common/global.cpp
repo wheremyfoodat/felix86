@@ -15,14 +15,12 @@
 #include "felix86/common/overlay.hpp"
 #include "felix86/common/state.hpp"
 #include "felix86/hle/filesystem.hpp"
-#include "fmt/format.h"
 
 bool g_paranoid = false;
 bool g_testing = false;
 bool g_extensions_manually_specified = false;
 bool g_print_all_calls = false;
 bool g_print_all_insts = false;
-int g_block_trace = 0;
 bool g_mode32 = false;
 bool g_thunking = false;
 int g_vlen = 0;
@@ -32,14 +30,13 @@ u64 g_current_brk = 0;
 u64 g_current_brk_size = 0;
 u64 g_max_brk_size = 0;
 u64 g_dispatcher_exit_count = 0;
-std::list<ThreadState*> g_thread_states{};
-std::unordered_map<u64, std::vector<u64>> g_breakpoints{}; // TODO: HostAddress
+std::unordered_map<u64, std::vector<u64>> g_breakpoints{};
 pthread_key_t g_thread_state_key = -1;
 ProcessGlobals g_process_globals{};
 std::unique_ptr<Mapper> g_mapper{};
 std::unique_ptr<GDBJIT> g_gdbjit;
 u64 g_program_end = 0;
-HostAddress g_guest_auxv{};
+u64 g_guest_auxv{};
 size_t g_guest_auxv_size = 0;
 bool g_execve_process = false;
 std::unique_ptr<Filesystem> g_fs{};
@@ -50,10 +47,10 @@ StartParameters g_params{};
 int g_output_fd = STDERR_FILENO;
 int g_rootfs_fd = 0;
 
-HostAddress g_interpreter_start{};
-HostAddress g_interpreter_end{};
-HostAddress g_executable_start{};
-HostAddress g_executable_end{};
+u64 g_interpreter_start{};
+u64 g_interpreter_end{};
+u64 g_executable_start{};
+u64 g_executable_end{};
 
 bool is_running_under_perf() {
     // Always enable symbol emission when this is enabled, in case our detection fails
@@ -323,15 +320,6 @@ void initialize_globals() {
         } else {
             WARN("I couldn't find libEGL-thunked.so in %s", thunks.c_str());
         }
-    }
-
-    const char* block_trace = getenv("FELIX86_BLOCK_TRACE");
-    if (block_trace) {
-        g_block_trace = std::stoi(block_trace);
-        g_config.link = false; // needed to trace blocks
-        g_config.link_indirect = false;
-        environment += "\nFELIX86_BLOCK_TRACE=";
-        environment += block_trace;
     }
 
     const char* env_file = getenv("FELIX86_ENV_FILE");

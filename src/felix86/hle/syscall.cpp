@@ -31,6 +31,7 @@
 #include "felix86/hle/socket32.hpp"
 #include "felix86/hle/syscall.hpp"
 #include "felix86/hle/thread.hpp"
+#include "felix86/v2/recompiler.hpp"
 
 // Annoyingly, the ::syscall function returns -1 instead of the actual error number.
 struct Result {
@@ -591,6 +592,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
 #ifndef MAP_32BIT
 #define MAP_32BIT 0x40
 #endif
+        state->signals_disabled = true;
         u64 flags = arg4;
         bool is_fixed = (flags & MAP_FIXED) || (flags & MAP_FIXED_NOREPLACE);
         if ((flags & MAP_32BIT) || (is_fixed && arg1 < Mapper::addressSpaceEnd32) || g_mode32) {
@@ -598,13 +600,17 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
             // For example, Mono tries to use it to allocate code cache pages near the executable so that it can use
             // +-2GiB jumps. If it doesn't get them near enough it will eventually crash and die.
             // We need to also track fixed mappings in the 32-bit address space
-            state->signals_disabled = true;
             result = (ssize_t)g_mapper->map32((void*)arg1, arg2, arg3, (int)arg4, (int)arg5, arg6);
-            state->signals_disabled = false;
         } else {
             // No need to use mapper
             result = SYSCALL(mmap, arg1, arg2, arg3, (int)arg4, (int)arg5, arg6);
         }
+
+        // If there's any blocks in any threads that match this mmapped range they need to be invalidated
+        if (result > 0) {
+            Recompiler::invalidateRangeGlobal(result, result + arg2);
+        }
+        state->signals_disabled = false;
         break;
     }
     case felix86_riscv64_munmap: {
@@ -697,6 +703,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
     case felix86_riscv64_mremap: {
         state->signals_disabled = true;
         result = (u64)g_mapper->remap((void*)arg1, arg2, arg3, arg4, (void*)arg5);
+        Recompiler::invalidateRangeGlobal(result, result + arg3);
         state->signals_disabled = false;
         break;
     }
@@ -862,7 +869,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         x64_sigaction* act = (x64_sigaction*)arg2;
         if (act) {
             auto handler = act->handler;
-            Signals::registerSignalHandler(state, arg1, GuestAddress{(u64)handler}, act->sa_mask, act->sa_flags);
+            Signals::registerSignalHandler(state, arg1, (u64)handler, act->sa_mask, act->sa_flags);
             if (g_config.verbose) {
                 PLAIN("Installed signal handler %s at:", strsignal(arg1));
                 print_address((u64)handler);
@@ -875,9 +882,9 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
             RegisteredSignal old = Signals::getSignalHandler(state, arg1);
             bool was_sigaction = old.flags & SA_SIGINFO;
             if (was_sigaction) {
-                old_act->sa_sigaction = (decltype(old_act->sa_sigaction))old.func.raw();
+                old_act->sa_sigaction = (decltype(old_act->sa_sigaction))old.func;
             } else {
-                old_act->sa_handler = (decltype(old_act->sa_handler))old.func.raw();
+                old_act->sa_handler = (decltype(old_act->sa_handler))old.func;
             }
             old_act->sa_flags = old.flags;
             old_act->sa_mask = old.mask;
@@ -945,7 +952,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
                 void* addr = (void*)arg2;
                 size_t size = arg3;
                 size_t actual_size = std::min(size, g_guest_auxv_size);
-                memcpy(addr, (void*)g_guest_auxv.raw(), actual_size);
+                memcpy(addr, (void*)g_guest_auxv, actual_size);
                 result = actual_size;
             }
             break;
@@ -1483,12 +1490,18 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
             u64 offset = arg6 * 4096;
             state->signals_disabled = true;
             result = (ssize_t)g_mapper->map((void*)arg1, arg2, arg3, arg4, arg5, offset);
+            if (result > 0) {
+                Recompiler::invalidateRangeGlobal(result, result + arg2);
+            }
             state->signals_disabled = false;
             break;
         }
         case felix86_x86_32_mremap: {
             state->signals_disabled = true;
             result = (ssize_t)g_mapper->remap32((void*)arg1, arg2, arg3, arg4, (void*)arg5);
+            if (result > 0) {
+                Recompiler::invalidateRangeGlobal(result, result + arg3);
+            }
             state->signals_disabled = false;
             break;
         }

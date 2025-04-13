@@ -14,7 +14,7 @@ constexpr int address_cache_bits = 16;
 constexpr static u64 jit_stack_size = 1024 * 1024;
 
 struct AddressCacheEntry {
-    HostAddress host{}, guest{};
+    u64 host{}, guest{};
 };
 
 enum class FlagMode {
@@ -27,18 +27,17 @@ enum class FlagMode {
 // and when it is just undefined. For example within a block, the register that represents RAX is not valid until it's loaded
 // for the first time, and then when it's written back it becomes invalid again because it may change due to a syscall or something.
 struct RegisterAccess {
-    HostAddress address; // address where the load or writeback happened
-    bool valid;          // true if loaded and potentially modified, false if written back to memory and allocated register holds garbage
+    u64 address; // address where the load or writeback happened
+    bool valid;  // true if loaded and potentially modified, false if written back to memory and allocated register holds garbage
 };
 
 struct BlockMetadata {
-    HostAddress address{};
-    HostAddress address_end{};
-    HostAddress guest_address{};
-    HostAddress guest_address_end{};
+    u64 address{};
+    u64 address_end{};
+    u64 guest_address{};
+    u64 guest_address_end{};
     std::vector<u8*> pending_links{};
-    std::vector<u8*> links{}; // where this block was linked to, used for unlinking it
-    std::vector<std::pair<GuestAddress, HostAddress>> instruction_spans{};
+    std::vector<std::pair<u64, u64>> instruction_spans{};
 };
 
 struct Recompiler {
@@ -49,7 +48,7 @@ struct Recompiler {
     Recompiler(Recompiler&&) = delete;
     Recompiler& operator=(Recompiler&&) = delete;
 
-    HostAddress compile(ThreadState* state, HostAddress rip);
+    u64 compile(ThreadState* state, u64 rip);
 
     inline Assembler& getAssembler() {
         return as;
@@ -61,7 +60,7 @@ struct Recompiler {
 
     biscuit::FPR scratchFPR();
 
-    ZydisMnemonic decode(HostAddress rip, ZydisDecodedInstruction& instruction, ZydisDecodedOperand* operands);
+    ZydisMnemonic decode(u64 rip, ZydisDecodedInstruction& instruction, ZydisDecodedOperand* operands);
 
     bool isScratch(biscuit::GPR reg);
 
@@ -121,7 +120,7 @@ struct Recompiler {
 
     void restoreRoundingMode();
 
-    void backToDispatcher(bool use_rsb = false);
+    void backToDispatcher();
 
     void enterDispatcher(ThreadState* state);
 
@@ -133,7 +132,7 @@ struct Recompiler {
 
     void enableSignals();
 
-    bool shouldEmitFlag(HostAddress current_rip, x86_ref_e ref);
+    bool shouldEmitFlag(u64 current_rip, x86_ref_e ref);
 
     void zext(biscuit::GPR dest, biscuit::GPR src, x86_size_e size);
 
@@ -163,11 +162,15 @@ struct Recompiler {
 
     biscuit::GPR getRip();
 
-    void jumpAndLink(HostAddress rip, bool use_rsb = false);
+    void jumpAndLink(u64 rip);
 
-    void jumpAndLinkConditional(biscuit::GPR condition, HostAddress rip_true, HostAddress rip_false);
+    void jumpAndLinkConditional(biscuit::GPR condition, u64 rip_true, u64 rip_false);
 
     void invalidateBlock(BlockMetadata* block);
+
+    static void invalidateRangeGlobal(u64 start, u64 end);
+
+    void invalidateRange(u64 start, u64 end);
 
     constexpr static biscuit::GPR threadStatePointer() {
         return x27; // saved register so that when we exit VM we don't have to save it
@@ -362,13 +365,13 @@ struct Recompiler {
 
     bool isGPR(ZydisRegister reg);
 
-    BlockMetadata& getBlockMetadata(HostAddress rip) {
-        return block_metadata[rip.raw()];
+    BlockMetadata& getBlockMetadata(u64 rip) {
+        return block_metadata[rip];
     }
 
     void vrgather(biscuit::Vec dst, biscuit::Vec src, biscuit::Vec iota, VecMask mask = VecMask::No);
 
-    bool blockExists(HostAddress rip);
+    bool blockExists(u64 rip);
 
     biscuit::GPR getFlags();
 
@@ -376,9 +379,7 @@ struct Recompiler {
 
     u64 getImmediate(ZydisDecodedOperand* operand);
 
-    HostAddress emitSigreturnThunk();
-
-    HostAddress emitUnlinkIndirectThunk();
+    void emitSigreturnThunk();
 
     auto& getBlockMap() {
         return block_metadata;
@@ -388,13 +389,13 @@ struct Recompiler {
         return host_pc_map;
     }
 
-    HostAddress getCompiledBlock(ThreadState* state, HostAddress rip);
+    u64 getCompiledBlock(ThreadState* state, u64 rip);
 
     void pushCalltrace();
 
     void popCalltrace();
 
-    void unlinkBlock(ThreadState* state, HostAddress rip);
+    void unlinkBlock(ThreadState* state, u64 rip);
 
     bool tryInlineSyscall();
 
@@ -430,16 +431,6 @@ struct Recompiler {
 
     void setFlag(x86_ref_e flag);
 
-    void trace(u64 address);
-
-    void printTrace();
-
-    void linkIndirect();
-
-    u8* getUnlinkIndirectThunk() {
-        return unlink_indirect_thunk;
-    }
-
     void clearCodeCache(ThreadState* state);
 
     void call(u64 target) {
@@ -447,12 +438,6 @@ struct Recompiler {
     }
 
     static void call(Assembler& as, u64 target) {
-        if (g_config.rsb) {
-            // Save JIT stack, load C++ stack
-            as.MV(s0, sp);
-            as.LD(sp, offsetof(ThreadState, cpp_stack), threadStatePointer());
-        }
-
         i64 offset = target - (u64)as.GetCursorPointer();
         if (IsValidJTypeImm(offset)) {
             as.JAL(offset);
@@ -464,11 +449,6 @@ struct Recompiler {
         } else {
             as.LI(t0, target);
             as.JALR(t0);
-        }
-
-        if (g_config.rsb) {
-            // Restore JIT stack
-            as.MV(sp, s0);
         }
     }
 
@@ -542,9 +522,9 @@ struct Recompiler {
         return false;
     }
 
-    HostAddress compileSequence(HostAddress rip);
+    u64 compileSequence(u64 rip);
 
-    void compileInstruction(ZydisDecodedInstruction& instruction, ZydisDecodedOperand* operands, HostAddress rip);
+    void compileInstruction(ZydisDecodedInstruction& instruction, ZydisDecodedOperand* operands, u64 rip);
 
     void assumeLoaded();
 
@@ -567,7 +547,7 @@ private:
 
     struct FlagAccess {
         bool modification; // true if modified, false if used
-        HostAddress position;
+        u64 position;
     };
 
     // Get the register and load the value into it if needed
@@ -579,27 +559,27 @@ private:
 
     void emitDispatcher();
 
+    void emitInvalidateCallerThunk();
+
     void loadGPR(x86_ref_e reg, biscuit::GPR gpr);
 
     void loadVec(x86_ref_e reg, biscuit::Vec vec);
 
     RegisterMetadata& getMetadata(x86_ref_e reg);
 
-    void scanAhead(HostAddress rip);
+    void scanAhead(u64 rip);
 
-    void expirePendingLinks(HostAddress rip);
+    void expirePendingLinks(u64 rip);
 
     void emitNecessaryStuff();
 
-    void markPagesAsReadOnly(HostAddress start, HostAddress end);
+    void markPagesAsReadOnly(u64 start, u64 end);
 
     void inlineSyscall(int sysno, int argcount);
 
     void unlinkAt(u8* address_of_jump);
 
-    static void setupJitStack(ThreadState* state);
-
-    static void clearJitStack(ThreadState* state);
+    static void invalidateAt(ThreadState* state, u8* address_of_block);
 
     u8* code_cache{};
     biscuit::Assembler as{};
@@ -610,7 +590,7 @@ private:
 
     ZydisDecodedInstruction* current_instruction;
     ZydisDecodedOperand* current_operands;
-    HostAddress current_rip;
+    u64 current_rip;
 
     void (*enter_dispatcher)(ThreadState*){};
 
@@ -618,9 +598,9 @@ private:
 
     void* compile_next_handler{};
 
-    void* start_of_code_cache{};
+    u64 invalidate_caller_thunk{};
 
-    u8* unlink_indirect_thunk{};
+    void* start_of_code_cache{};
 
     std::array<RegisterMetadata, 16> gpr_metadata{};
     std::array<RegisterMetadata, 16> xmm_metadata{};
@@ -628,6 +608,9 @@ private:
     std::array<RegisterMetadata, 4> flag_metadata{};
 
     std::unordered_map<u64, BlockMetadata> block_metadata{};
+
+    Semaphore page_map_lock;
+    std::map<u64, std::vector<BlockMetadata*>> page_map{};
 
     // For fast host pc -> block metadata lookup (binary search vs looking up one by one)
     // on signal handlers
@@ -654,9 +637,6 @@ private:
 
     biscuit::GPR cached_lea = x0;
     ZydisDecodedOperand* cached_lea_operand;
-
-    std::vector<u64> block_trace;
-    size_t block_trace_index = 0;
 
     std::array<AddressCacheEntry, 1 << address_cache_bits> address_cache{};
 

@@ -113,7 +113,7 @@ std::pair<void*, size_t> Emulator::setupMainStack(ThreadState* state) {
         {AT_PAGESZ, {4096}},
         {AT_EXECFN, {(u64)program_name}},
         {AT_CLKTCK, {100}},
-        {AT_ENTRY, {elf->GetEntrypoint().raw()}},
+        {AT_ENTRY, {elf->GetEntrypoint()}},
         {AT_PLATFORM, {(u64)platform_name}},
         {AT_BASE, {(u64)elf->GetProgramBase()}},
         {AT_FLAGS, {0}},
@@ -158,7 +158,7 @@ std::pair<void*, size_t> Emulator::setupMainStack(ThreadState* state) {
         rsp = stack_push(rsp, auxv_entries[i].first);
     }
 
-    g_guest_auxv = HostAddress{rsp};
+    g_guest_auxv = rsp;
     g_guest_auxv_size = auxv_count * pointer_size;
 
     // End of environment variables
@@ -183,8 +183,8 @@ std::pair<void*, size_t> Emulator::setupMainStack(ThreadState* state) {
         return pair;
     }
 
-    GuestAddress rsp_guest = HostAddress{rsp}.toGuest();
-    state->SetGpr(X86_REF_RSP, rsp_guest.raw());
+    u64 rsp_guest = rsp;
+    state->SetGpr(X86_REF_RSP, rsp_guest);
 
     return pair;
 }
@@ -217,17 +217,13 @@ void* Emulator::CompileNext(ThreadState* thread_state) {
 
     thread_state->signals_disabled = true;
 
-    HostAddress next_block = thread_state->recompiler->getCompiledBlock(thread_state, thread_state->GetRip().toHost());
-
-    if (g_block_trace) {
-        thread_state->recompiler->trace(thread_state->GetRip().toHost().raw());
-    }
+    u64 next_block = thread_state->recompiler->getCompiledBlock(thread_state, thread_state->GetRip());
 
     thread_state->signals_disabled = false;
 
-    ASSERT_MSG(!next_block.isNull(), "getCompiledBlock returned null?");
+    ASSERT_MSG(next_block != 0, "getCompiledBlock returned null?");
 
-    return (void*)next_block.raw();
+    return (void*)next_block;
 }
 
 void Emulator::ExitDispatcher(ThreadState* state) {
@@ -343,13 +339,13 @@ std::pair<ExitReason, int> Emulator::Start(const StartParameters& config) {
     auto [stack, size] = setupMainStack(main_state);
 
     // The Emulator::Run will only return when exit_dispatcher is jumped to
-    VERBOSE("Executable: %016lx - %016lx", g_executable_start.raw(), g_executable_end.raw());
-    if (!g_interpreter_start.isNull()) {
-        VERBOSE("Interpreter: %016lx - %016lx", g_interpreter_start.raw(), g_interpreter_end.raw());
+    VERBOSE("Executable: %016lx - %016lx", g_executable_start, g_executable_end);
+    if (g_interpreter_start != 0) {
+        VERBOSE("Interpreter: %016lx - %016lx", g_interpreter_start, g_interpreter_end);
     }
 
     if (!g_testing) {
-        VERBOSE("Entrypoint: %016lx", g_fs->GetEntrypoint().toHost().raw());
+        VERBOSE("Entrypoint: %016lx", g_fs->GetEntrypoint());
     }
 
     VERBOSE("Entering main thread :)");
@@ -371,83 +367,12 @@ std::pair<ExitReason, int> Emulator::Start(const StartParameters& config) {
     return {exit_reason, exit_code};
 }
 
-void Emulator::StartTest(const TestConfig& config, GuestAddress stack) {
+void Emulator::StartTest(const TestConfig& config, u64 stack) {
     g_mode32 = config.mode32;
 
     ThreadState* main_state = ThreadState::Create(nullptr);
-    main_state->SetGpr(X86_REF_RSP, stack.raw());
-    main_state->SetRip(config.entrypoint.toGuest());
+    main_state->SetGpr(X86_REF_RSP, stack);
+    main_state->SetRip(config.entrypoint);
 
     Threads::StartThread(main_state);
-}
-
-void Emulator::LinkIndirect(u64 host_address, u64 guest_address, u8* link_address, ThreadState* state) {
-    Assembler& as = state->recompiler->getAssembler();
-
-    u8* before = as.GetCursorPointer();
-    as.SetCursorPointer(link_address);
-
-    Label unlink_indirect;
-    Literal guest(guest_address);
-    Literal host(host_address);
-    Literal unlink_address((u64)Emulator::UnlinkIndirect);
-    as.LD(t1, offsetof(ThreadState, rip), Recompiler::threadStatePointer());
-    as.LD(t0, &guest);
-    as.BNE(t0, t1, &unlink_indirect);
-    as.LD(t2, &host);
-    if (g_config.rsb) {
-        as.JALR(t2); // push to rsb
-    } else {
-        as.JR(t2);
-    }
-    as.Bind(&unlink_indirect);
-    as.NOP(); // important it's here, due to -11 * 4 in unlink indirect
-    as.NOP();
-
-    const u64 offset = (u64)state->recompiler->getUnlinkIndirectThunk() - (u64)as.GetCursorPointer();
-    ASSERT(IsValid2GBImm(offset));
-    const auto hi20 = static_cast<int32_t>(((static_cast<uint32_t>(offset) + 0x800) >> 12) & 0xFFFFF);
-    const auto lo12 = static_cast<int32_t>(offset << 20) >> 20;
-
-    as.AUIPC(t2, hi20);
-    as.JALR(ra, lo12, t2);
-
-    // The instruction following is a jump that goes back exactly 10 instructions, the same amount that we have here
-    // Note: LD with Literal is 2 instructions -> AUIPC + LD. So we have 11 instructions here too.
-    u8* here = as.GetCursorPointer();
-    ASSERT(here - link_address == 11 * 4);
-
-    // We don't wanna overwrite this jump. Not only do we need it after we return from this function,
-    // but we are also gonna need it in case the comparison fails, as UnlinkIndirect will once again rewrite this
-    // chunk of code
-    as.SetCursorPointer(here + 4);
-
-    // Now overwrite these 3 literals from Recompiler::linkIndirect with our own
-    as.Place(&guest);
-    as.Place(&host);
-    as.Place(&unlink_address);
-
-    as.SetCursorPointer(before);
-
-    // Spooky self-modifying code over
-    flush_icache();
-}
-
-void Emulator::UnlinkIndirect(ThreadState* state, u8* link_address) {
-    // This function is called when an indirect jump prediction fails once. One time is enough for it to not be worth
-    // the check anymore... for example OOP structs with vtables can change function pointers quite a bit so we would rather
-    // always jump to the dispatcher for those... So replace our link with a backToDispatcher
-
-    // This function takes no arguments, yet we have enough info to deduce where we are from the registers
-    Assembler& as = state->recompiler->getAssembler();
-    u8* before = as.GetCursorPointer();
-
-    as.SetCursorPointer(link_address);
-
-    // Replace the first two instructions with a back to dispatcher jump and forget whatever follows
-    state->recompiler->backToDispatcher();
-
-    as.SetCursorPointer(before);
-
-    flush_icache();
 }
