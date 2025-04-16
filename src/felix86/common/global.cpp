@@ -20,7 +20,6 @@ bool g_paranoid = false;
 bool g_testing = false;
 bool g_extensions_manually_specified = false;
 bool g_print_all_calls = false;
-bool g_print_all_insts = false;
 bool g_mode32 = false;
 bool g_thunking = false;
 int g_vlen = 0;
@@ -256,7 +255,7 @@ void initialize_globals() {
     if (g_config.rootfs_path.empty()) {
         printf("Rootfs path is empty. Please set the FELIX86_ROOTFS environment variable or the rootfs_path variable in %s\n",
                g_config.path().c_str());
-        exit(0);
+        exit(1);
     }
 
     if (g_config.rootfs_path.string().back() == '/') {

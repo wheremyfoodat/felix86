@@ -4,6 +4,7 @@ X(General, std::filesystem::path, rootfs_path, {}, FELIX86_ROOTFS, "Set the root
 X(Logging, bool, verbose, false, FELIX86_VERBOSE, "Enable verbose logging", false)
 X(Logging, bool, quiet, false, FELIX86_QUIET, "Disable all logging", false)
 X(Logging, bool, strace, false, FELIX86_STRACE, "Enable logging of syscalls", false)
+X(Logging, bool, print_signals, false, FELIX86_PRINT_SIGNALS, "Print on every guest signal handler", false);
 
 X(Debugging, bool, dump_regs, false, FELIX86_DUMP_REGS, "Dump register values on exit", false)
 X(Debugging, bool, calltrace, false, FELIX86_CALLTRACE, "Capture a calltrace (push on every call, pop on every ret)", false)
@@ -20,7 +21,7 @@ X(Debugging, u64, executable_base, 0, FELIX86_EXECUTABLE_BASE, "Make the executa
 X(Debugging, u64, brk_base, 0, FELIX86_BRK_BASE, "Make the BRK be loaded at this address -- 0 to let the emulator choose", false)
 X(Debugging, u64, max_brk_size, 0, FELIX86_MAX_BRK_SIZE, "Set the maximum BRK (ram for the application) size -- 0 to let the emulator choose", false)
 X(Debugging, bool, sleep_on_error, false, FELIX86_SLEEP_ERROR, "Sleep for 40 seconds on error to give enough time to attach gdb", false)
-X(Debugging, bool, capture_sigsegv, false, FELIX86_CAPTURE_SIGSEGV, "Sleep for 40 seconds on any SIGSEGV that is unrelated to self-modifying code", false)
+X(Debugging, bool, capture_sigsegv, true, FELIX86_CAPTURE_SIGSEGV, "Sleep for 40 seconds on any SIGSEGV that is unrelated to self-modifying code", false)
 
 X(Performance, bool, link, true, FELIX86_LINK, "Enable basic block linking, important for performance", false)
 X(Performance, bool, address_cache, true, FELIX86_ADDRESS_CACHE, "Use lower address bits to speed up block lookup", false)

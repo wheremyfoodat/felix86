@@ -259,8 +259,8 @@ void Recompiler::markPagesAsReadOnly(u64 start, u64 end) {
         return;
     }
 
-    u64 start_page = start & ~0xFFF;
-    u64 end_page = (end & ~0xFFF) + 0x1000;
+    u64 start_page = start & ~0xFFFull;
+    u64 end_page = (end + 0xFFF) & ~0xFFFull;
     u64 size = end_page - start_page;
     int result = mprotect((void*)start_page, size, PROT_READ);
     if (result != 0) {
@@ -1422,7 +1422,7 @@ void Recompiler::writebackMMXState() {
     for (int i = 0; i < 8; i++) {
         x86_ref_e ref = (x86_ref_e)(X86_REF_MM0 + i);
         if (getMetadata(ref).dirty) {
-            setVectorState(SEW::E64, maxVlen() / 64);
+            setVectorState(SEW::E64, 1);
             as.ADDI(address, threadStatePointer(), offsetof(ThreadState, fp) + i * sizeof(u64));
             as.VSE64(allocatedVec(ref), address);
         }
@@ -2523,7 +2523,8 @@ void Recompiler::unlinkBlock(ThreadState* state, u64 rip) {
         return;
     }
 
-    u8* rewind_address = (u8*)metadata.address_end - 4 * 3; // 3 instructions for the ending jump/link
+    WARN("Unlinking block at %lx", rip);
+    u8* rewind_address = (u8*)metadata.address_end - 4 * 2; // 2 instructions for the ending jump/link
     unlinkAt(rewind_address);
     flush_icache();
 }

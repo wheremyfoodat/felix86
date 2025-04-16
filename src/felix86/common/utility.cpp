@@ -4,7 +4,6 @@
 #include <sys/ioctl.h>
 #include "Zydis/Decoder.h"
 #include "Zydis/Disassembler.h"
-#include "felix86/common/debug.hpp"
 #include "felix86/common/elf.hpp"
 #include "felix86/common/state.hpp"
 #include "felix86/common/utility.hpp"
@@ -223,24 +222,6 @@ void flush_icache_global(const u64& start, const u64& end) {
 #endif
 }
 
-int guest_breakpoint(const char* region, u64 address) {
-    auto [start, end] = MemoryMetadata::GetRegionByName(region);
-
-    if (start == 0 && end == 0) {
-        WARN("Region %s not found, breakpoint will be added later if loaded", region);
-        MemoryMetadata::AddDeferredBreakpoint(region, address);
-        return -1;
-    }
-
-    if (address >= (end - start)) {
-        WARN("Address %016lx is out of bounds for region %s", address, region);
-        return -1;
-    }
-
-    g_breakpoints[address + start] = {};
-    return g_breakpoints.size();
-}
-
 __attribute__((visibility("default"))) int guest_breakpoint_abs(u64 address) {
     g_breakpoints[address] = {};
     return g_breakpoints.size();
@@ -289,15 +270,13 @@ int clear_breakpoints() {
 
 void felix86_fxsave(struct ThreadState* state, u64 address, bool fxsave64) {
     fxsave_data* data = (fxsave_data*)address;
-    memset(data, 0, sizeof(fxsave_data));
 
     for (int i = 0; i < 16; i++) {
         data->xmms[i] = state->xmm[i];
     }
 
     for (int i = 0; i < 8; i++) {
-        Float80 f = f64_to_80(state->fp[i]);
-        memcpy(&data->st[i].st[0], &f, 10);
+        memcpy(&data->st[i].st[0], &state->fp[i], sizeof(u64));
     }
 
     data->fcw = state->fpu_cw;
@@ -314,9 +293,7 @@ void felix86_fxrstor(struct ThreadState* state, u64 address, bool fxrstor64) {
     }
 
     for (int i = 0; i < 8; i++) {
-        Float80 f;
-        memcpy(&f, &data->st[i].st[0], 10);
-        state->fp[i] = f80_to_64(&f);
+        memcpy(&state->fp[i], &data->st[i].st[0], sizeof(u64));
     }
 
     state->fpu_cw = data->fcw;

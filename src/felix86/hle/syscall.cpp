@@ -27,6 +27,7 @@
 #include "felix86/hle/brk.hpp"
 #include "felix86/hle/filesystem.hpp"
 #include "felix86/hle/guest_types.hpp"
+#include "felix86/hle/ioctl32.hpp"
 #include "felix86/hle/ipc32.hpp"
 #include "felix86/hle/socket32.hpp"
 #include "felix86/hle/syscall.hpp"
@@ -703,7 +704,9 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
     case felix86_riscv64_mremap: {
         state->signals_disabled = true;
         result = (u64)g_mapper->remap((void*)arg1, arg2, arg3, arg4, (void*)arg5);
-        Recompiler::invalidateRangeGlobal(result, result + arg3);
+        if (result > 0) {
+            Recompiler::invalidateRangeGlobal(result, result + arg3);
+        }
         state->signals_disabled = false;
         break;
     }
@@ -725,6 +728,10 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
     }
     case felix86_riscv64_lseek: {
         result = SYSCALL(lseek, arg1, arg2, arg3, arg4, arg5, arg6);
+        break;
+    }
+    case felix86_riscv64_getcpu: {
+        result = SYSCALL(getcpu, arg1, arg2, arg3, arg4, arg5, arg6);
         break;
     }
     case felix86_riscv64_uname: {
@@ -791,6 +798,10 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
     }
     case felix86_riscv64_fchmodat: {
         result = Filesystem::FChmodAt((int)arg1, (char*)arg2, arg3);
+        break;
+    }
+    case felix86_riscv64_fchmodat2: {
+        result = -ENOSYS; // TODO: support me in newer kernel versions (>= 6.6)
         break;
     }
     case felix86_riscv64_recvmsg: {
@@ -866,6 +877,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_rt_sigaction: {
+        RegisteredSignal old = Signals::getSignalHandler(state, arg1);
         x64_sigaction* act = (x64_sigaction*)arg2;
         if (act) {
             auto handler = act->handler;
@@ -877,15 +889,9 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
             }
         }
 
-        struct sigaction* old_act = (struct sigaction*)arg3;
+        x64_sigaction* old_act = (x64_sigaction*)arg3;
         if (old_act) {
-            RegisteredSignal old = Signals::getSignalHandler(state, arg1);
-            bool was_sigaction = old.flags & SA_SIGINFO;
-            if (was_sigaction) {
-                old_act->sa_sigaction = (decltype(old_act->sa_sigaction))old.func;
-            } else {
-                old_act->sa_handler = (decltype(old_act->sa_handler))old.func;
-            }
+            old_act->handler = (decltype(old_act->handler))old.func;
             old_act->sa_flags = old.flags;
             old_act->sa_mask = old.mask;
         }
@@ -922,17 +928,36 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         VERBOSE("----- sigaltstack was called -----");
         stack_t* new_ss = (stack_t*)arg1;
         stack_t* old_ss = (stack_t*)arg2;
+        u64 current_rsp = state->gprs[X86_REF_RSP];
+
+        bool on_stack = false;
+        if (!(state->alt_stack.ss_flags & SS_DISABLE) && current_rsp >= (u64)state->alt_stack.ss_sp && current_rsp < state->alt_stack.ss_size) {
+            on_stack = true;
+        }
 
         if (old_ss) {
             old_ss->ss_sp = state->alt_stack.ss_sp;
-            old_ss->ss_flags = state->alt_stack.ss_flags;
+            old_ss->ss_flags = 0;
             old_ss->ss_size = state->alt_stack.ss_size;
+
+            if (on_stack) {
+                old_ss->ss_flags = SS_ONSTACK;
+            } else {
+                old_ss->ss_flags = SS_DISABLE;
+            }
         }
 
         if (new_ss) {
+            if (on_stack) {
+                WARN("Tried to set sigaltstack while using it");
+                result = -EPERM;
+                break;
+            }
+
             state->alt_stack.ss_sp = new_ss->ss_sp;
             state->alt_stack.ss_flags = new_ss->ss_flags;
             state->alt_stack.ss_size = new_ss->ss_size;
+            VERBOSE("New altstack: %lx", new_ss->ss_sp);
         }
 
         result = 0;
@@ -1479,6 +1504,18 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
             }
             break;
         }
+        case felix86_x86_32_ia32_fallocate: {
+            int fd = arg1;
+            int mode = arg2;
+            u64 offset_low = arg3;
+            u64 offset_high = arg4;
+            u64 length_low = arg5;
+            u64 length_high = arg6;
+            u64 offset = (offset_high << 32) | offset_low;
+            u64 length = (length_high << 32) | length_low;
+            result = fallocate(fd, mode, offset, length);
+            break;
+        }
         case felix86_x86_32_writev: {
             x86_iovec* iovecs32 = (x86_iovec*)arg2;
             std::vector<iovec> iovecs(iovecs32, iovecs32 + arg3);
@@ -1623,13 +1660,18 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
             case F_DUPFD_CLOEXEC:
             case F_GETFD:
             case F_SETFD:
-            case F_GETFL: {
+            case F_GETFL:
+            case F_ADD_SEALS:
+            case F_GET_SEALS:
+            case F_GETPIPE_SZ:
+            case F_SETPIPE_SZ:
+            case F_NOTIFY: {
                 result = ::fcntl(arg1, arg2, arg3);
                 break;
             }
             default: {
                 WARN("Unknown fcntl: %d", arg2);
-                result = -EINVAL;
+                result = ::fcntl(arg1, arg2, arg3);
                 break;
             }
             }
@@ -1637,6 +1679,10 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
         }
         case felix86_x86_32_waitpid: {
             result = ::waitpid((pid_t)arg1, (int*)arg2, (int)arg3);
+            break;
+        }
+        case felix86_x86_32_ioctl: {
+            result = ::ioctl32(arg1, arg2, arg3);
             break;
         }
         case felix86_x86_32_statfs64: {
@@ -1667,7 +1713,7 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
             break;
         }
         case felix86_x86_32_ipc: {
-            result = ipc32(arg1, arg2, arg3, arg4, (void*)arg5, arg6);
+            result = ::ipc32(arg1, arg2, arg3, arg4, (void*)arg5, arg6);
             break;
         }
         case felix86_x86_32_stat64: {

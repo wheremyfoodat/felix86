@@ -264,7 +264,6 @@ void Signals::setupFrame(uint64_t pc, ThreadState* state, sigset_t new_mask, con
         reconstruct_state(state, current_block, actual_rip, pc, host_gprs, host_vecs);
     } else {
         // State reconstruction isn't necessary, the state should be in some stable form
-        // It's rare that a signal doesn't happen in jit code as we block signals during compilation, but it's possible
     }
 
     // Now we need to copy the state to the frame
@@ -459,7 +458,7 @@ bool handle_smc(ThreadState* current_state, siginfo_t* info, ucontext_t* context
 
     u64 write_address = (u64)info->si_addr & ~0xFFFull;
     Recompiler::invalidateRangeGlobal(write_address, write_address + 0x1000);
-    ::mprotect((void*)write_address, 0x1000, PROT_READ | PROT_WRITE);
+    ASSERT(::mprotect((void*)write_address, 0x1000, PROT_READ | PROT_WRITE) == 0);
     return true;
 }
 
@@ -533,12 +532,16 @@ bool dispatch_guest(int sig, siginfo_t* info, void* ctx) {
         return false;
     }
 
+    if ((void*)handler->func == SIG_DFL) {
+        return true;
+    }
+
     if (g_mode32) {
         WARN("WARN: Signals (%d) in 32-bit apps are currently not well supported", sig);
     }
 
-    if (handler->func == (u64)SIG_IGN || handler->func == (u64)SIG_DFL) {
-        ERROR("Signal %d hit but signal handler is %s", sig, handler->func ? "SIG_IGN" : "SIG_DFL");
+    if (handler->func == (u64)SIG_IGN) {
+        ERROR("Signal %d hit but signal handler is SIGIGN", sig);
         return true;
     }
 
@@ -556,7 +559,9 @@ bool dispatch_guest(int sig, siginfo_t* info, void* ctx) {
         return true;
     }
 
-    VERBOSE("------- Guest signal %s (%d) %s -------", sigdescr_np(sig), sig, in_jit_code ? "in jit code" : "not in jit code");
+    if (g_config.print_signals || g_config.verbose) {
+        PLAIN("------- Guest signal %s (%d) %s -------", sigdescr_np(sig), sig, in_jit_code ? "in jit code" : "not in jit code");
+    }
 
     ASSERT(!g_mode32);
 
@@ -575,11 +580,12 @@ bool dispatch_guest(int sig, siginfo_t* info, void* ctx) {
 
     bool use_altstack = handler->flags & SA_ONSTACK;
     if (use_altstack && state->alt_stack.ss_sp == 0) {
-        WARN("Null alt-stack on signal handler %s, probably crashing soon", sigdescr_np(sig));
+        // If there's no altstack set up, use the default stack instead
+        use_altstack = false;
     }
 
     sigset_t mask_during_signal;
-    mask_during_signal = handler->mask;
+    mask_during_signal = *(sigset_t*)&handler->mask;
 
     if (!(handler->flags & SA_NODEFER)) {
         sigaddset(&mask_during_signal, sig);
@@ -615,6 +621,10 @@ bool dispatch_guest(int sig, siginfo_t* info, void* ctx) {
     if (state->exit_reason == EXIT_REASON_SIGRETURN) {
         // All went fine, we returned from the dispatcher normally
     } else {
+        if (state->exit_reason == EXIT_REASON_EXIT_GROUP_SYSCALL || state->exit_reason == EXIT_REASON_EXIT_SYSCALL) {
+            WARN("Exitting thread %d from inside a signal handler with error code: %d", gettid(), state->exit_code);
+            _exit(state->exit_code);
+        }
         ERROR("Something went wrong when returning from dispatcher on signal handler: %s", print_exit_reason(state->exit_reason));
     }
 
@@ -632,11 +642,13 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
     handled = dispatch_host(sig, info, ctx);
     if (handled) {
         // Ok it was a host signal
+        VERBOSE("Host signal %d was handled successfully", sig);
         return;
     }
 
     handled = dispatch_guest(sig, info, ctx);
     if (handled) {
+        VERBOSE("Guest signal %d was handled successfully", sig);
         return;
     }
 
@@ -647,7 +659,7 @@ void signal_handler(int sig, siginfo_t* info, void* ctx) {
 void Signals::initialize() {
     struct sigaction sa;
     sa.sa_sigaction = signal_handler;
-    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sa.sa_flags = SA_SIGINFO;
     sigemptyset(&sa.sa_mask);
 
     for (auto& handler : host_signals) {
@@ -655,7 +667,7 @@ void Signals::initialize() {
     }
 }
 
-void Signals::registerSignalHandler(ThreadState* state, int sig, u64 handler, sigset_t mask, int flags) {
+void Signals::registerSignalHandler(ThreadState* state, int sig, u64 handler, u64 mask, int flags) {
     ASSERT(sig >= 1 && sig <= 64);
 
     // Hopefully externally synchronized, no need for locks :cluegi:
@@ -665,7 +677,7 @@ void Signals::registerSignalHandler(ThreadState* state, int sig, u64 handler, si
     if (handler != 0) {
         struct real_sigaction sa;
         sa.sigaction = signal_handler;
-        sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+        sa.sa_flags = SA_SIGINFO;
         sa.restorer = nullptr;
         sa.sa_mask = 0;
 

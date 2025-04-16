@@ -20,7 +20,7 @@ add_subdirectory(external/Catch2)
 add_subdirectory(external/zydis)
 add_subdirectory(external/fmt)
 
-option(BUILD_THUNKING "Build with thunking support" ON)
+option(BUILD_THUNKING "Build with thunking support" OFF)
 
 if (BUILD_THUNKING)
     message("Building with thunking support")
@@ -46,7 +46,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(FELIX86_COMMON_SOURCES
     src/felix86/common/alloc.cpp
     src/felix86/common/config.cpp
-    src/felix86/common/debug.cpp
     src/felix86/common/elf.cpp
     src/felix86/common/exit.cpp
     src/felix86/common/gdbjit.cpp
@@ -68,6 +67,7 @@ set(FELIX86_HLE_SOURCES
     src/felix86/hle/brk.cpp
     src/felix86/hle/cpuid.cpp
     src/felix86/hle/filesystem.cpp
+    src/felix86/hle/ioctl32.cpp
     src/felix86/hle/ipc32.cpp
     src/felix86/hle/libgl_guest_ptrs.cpp
     src/felix86/hle/mmap.cpp
