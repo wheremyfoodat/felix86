@@ -1,7 +1,9 @@
 #pragma once
 
+#include <queue>
 #include "biscuit/isa.hpp"
 #include "felix86/common/log.hpp"
+#include "felix86/common/signal_queue.hpp"
 #include "felix86/common/utility.hpp"
 #include "felix86/hle/guest_types.hpp"
 #include "felix86/hle/signals.hpp"
@@ -112,9 +114,14 @@ struct XmmReg {
 };
 static_assert(sizeof(XmmReg) == 16);
 
-struct PendingSignal {
-    int sig;
-    siginfo_t info;
+struct SignalGuard {
+    SignalGuard(ThreadState* state);
+    ~SignalGuard();
+    SignalGuard(const SignalGuard&) = delete;
+    SignalGuard& operator=(const SignalGuard&) = delete;
+
+private:
+    ThreadState* state;
 };
 
 // TODO: Please make me standard layout type? offsetof warnings...
@@ -153,6 +160,7 @@ struct ThreadState {
     u16 fpu_sw{};
     u8 fpu_top{};
 
+    ExitReason exit_reason{};
     pid_t* clear_tid_address = nullptr;
     pthread_t thread{}; // The pthread this state belongs to
     u64 tid{};
@@ -163,7 +171,9 @@ struct ThreadState {
     bool cpuid_bit{}; // stupid rflags bit that is modifiable when cpuid is present, so we need to store its state here. SDL2 modifies it to
                       // check presence of cpuid... on x86-64 processors... lol...
 
-    std::vector<PendingSignal> pending_signals{}; // signals that were raised during an unsafe time, queued for later
+    u32 pending_signals{}; // non-realtime signals can't be queued, if multiple are signaled they are simply merged, this bitset represents them
+    SignalQueue queued_signals{}; // realtime signals that were raised during an unsafe time, queued for later
+    bool incoming_signal{};
 
     std::vector<u64> calltrace{}; // used if g_calltrace is true
 
@@ -172,8 +182,6 @@ struct ThreadState {
 
     sigset_t signal_mask{};
 
-    ExitReason exit_reason{};
-
     u8 exit_code{}; // process exit code
 
     bool mode32 = false; // 32-bit execution mode, changes the behavior of some instructions and the decoder
@@ -181,16 +189,6 @@ struct ThreadState {
     u32 gdt[3]{};
 
     u64 persona = 0;
-
-    // We need a place to save execution frames so we can return from the JIT back to C code.
-    // It can't be the stack, we use that for return stack buffer optimization.
-    // This happens in two places:
-    // - On JIT entry
-    // - On signal handling
-    // Note that signals can happen inside signals so we need enough space that this realistically never
-    // overflows and we can return cleanly.
-    u64 frame_pointer = 0;
-    u8 frames[4096]{};
 
     u64 underflow_page = 0;
     u64 overflow_page = 0;
@@ -365,6 +363,10 @@ struct ThreadState {
         flags |= df << 10;
         flags |= of << 11;
         return flags;
+    }
+
+    SignalGuard GuardSignals() {
+        return SignalGuard(this);
     }
 
     static void InitializeKey();

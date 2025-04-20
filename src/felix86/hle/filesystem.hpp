@@ -95,6 +95,8 @@ struct Filesystem {
 
     static int LChown(const char* filename, u64 owner, u64 group);
 
+    static int Creat(const char* filename, u64 mode);
+
     static int Chdir(const char* filename);
 
     static int MkdirAt(int fd, const char* filename, u64 mode);
@@ -122,6 +124,8 @@ struct Filesystem {
     static int Mount(const char* source, const char* target, const char* fstype, u64 flags, const void* data);
 
     static int INotifyAddWatch(int fd, const char* path, u32 mask);
+
+    static ssize_t Listxattr(const char* path, char* list, size_t size);
 
     static std::filesystem::path resolve(const char* path);
 

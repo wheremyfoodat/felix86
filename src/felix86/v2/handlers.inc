@@ -455,5 +455,6 @@ X(FCMOVNB)
 X(FCMOVNE)
 X(FCMOVNBE)
 X(FCMOVNU)
+X(FNINIT)
 
 X(INVLPG) /* thunking dummy instruction */

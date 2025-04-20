@@ -14,7 +14,7 @@ struct Mapper {
     int unmap32(void* addr, u64 size);
     [[nodiscard]] void* remap32(void* old_address, u64 old_size, u64 new_size, int flags, void* new_address);
 
-    static constexpr u64 addressSpaceEnd32 = 0xBFFF'FFFF; // 32-bit userspace end
+    static constexpr u64 addressSpaceEnd32 = 0xFFF0'FFFF; // 32-bit userspace end
 
 private:
     void initialize();
@@ -32,7 +32,6 @@ private:
     Node* freelist = nullptr;
     Semaphore lock;
     std::once_flag initialized;
-    bool mode32;
 
     void deleteBlock(Node* current, Node* previous, Node* next);
 

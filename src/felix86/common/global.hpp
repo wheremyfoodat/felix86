@@ -9,7 +9,6 @@
 #include "felix86/common/process_lock.hpp"
 #include "felix86/common/start_params.hpp"
 #include "felix86/common/utility.hpp"
-#include "felix86/hle/mmap.hpp"
 
 struct Filesystem;
 
@@ -50,6 +49,8 @@ struct ProcessGlobals {
 private:
     constexpr static size_t shared_memory_size = 0x10000;
 };
+
+struct Mapper;
 
 extern ProcessGlobals g_process_globals;
 extern std::unique_ptr<Mapper> g_mapper;

@@ -1,8 +1,10 @@
 #include <cstring>
+#include <mutex>
 #include <fcntl.h>
 #include <sys/inotify.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/xattr.h>
 #include "felix86/common/overlay.hpp"
 #include "felix86/hle/filesystem.hpp"
 
@@ -188,6 +190,11 @@ int Filesystem::Chmod(const char* filename, u64 mode) {
     return result;
 }
 
+int Filesystem::Creat(const char* filename, u64 mode) {
+    std::filesystem::path path = resolve(filename);
+    return ::creat(path.c_str(), mode);
+}
+
 int Filesystem::Statx(int fd, const char* filename, int flags, u32 mask, struct statx* statxbuf) {
     if (!filename) {
         return -EINVAL;
@@ -258,6 +265,11 @@ int Filesystem::FChmodAt(int fd, const char* filename, u64 mode) {
 int Filesystem::LGetXAttr(const char* filename, const char* name, void* value, size_t size) {
     std::filesystem::path path = resolve(filename);
     return lgetxattrInternal(path.c_str(), name, value, size);
+}
+
+ssize_t Filesystem::Listxattr(const char* filename, char* list, size_t size) {
+    std::filesystem::path path = resolve(filename);
+    return ::listxattr(path.c_str(), list, size);
 }
 
 int Filesystem::GetXAttr(const char* filename, const char* name, void* value, size_t size) {

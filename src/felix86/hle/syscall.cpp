@@ -29,6 +29,7 @@
 #include "felix86/hle/guest_types.hpp"
 #include "felix86/hle/ioctl32.hpp"
 #include "felix86/hle/ipc32.hpp"
+#include "felix86/hle/mmap.hpp"
 #include "felix86/hle/socket32.hpp"
 #include "felix86/hle/syscall.hpp"
 #include "felix86/hle/thread.hpp"
@@ -176,11 +177,20 @@ bool try_strace_ioctl(int rdi, u64 rsi, u64 rdx, u64 result) {
     return false;
 }
 
-Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 arg2, u64 arg3, u64 arg4, u64 arg5, u64 arg6) {
+Result felix86_syscall_common(felix86_frame* frame, int rv_syscall, u64 arg1, u64 arg2, u64 arg3, u64 arg4, u64 arg5, u64 arg6) {
+    ThreadState* state = frame->state;
     Result result;
     switch (rv_syscall) {
     case felix86_riscv64_brk: {
         result = BRK::set(arg1);
+        break;
+    }
+    case felix86_riscv64_getrlimit: {
+        result = SYSCALL(getrlimit, arg1, arg2);
+        break;
+    }
+    case felix86_riscv64_setrlimit: {
+        result = SYSCALL(setrlimit, arg1, arg2);
         break;
     }
     case felix86_riscv64_set_tid_address: {
@@ -215,6 +225,10 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
     }
     case felix86_riscv64_close: {
         result = SYSCALL(close, arg1, arg2, arg3, arg4, arg5, arg6);
+        break;
+    }
+    case felix86_riscv64_close_range: {
+        result = SYSCALL(close_range, arg1, arg2, arg3);
         break;
     }
     case felix86_riscv64_shutdown: {
@@ -258,14 +272,17 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_getcwd: {
+        auto guard = state->GuardSignals();
         result = Filesystem::Getcwd((char*)arg1, arg2);
         break;
     }
     case felix86_riscv64_symlinkat: {
+        auto guard = state->GuardSignals();
         result = Filesystem::SymlinkAt((char*)arg1, arg2, (char*)arg3);
         break;
     }
     case felix86_riscv64_renameat2: {
+        auto guard = state->GuardSignals();
         result = Filesystem::RenameAt2(arg1, (char*)arg2, arg3, (char*)arg4, arg5);
         break;
     }
@@ -282,8 +299,8 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_epoll_pwait: {
-        std::vector<epoll_event> host_events(std::max(0, (int)arg3));
-        result = SYSCALL(epoll_pwait, arg1, host_events.data(), arg3, arg4, arg5, arg6);
+        epoll_event* host_events = (epoll_event*)alloca(std::max(0, (int)arg3) * sizeof(epoll_event));
+        result = SYSCALL(epoll_pwait, arg1, host_events, arg3, arg4, arg5, arg6);
         if (result >= 0) {
             x86_epoll_event* guest_event = (x86_epoll_event*)arg2;
             for (int i = 0; i < result; i++) {
@@ -293,8 +310,8 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_epoll_pwait2: {
-        std::vector<epoll_event> host_events(std::max(0, (int)arg3));
-        result = SYSCALL(epoll_pwait2, arg1, host_events.data(), arg3, arg4, arg5, arg6);
+        epoll_event* host_events = (epoll_event*)alloca(std::max(0, (int)arg3) * sizeof(epoll_event));
+        result = SYSCALL(epoll_pwait2, arg1, host_events, arg3, arg4, arg5, arg6);
         if (result >= 0) {
             x86_epoll_event* guest_event = (x86_epoll_event*)arg2;
             for (int i = 0; i < result; i++) {
@@ -304,6 +321,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_mount: {
+        auto guard = state->GuardSignals();
         result = Filesystem::Mount((char*)arg1, (char*)arg2, (char*)arg3, arg4, (void*)arg5);
         break;
     }
@@ -441,6 +459,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_statx: {
+        auto guard = state->GuardSignals();
         result = Filesystem::Statx((int)arg1, (char*)arg2, (int)arg3, (u32)arg4, (struct statx*)arg5);
         break;
     }
@@ -457,6 +476,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_chdir: {
+        auto guard = state->GuardSignals();
         result = Filesystem::Chdir((char*)arg1);
         break;
     }
@@ -465,6 +485,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_unlinkat: {
+        auto guard = state->GuardSignals();
         result = Filesystem::UnlinkAt((int)arg1, (char*)arg2, (int)arg3);
         break;
     }
@@ -473,6 +494,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_newfstatat: {
+        auto guard = state->GuardSignals();
         result = Filesystem::FStatAt((int)arg1, (char*)arg2, (x86_stat*)arg3, (int)arg4);
         break;
     }
@@ -498,12 +520,13 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
     case felix86_riscv64_exit_group: {
         state->exit_reason = EXIT_REASON_EXIT_GROUP_SYSCALL;
         state->exit_code = arg1;
-        Emulator::ExitDispatcher(state);
+        Emulator::ExitDispatcher(frame);
         UNREACHABLE();
         break;
     }
     case felix86_riscv64_faccessat:
     case felix86_riscv64_faccessat2: {
+        auto guard = state->GuardSignals();
         result = Filesystem::FAccessAt((int)arg1, (char*)arg2, (int)arg3, (int)arg4);
         break;
     }
@@ -528,10 +551,12 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_lgetxattr: {
+        auto guard = state->GuardSignals();
         result = Filesystem::LGetXAttr((char*)arg1, (char*)arg2, (void*)arg3, arg4);
         break;
     }
     case felix86_riscv64_getxattr: {
+        auto guard = state->GuardSignals();
         result = Filesystem::GetXAttr((char*)arg1, (char*)arg2, (void*)arg3, arg4);
         break;
     }
@@ -540,10 +565,12 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_setxattr: {
+        auto guard = state->GuardSignals();
         result = Filesystem::SetXAttr((char*)arg1, (char*)arg2, (void*)arg3, arg4, arg5);
         break;
     }
     case felix86_riscv64_lsetxattr: {
+        auto guard = state->GuardSignals();
         result = Filesystem::LSetXAttr((char*)arg1, (char*)arg2, (void*)arg3, arg4, arg5);
         break;
     }
@@ -552,10 +579,12 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_removexattr: {
+        auto guard = state->GuardSignals();
         result = Filesystem::RemoveXAttr((char*)arg1, (char*)arg2);
         break;
     }
     case felix86_riscv64_lremovexattr: {
+        auto guard = state->GuardSignals();
         result = Filesystem::LRemoveXAttr((char*)arg1, (char*)arg2);
         break;
     }
@@ -572,6 +601,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_openat: {
+        auto guard = state->GuardSignals();
         result = Filesystem::OpenAt((int)arg1, (char*)arg2, (int)arg3, arg4);
         break;
     }
@@ -593,7 +623,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
 #ifndef MAP_32BIT
 #define MAP_32BIT 0x40
 #endif
-        state->signals_disabled = true;
+        auto guard = state->GuardSignals();
         u64 flags = arg4;
         bool is_fixed = (flags & MAP_FIXED) || (flags & MAP_FIXED_NOREPLACE);
         if ((flags & MAP_32BIT) || (is_fixed && arg1 < Mapper::addressSpaceEnd32) || g_mode32) {
@@ -611,15 +641,13 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         if (result > 0) {
             Recompiler::invalidateRangeGlobal(result, result + arg2);
         }
-        state->signals_disabled = false;
         break;
     }
     case felix86_riscv64_munmap: {
         if (arg1 < Mapper::addressSpaceEnd32 || g_mode32) {
             // Track unmaps in the 32-bit address space for MAP_32BIT in 64-bit mode
-            state->signals_disabled = true;
+            auto guard = state->GuardSignals();
             result = g_mapper->unmap32((void*)arg1, arg2);
-            state->signals_disabled = false;
         } else {
             result = SYSCALL(munmap, arg1, arg2, arg3, arg4, arg5, arg6);
         }
@@ -666,6 +694,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_utimensat: {
+        auto guard = state->GuardSignals();
         result = Filesystem::UtimensAt(arg1, (const char*)arg2, (struct timespec*)arg3, arg4);
         break;
     }
@@ -702,12 +731,11 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_mremap: {
-        state->signals_disabled = true;
+        auto guard = state->GuardSignals();
         result = (u64)g_mapper->remap((void*)arg1, arg2, arg3, arg4, (void*)arg5);
         if (result > 0) {
             Recompiler::invalidateRangeGlobal(result, result + arg3);
         }
-        state->signals_disabled = false;
         break;
     }
     case felix86_riscv64_msync: {
@@ -734,6 +762,10 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         result = SYSCALL(getcpu, arg1, arg2, arg3, arg4, arg5, arg6);
         break;
     }
+    case felix86_riscv64_nanosleep: {
+        result = SYSCALL(nanosleep, arg1, arg2);
+        break;
+    }
     case felix86_riscv64_uname: {
         struct utsname host_uname;
         struct utsname* guest_uname = (struct utsname*)arg1;
@@ -753,6 +785,11 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         result = 0;
         break;
     }
+    case felix86_riscv64_listxattr: {
+        auto guard = state->GuardSignals();
+        result = Filesystem::Listxattr((char*)arg1, (char*)arg2, arg3);
+        break;
+    }
     case felix86_riscv64_timerfd_create: {
         result = SYSCALL(timerfd_create, arg1, arg2, arg3, arg4, arg5, arg6);
         break;
@@ -766,6 +803,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_statfs: {
+        auto guard = state->GuardSignals();
         result = Filesystem::StatFs((char*)arg1, (struct statfs*)arg2);
         break;
     }
@@ -784,7 +822,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
     case felix86_riscv64_exit: {
         state->exit_reason = ExitReason::EXIT_REASON_EXIT_SYSCALL;
         state->exit_code = arg1;
-        Emulator::ExitDispatcher(state);
+        Emulator::ExitDispatcher(frame);
         UNREACHABLE();
         break;
     }
@@ -797,6 +835,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_fchmodat: {
+        auto guard = state->GuardSignals();
         result = Filesystem::FChmodAt((int)arg1, (char*)arg2, arg3);
         break;
     }
@@ -1004,6 +1043,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_inotify_add_watch: {
+        auto guard = state->GuardSignals();
         result = Filesystem::INotifyAddWatch(arg1, (char*)arg2, arg3);
         break;
     }
@@ -1078,6 +1118,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_mkdirat: {
+        auto guard = state->GuardSignals();
         result = Filesystem::MkdirAt(arg1, (char*)arg2, arg3);
         break;
     }
@@ -1088,6 +1129,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
             break;
         }
 
+        auto guard = state->GuardSignals();
         std::filesystem::path path = Symlinker::resolve((char*)arg1);
 
         if (!std::filesystem::exists(path)) {
@@ -1184,6 +1226,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         break;
     }
     case felix86_riscv64_linkat: {
+        auto guard = state->GuardSignals();
         result = Filesystem::LinkAt((int)arg1, (char*)arg2, (int)arg3, (char*)arg4, (int)arg5);
         break;
     }
@@ -1191,6 +1234,7 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
         if (arg2 == arg3) {
             WARN("arg2 == arg3 during readlinkat");
         }
+        auto guard = state->GuardSignals();
         result = Filesystem::ReadlinkAt((int)arg1, (char*)arg2, (char*)arg3, (int)arg4);
         break;
     }
@@ -1254,7 +1298,9 @@ Result felix86_syscall_common(ThreadState* state, int rv_syscall, u64 arg1, u64 
     return result;
 }
 
-void felix86_syscall(ThreadState* state) {
+void felix86_syscall(felix86_frame* frame) {
+    ASSERT(frame->magic == felix86_frame::expected_magic);
+    ThreadState* state = frame->state;
     u64 syscall_number = state->GetGpr(X86_REF_RAX);
     u64 arg1 = state->GetGpr(X86_REF_RDI);
     u64 arg2 = state->GetGpr(X86_REF_RSI);
@@ -1268,7 +1314,7 @@ void felix86_syscall(ThreadState* state) {
 
     if (is_common) {
         int rv_syscall = x64_to_riscv(syscall_number);
-        result = felix86_syscall_common(state, rv_syscall, arg1, arg2, arg3, arg4, arg5, arg6);
+        result = felix86_syscall_common(frame, rv_syscall, arg1, arg2, arg3, arg4, arg5, arg6);
     } else {
         switch (syscall_number) {
         case felix86_x86_64_time: {
@@ -1276,6 +1322,7 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
         case felix86_x86_64_link: {
+            auto guard = state->GuardSignals();
             result = Filesystem::SymlinkAt((char*)arg1, AT_FDCWD, (char*)arg2);
             break;
         }
@@ -1283,6 +1330,7 @@ void felix86_syscall(ThreadState* state) {
             if (arg1 == arg2) {
                 WARN("arg1 == arg2 during readlink");
             }
+            auto guard = state->GuardSignals();
             result = Filesystem::ReadlinkAt(AT_FDCWD, (char*)arg1, (char*)arg2, (int)arg3);
             break;
         }
@@ -1291,6 +1339,7 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
         case felix86_x86_64_rename: {
+            auto guard = state->GuardSignals();
             result = Filesystem::Rename((char*)arg1, (char*)arg2);
             break;
         }
@@ -1300,8 +1349,8 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
         case felix86_x86_64_epoll_wait: {
-            std::vector<epoll_event> host_events(std::max(0, (int)arg3));
-            result = epoll_wait((int)arg1, host_events.data(), (int)arg3, (int)arg4);
+            epoll_event* host_events = (epoll_event*)alloca(std::max(0, (int)arg3));
+            result = epoll_wait((int)arg1, host_events, (int)arg3, (int)arg4);
             if (result >= 0) {
                 x86_epoll_event* guest_event = (x86_epoll_event*)arg2;
                 for (int i = 0; i < result; i++) {
@@ -1311,14 +1360,22 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
         case felix86_x86_64_chmod: {
+            auto guard = state->GuardSignals();
             result = Filesystem::Chmod((char*)arg1, arg2);
             break;
         }
+        case felix86_x86_64_creat: {
+            auto guard = state->GuardSignals();
+            result = Filesystem::Creat((char*)arg1, arg2);
+            break;
+        }
         case felix86_x86_64_symlink: {
+            auto guard = state->GuardSignals();
             result = Filesystem::SymlinkAt((char*)arg1, AT_FDCWD, (char*)arg2);
             break;
         }
         case felix86_x86_64_renameat: {
+            auto guard = state->GuardSignals();
             result = Filesystem::RenameAt2(arg1, (char*)arg2, arg3, (char*)arg4, 0);
             break;
         }
@@ -1331,18 +1388,22 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
         case felix86_x86_64_lstat: {
+            auto guard = state->GuardSignals();
             result = Filesystem::FStatAt(AT_FDCWD, (char*)arg1, (x86_stat*)arg2, AT_SYMLINK_NOFOLLOW);
             break;
         }
         case felix86_x86_64_chown: {
+            auto guard = state->GuardSignals();
             result = Filesystem::Chown((char*)arg1, arg2, arg3);
             break;
         }
         case felix86_x86_64_lchown: {
+            auto guard = state->GuardSignals();
             result = Filesystem::LChown((char*)arg1, arg2, arg3);
             break;
         }
         case felix86_x86_64_access: {
+            auto guard = state->GuardSignals();
             result = Filesystem::FAccessAt(AT_FDCWD, (char*)arg1, (int)arg2, 0);
             break;
         }
@@ -1351,10 +1412,12 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
         case felix86_x86_64_mkdir: {
+            auto guard = state->GuardSignals();
             result = Filesystem::MkdirAt(AT_FDCWD, (char*)arg1, arg2);
             break;
         }
         case felix86_x86_64_open: {
+            auto guard = state->GuardSignals();
             result = Filesystem::OpenAt(AT_FDCWD, (char*)arg1, (int)arg2, arg3);
             break;
         }
@@ -1363,14 +1426,17 @@ void felix86_syscall(ThreadState* state) {
             break;
         }
         case felix86_x86_64_unlink: {
+            auto guard = state->GuardSignals();
             result = Filesystem::UnlinkAt(AT_FDCWD, (char*)arg1, 0);
             break;
         }
         case felix86_x86_64_stat: {
+            auto guard = state->GuardSignals();
             result = Filesystem::FStatAt(AT_FDCWD, (char*)arg1, (x86_stat*)arg2, 0);
             break;
         }
         case felix86_x86_64_rmdir: {
+            auto guard = state->GuardSignals();
             result = Filesystem::Rmdir((char*)arg1);
             break;
         }
@@ -1431,7 +1497,9 @@ void felix86_syscall(ThreadState* state) {
     }
 }
 
-void felix86_syscall32(ThreadState* state, u32 rip_next) {
+void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
+    ASSERT(frame->magic == felix86_frame::expected_magic);
+    ThreadState* state = frame->state;
     u64 syscall_number = state->GetGpr(X86_REF_RAX);
     u64 arg1 = state->GetGpr(X86_REF_RBX);
     u64 arg2 = state->GetGpr(X86_REF_RCX);
@@ -1453,7 +1521,7 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
 
     if (is_common) {
         int rv_syscall = x86_to_riscv(syscall_number);
-        result = felix86_syscall_common(state, rv_syscall, arg1, arg2, arg3, arg4, arg5, arg6);
+        result = felix86_syscall_common(frame, rv_syscall, arg1, arg2, arg3, arg4, arg5, arg6);
     } else {
         switch (syscall_number) {
         case felix86_x86_32_alarm: {
@@ -1479,10 +1547,12 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
             break;
         }
         case felix86_x86_32_rename: {
+            auto guard = state->GuardSignals();
             result = Filesystem::Rename((char*)arg1, (char*)arg2);
             break;
         }
         case felix86_x86_32_mkdir: {
+            auto guard = state->GuardSignals();
             result = Filesystem::MkdirAt(AT_FDCWD, (char*)arg1, arg2);
             break;
         }
@@ -1525,24 +1595,46 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
         case felix86_x86_32_mmap_pgoff: {
             // mmap2 is like mmap but file offset is in pages (4096 bytes) to help with the lack of big enough integers in x86-32
             u64 offset = arg6 * 4096;
-            state->signals_disabled = true;
+            auto guard = state->GuardSignals();
             result = (ssize_t)g_mapper->map((void*)arg1, arg2, arg3, arg4, arg5, offset);
             if (result > 0) {
                 Recompiler::invalidateRangeGlobal(result, result + arg2);
             }
-            state->signals_disabled = false;
             break;
         }
         case felix86_x86_32_mremap: {
-            state->signals_disabled = true;
+            auto guard = state->GuardSignals();
             result = (ssize_t)g_mapper->remap32((void*)arg1, arg2, arg3, arg4, (void*)arg5);
             if (result > 0) {
                 Recompiler::invalidateRangeGlobal(result, result + arg3);
             }
-            state->signals_disabled = false;
+            break;
+        }
+        case felix86_x86_32_rt_sigaction: {
+            RegisteredSignal old = Signals::getSignalHandler(state, arg1);
+            x86_sigaction* act = (x86_sigaction*)arg2;
+            if (act) {
+                auto handler = act->handler;
+                Signals::registerSignalHandler(state, arg1, (u64)handler, act->sa_mask, act->sa_flags, act->restorer);
+                if (g_config.verbose) {
+                    PLAIN("Installed signal handler %s at:", strsignal(arg1));
+                    print_address((u64)handler);
+                    PLAIN("Flags: %lx\n", act->sa_flags);
+                }
+            }
+
+            x86_sigaction* old_act = (x86_sigaction*)arg3;
+            if (old_act) {
+                old_act->handler = (decltype(old_act->handler))old.func;
+                old_act->sa_flags = old.flags;
+                old_act->sa_mask = old.mask;
+            }
+
+            result = 0;
             break;
         }
         case felix86_x86_32_open: {
+            auto guard = state->GuardSignals();
             result = Filesystem::OpenAt(AT_FDCWD, (char*)arg1, (int)arg2, arg3);
             break;
         }
@@ -1587,11 +1679,52 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
             }
             break;
         }
+        case felix86_x86_32_sigaltstack: {
+            VERBOSE("----- sigaltstack was called -----");
+            x86_stack_t* new_ss = (x86_stack_t*)arg1;
+            x86_stack_t* old_ss = (x86_stack_t*)arg2;
+            u64 current_rsp = state->gprs[X86_REF_RSP];
+
+            bool on_stack = false;
+            if (!(state->alt_stack.ss_flags & SS_DISABLE) && current_rsp >= (u64)state->alt_stack.ss_sp && current_rsp < state->alt_stack.ss_size) {
+                on_stack = true;
+            }
+
+            if (old_ss) {
+                old_ss->ss_sp = (u32)(u64)state->alt_stack.ss_sp;
+                old_ss->ss_flags = 0;
+                old_ss->ss_size = state->alt_stack.ss_size;
+
+                if (on_stack) {
+                    old_ss->ss_flags = SS_ONSTACK;
+                } else {
+                    old_ss->ss_flags = SS_DISABLE;
+                }
+            }
+
+            if (new_ss) {
+                if (on_stack) {
+                    WARN("Tried to set sigaltstack while using it");
+                    result = -EPERM;
+                    break;
+                }
+
+                state->alt_stack.ss_sp = (void*)(u64)new_ss->ss_sp;
+                state->alt_stack.ss_flags = new_ss->ss_flags;
+                state->alt_stack.ss_size = new_ss->ss_size;
+                VERBOSE("New altstack: %lx", new_ss->ss_sp);
+            }
+
+            result = 0;
+            break;
+        }
         case felix86_x86_32_access: {
+            auto guard = state->GuardSignals();
             result = Filesystem::FAccessAt(AT_FDCWD, (char*)arg1, (int)arg2, 0);
             break;
         }
         case felix86_x86_32_unlink: {
+            auto guard = state->GuardSignals();
             result = Filesystem::UnlinkAt(AT_FDCWD, (char*)arg1, 0);
             break;
         }
@@ -1686,8 +1819,8 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
             break;
         }
         case felix86_x86_32_statfs64: {
+            auto guard = state->GuardSignals();
             ASSERT(arg2 == sizeof(x86_statfs64));
-
             struct statfs statfs;
             x86_statfs64* guest_statfs = (x86_statfs64*)arg3;
             result = Filesystem::StatFs((char*)arg1, &statfs);
@@ -1706,6 +1839,7 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
             break;
         }
         case felix86_x86_32_readlink: {
+            auto guard = state->GuardSignals();
             if (arg1 == arg2) {
                 WARN("arg1 == arg2 during readlink");
             }
@@ -1713,10 +1847,12 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
             break;
         }
         case felix86_x86_32_ipc: {
+            auto guard = state->GuardSignals();
             result = ::ipc32(arg1, arg2, arg3, arg4, (void*)arg5, arg6);
             break;
         }
         case felix86_x86_32_stat64: {
+            auto guard = state->GuardSignals();
             result = Filesystem::FStatAt(AT_FDCWD, (char*)arg1, (x86_stat*)arg2, 0);
             break;
         }
@@ -1803,6 +1939,7 @@ void felix86_syscall32(ThreadState* state, u32 rip_next) {
             break;
         }
         case felix86_x86_32_utimensat_time32: {
+            auto guard = state->GuardSignals();
             struct timespec host_times[2];
             int dirfd = arg1;
             const char* pathname = (const char*)arg2;

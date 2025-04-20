@@ -32,8 +32,6 @@ ThreadState::ThreadState(ThreadState* copy_state) {
 
         this->alt_stack = copy_state->alt_stack;
     }
-
-    frame_pointer = (u64)&frames[0];
 }
 
 void ThreadState::InitializeKey() {
@@ -69,4 +67,12 @@ void ThreadState::Destroy(ThreadState* state) {
         WARN("Thread state %ld not found in global list", state->tid);
     }
     delete state;
+}
+
+SignalGuard::SignalGuard(ThreadState* state) : state(state) {
+    state->signals_disabled = true;
+}
+
+SignalGuard::~SignalGuard() {
+    state->signals_disabled = false;
 }

@@ -309,8 +309,6 @@ void Signals::setupFrame(uint64_t pc, ThreadState* state, sigset_t new_mask, con
 
 void Signals::sigreturn(ThreadState* state) {
     VERBOSE("------- sigreturn -------");
-    ASSERT_MSG(state->exit_reason == EXIT_REASON_UNKNOWN, "State had exit reason when entering sigreturn?");
-    state->exit_reason = EXIT_REASON_SIGRETURN;
 
     u64 rsp = state->GetGpr(X86_REF_RSP);
 
@@ -492,8 +490,8 @@ bool handle_wild_sigsegv(ThreadState* current_state, siginfo_t* info, ucontext_t
         return false;
     }
 
-    int pid = getpid();
-    PLAIN("I have been hit by a wild SIGSEGV! My PID is %d, you have 40 seconds to attach gdb using `gdb -p %d` to find out why! If you think this "
+    int pid = gettid();
+    PLAIN("I have been hit by a wild SIGSEGV! My TID is %d, you have 40 seconds to attach gdb using `gdb -p %d` to find out why! If you think this "
           "SIGSEGV was intended, disabled this mode by unsetting the `capture_sigsegv` option.",
           pid, pid);
     ::sleep(40);
@@ -536,26 +534,22 @@ bool dispatch_guest(int sig, siginfo_t* info, void* ctx) {
         return true;
     }
 
-    if (g_mode32) {
-        WARN("WARN: Signals (%d) in 32-bit apps are currently not well supported", sig);
-    }
-
     if (handler->func == (u64)SIG_IGN) {
         ERROR("Signal %d hit but signal handler is SIGIGN", sig);
         return true;
     }
 
+    ASSERT(sig > 0);
+
     if (state->signals_disabled) {
-        // Nothing we can do, the signals are disabled. Push it to the queue.
-        state->pending_signals.push_back({sig, *info});
-
-        if (state->pending_signals.size() > 5) {
-            ERROR("More than 5 pending signals, something is probably wrong, exiting to avoid spam");
+        if (sig < __SIGRTMIN) {
+            const int sig_bit = sig - 1;
+            state->pending_signals |= 1 << sig_bit;
+        } else {
+            // Unlike signals 1-31, signals 32 and up (realtime signals) can be queued and you can have multiple
+            // pending of each signal
+            state->queued_signals.push({sig, *info});
         }
-
-        // Unlink the current block, making it certain that we will eventually return to the dispatcher to handle this signal
-        // even if we are stuck in a loop, for example in a block that branches back to itself forever.
-        state->recompiler->unlinkBlock(state, state->GetRip());
         return true;
     }
 
@@ -587,13 +581,20 @@ bool dispatch_guest(int sig, siginfo_t* info, void* ctx) {
     sigset_t mask_during_signal;
     mask_during_signal = *(sigset_t*)&handler->mask;
 
-    if (!(handler->flags & SA_NODEFER)) {
-        sigaddset(&mask_during_signal, sig);
+    siginfo_t guest_info;
+    if (info->si_code == SI_QUEUE && state->incoming_signal) {
+        // One of our queued signals, retrieve the siginfo_t from the pointer
+        FiredSignal* signal = (FiredSignal*)info->si_value.sival_ptr;
+        if (signal) {
+            guest_info = signal->guest_info;
+        }
+    } else {
+        guest_info = *info;
     }
 
     // Prepares everything necessary to run the signal handler when we return from the host signal handler.
     // The stack is switched if necessary and filled with the frame that the signal handler expects.
-    Signals::setupFrame(pc, state, mask_during_signal, gprs, xmms, use_altstack, in_jit_code, info);
+    Signals::setupFrame(pc, state, mask_during_signal, gprs, xmms, use_altstack, in_jit_code, &guest_info);
 
     // RSI and RDX are set by setupFrame
     state->SetGpr(X86_REF_RDI, sig);
@@ -604,32 +605,29 @@ bool dispatch_guest(int sig, siginfo_t* info, void* ctx) {
     // Block the signals specified in the sa_mask until the signal handler returns
     sigset_t new_mask;
     sigandset(&new_mask, &mask_during_signal, Signals::hostSignalMask());
-    pthread_sigmask(SIG_BLOCK, &new_mask, nullptr);
+
+    // Combine with the current signal mask
+    sigorset(&new_mask, &new_mask, &state->signal_mask);
+
+    if (handler->flags & SA_NODEFER) {
+        sigdelset(&new_mask, sig);
+    } else {
+        sigaddset(&new_mask, sig);
+    }
+
+    pthread_sigmask(SIG_SETMASK, &new_mask, nullptr);
 
     if (handler->flags & SA_RESETHAND) {
         handler->func = (u64)SIG_DFL;
     }
 
     // Eventually, this should return right after this call and have the correct state.
-    // When entering the dispatcher, the host state is saved in ThreadState::frames. Including sp & ra.
+    // When entering the dispatcher, the host state is saved in the host stack
     // sigreturn will call exitDispatcher, which will load the old frame and return back here after this call.
     // This way we can support signals inside signal handlers too.
     // The only problem would be longjmps out of signal handlers. This is evil but possible that a game or something does it
     // In that case the frames would eventually overflow and at least we'd gave an appropriate message.
     state->recompiler->enterDispatcher(state);
-
-    if (state->exit_reason == EXIT_REASON_SIGRETURN) {
-        // All went fine, we returned from the dispatcher normally
-    } else {
-        if (state->exit_reason == EXIT_REASON_EXIT_GROUP_SYSCALL || state->exit_reason == EXIT_REASON_EXIT_SYSCALL) {
-            WARN("Exitting thread %d from inside a signal handler with error code: %d", gettid(), state->exit_code);
-            _exit(state->exit_code);
-        }
-        ERROR("Something went wrong when returning from dispatcher on signal handler: %s", print_exit_reason(state->exit_reason));
-    }
-
-    // Reset the exit reason
-    state->exit_reason = EXIT_REASON_UNKNOWN;
 
     return true;
 }
@@ -667,15 +665,15 @@ void Signals::initialize() {
     }
 }
 
-void Signals::registerSignalHandler(ThreadState* state, int sig, u64 handler, u64 mask, int flags) {
+void Signals::registerSignalHandler(ThreadState* state, int sig, u64 handler, u64 mask, int flags, u64 restorer) {
     ASSERT(sig >= 1 && sig <= 64);
 
     // Hopefully externally synchronized, no need for locks :cluegi:
-    state->signal_table->registerSignal(sig, handler, mask, flags);
+    state->signal_table->registerSignal(sig, handler, mask, flags, restorer);
 
     // Start capturing at the first register of a signal handler and don't stop capturing even if it is disabled
     if (handler != 0) {
-        struct real_sigaction sa;
+        struct riscv_sigaction sa;
         sa.sigaction = signal_handler;
         sa.sa_flags = SA_SIGINFO;
         sa.restorer = nullptr;

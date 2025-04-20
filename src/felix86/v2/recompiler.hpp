@@ -1,11 +1,11 @@
 #pragma once
 
 #include <array>
-#include <mutex>
 #include <unordered_map>
 #include <Zydis/Utils.h>
 #include "Zydis/Decoder.h"
 #include "biscuit/assembler.hpp"
+#include "felix86/common/frame.hpp"
 #include "felix86/common/state.hpp"
 #include "felix86/common/utility.hpp"
 
@@ -124,7 +124,7 @@ struct Recompiler {
 
     void enterDispatcher(ThreadState* state);
 
-    [[noreturn]] void exitDispatcher(ThreadState* state);
+    [[noreturn]] void exitDispatcher(felix86_frame* state);
 
     void* getCompileNext();
 
@@ -594,7 +594,7 @@ private:
 
     void (*enter_dispatcher)(ThreadState*){};
 
-    void (*exit_dispatcher)(ThreadState*){};
+    void (*exit_dispatcher)(felix86_frame*){};
 
     void* compile_next_handler{};
 

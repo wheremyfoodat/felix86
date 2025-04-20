@@ -1,20 +1,24 @@
 
 #include <filesystem>
+#include <vector>
 #include <catch2/catch_test_macros.hpp>
+#include <fcntl.h>
+#include <spawn.h>
 #include <sys/wait.h>
 #include "common.h"
 #include "felix86/common/log.hpp"
 #include "fmt/format.h"
 
-void run_test(const std::filesystem::path& felix_path, const std::filesystem::path& path) {
+void run_test(const std::filesystem::path& felix_path, const std::filesystem::path& path, bool is_exe) {
     int pipefd[2];
     if (pipe(pipefd) == -1) {
         perror("pipe");
         exit(1);
     }
 
-    const std::filesystem::path tmp_path = "/felix86_binary_tests";
+    const std::filesystem::path tmp_path = "/tmp/felix86_binary_tests";
     const std::filesystem::path exec_path = tmp_path / path.filename();
+    const std::string extension = path.extension();
 
     CATCH_INFO(fmt::format("Running test: {}", path.filename().string()));
 
@@ -22,13 +26,19 @@ void run_test(const std::filesystem::path& felix_path, const std::filesystem::pa
     std::string srootfs = "FELIX86_ROOTFS=" + g_config.rootfs_path.string();
     std::string spath = exec_path;
 
-    const char* argv[] = {
-        felix_path.c_str(),
-        spath.c_str(),
-        nullptr,
-    };
-
+    std::vector<const char*> argv;
     std::vector<const char*> envp;
+
+    argv.push_back(felix_path.c_str());
+    if (extension == ".exe") {
+        // TODO: when 32-bit wine is more stable run it through that
+        CATCH_REQUIRE(std::filesystem::exists(g_config.rootfs_path / "usr" / "lib" / "wine" / "wine64"));
+        argv.push_back("/usr/lib/wine/wine64");
+        envp.push_back("WINEDEBUG=-all");
+    }
+    argv.push_back(spath.c_str());
+    argv.push_back(nullptr);
+
     char** env = environ;
     while (*env) {
         envp.push_back(*env);
@@ -47,7 +57,7 @@ void run_test(const std::filesystem::path& felix_path, const std::filesystem::pa
         close(pipefd[0]);
         dup2(pipefd[1], 1);
         close(pipefd[1]);
-        execvpe(argv[0], (char* const*)argv, (char* const*)envp.data());
+        execvpe(argv[0], (char* const*)argv.data(), (char* const*)envp.data());
         perror("execvpe");
         exit(1);
     } else {
@@ -62,6 +72,22 @@ void run_test(const std::filesystem::path& felix_path, const std::filesystem::pa
     }
 
     SUCCESS("Test passed: %s", path.filename().c_str());
+
+    // Kill any outstanding processes (ie. if we just ran a test with wine)
+    std::vector<const char*> args;
+    args.push_back(argv[0]);
+    args.push_back("-k");
+    args.push_back(nullptr);
+
+    posix_spawn_file_actions_t action;
+    posix_spawn_file_actions_init(&action);
+    posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/dev/null", O_WRONLY | O_APPEND, 0);
+
+    int status;
+    int pid = posix_spawnp(&pid, args[0], &action, nullptr, (char**)args.data(), environ);
+    waitpid(pid, &status, 0);
+
+    posix_spawn_file_actions_destroy(&action);
 }
 
 void common_loader(const std::filesystem::path& path) {
@@ -79,8 +105,8 @@ void common_loader(const std::filesystem::path& path) {
     std::filesystem::directory_iterator it(dir / "Binaries" / path);
     for (const auto& entry : it) {
         std::string extension = entry.path().extension().string();
-        if (extension == ".out") {
-            run_test(dir / "felix86", entry.path().string());
+        if (extension == ".out" || extension == ".exe") {
+            run_test(dir / "felix86", entry.path().string(), extension == ".exe");
         }
     }
 }

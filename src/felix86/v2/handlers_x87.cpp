@@ -422,6 +422,10 @@ FAST_HANDLE(FNSTCW) {}
 
 FAST_HANDLE(FLDCW) {}
 
+FAST_HANDLE(FNINIT) {
+    WARN("Unhandled instruction FNINIT, no operation");
+}
+
 void FCMOV(Recompiler& rec, Assembler& as, ZydisDecodedOperand* operands, biscuit::GPR cond) {
     biscuit::Label not_true;
     as.BEQZ(cond, &not_true);

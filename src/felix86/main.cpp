@@ -13,7 +13,7 @@
 #include "felix86/common/config.hpp"
 #include "felix86/common/info.hpp"
 #include "felix86/common/log.hpp"
-#include "felix86/common/script.hpp"
+#include "felix86/common/sudo.hpp"
 #include "felix86/common/symlink.hpp"
 #include "felix86/emulator.hpp"
 #include "felix86/hle/thunks.hpp"
@@ -29,7 +29,12 @@ const char* argp_program_bug_address = "<https://github.com/OFFTKP/felix86/issue
 static char doc[] = "felix86 - a userspace x86_64 emulator";
 static char args_doc[] = "TARGET_BINARY [TARGET_ARGS...]";
 
-static struct argp_option options[] = {{"info", 'i', 0, 0, "Print system info"}, {"configs", 'c', 0, 0, "Print the emulator configurations"}, {0}};
+static struct argp_option options[] = {
+    {"info", 'i', 0, 0, "Print system info"},
+    {"configs", 'c', 0, 0, "Print the emulator configurations"},
+    {"kill-all", 'k', 0, 0, "Kill all open emulator instances"},
+    {"binfmt-misc", 'b', 0, 0, "Register the emulator in binfmt_misc so that x86-64 executables can run without prepending the emulator path"},
+    {0}};
 
 int guest_arg_start_index = -1;
 
@@ -113,6 +118,129 @@ error:
     return ok;
 }
 
+void binfmt_misc() {
+    if (!Sudo::hasPermissions()) {
+        PLAIN("I need root permissions to register/unregister felix86 in binfmt_misc, please re-run with root permissions");
+        exit(1);
+    }
+
+    char exe_path[4096];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len == -1) {
+        perror("readlink");
+    }
+    exe_path[len] = '\0';
+
+    std::string registration_string_x64 = fmt::format(
+        R"!(:felix86-x86_64:M:0:\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x3e\x00:\xff\xff\xff\xff\xff\xfe\xfe\x00\x00\x00\x00\xff\xff\xff\xff\xff\xfe\xff\xff\xff:{}:OCF)!",
+        exe_path);
+    std::string registration_string_i386 = fmt::format(
+        R"!(:felix86-i386:M:0:\x7fELF\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x03\x00:\xff\xff\xff\xff\xff\xfe\xfe\x00\x00\x00\x00\xff\xff\xff\xff\xff\xfe\xff\xff\xff:{}:OCF)!",
+        exe_path);
+
+    // Running felix86 -b either registers or unregisters if they already exist
+    if (std::filesystem::exists("/proc/sys/fs/binfmt_misc/felix86-x86_64") || std::filesystem::exists("/proc/sys/fs/binfmt_misc/felix86-i386")) {
+        auto unregister = [](const char* path) {
+            if (!std::filesystem::exists(path)) {
+                return;
+            }
+
+            FILE* fp = fopen(path, "w");
+            if (!fp) {
+                ERROR("Failed to fopen %s", path);
+            }
+
+            if (fwrite("-1", 1, 2, fp) != 2) {
+                fclose(fp);
+                ERROR("Failed to write -1 to %s", path);
+            }
+
+            fclose(fp);
+        };
+
+        unregister("/proc/sys/fs/binfmt_misc/felix86-x86_64");
+        unregister("/proc/sys/fs/binfmt_misc/felix86-i386");
+
+        printf("felix86 successfully unregistered from binfmt_misc\n");
+    } else {
+        FILE* fp = fopen("/proc/sys/fs/binfmt_misc/register", "w");
+
+        if (!fp) {
+            ERROR("Failed to open /proc/sys/fs/binfmt_misc/register");
+        }
+
+        if (fwrite(registration_string_x64.c_str(), 1, registration_string_x64.size(), fp) != registration_string_x64.size()) {
+            fclose(fp);
+            ERROR("Failed to register for x86-64");
+        }
+
+        fp = fopen("/proc/sys/fs/binfmt_misc/register", "w");
+
+        if (fwrite(registration_string_i386.c_str(), 1, registration_string_i386.size(), fp) != registration_string_i386.size()) {
+            fclose(fp);
+            ERROR("Failed to register for i386");
+        }
+
+        printf("felix86 successfully registered to binfmt_misc\nTo unregister run `felix86 -b`\n");
+    }
+}
+
+void kill_all() {
+    char exe_path[4096];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len == -1) {
+        perror("readlink");
+    }
+    exe_path[len] = '\0';
+
+    std::vector<const char*> argv = {"pgrep", "-f", exe_path, NULL};
+    int pipefd[2];
+    if (pipe(pipefd) != 0) {
+        perror("pipe");
+    }
+
+    pid_t my_pid = getpid();
+
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDOUT_FILENO);
+    posix_spawn_file_actions_addclose(&actions, pipefd[0]);
+
+    pid_t child_pid;
+    if (posix_spawnp(&child_pid, "pgrep", &actions, NULL, (char**)argv.data(), environ) != 0) {
+        perror("posix_spawnp");
+    }
+
+    close(pipefd[1]);
+    FILE* pgrep_output = fdopen(pipefd[0], "r");
+    if (!pgrep_output) {
+        perror("fdopen");
+    }
+
+    bool at_least_one = false;
+    char line[32];
+    while (fgets(line, sizeof(line), pgrep_output)) {
+        pid_t pid = (pid_t)atoi(line);
+        if (pid > 0 && pid != my_pid) {
+            if (kill(pid, SIGKILL) == 0) {
+                printf("Killed PID %d\n", pid);
+            } else {
+                printf("Failed to kill PID %d (no privileges?)\n", pid);
+            }
+            at_least_one = true;
+        }
+        printf("line: %s\n", line);
+    }
+
+    if (!at_least_one) {
+        printf("No instances of the emulator are running, at least from the path %s\n", exe_path);
+    }
+
+    fclose(pgrep_output);
+    waitpid(child_pid, NULL, 0);
+    posix_spawn_file_actions_destroy(&actions);
+}
+
 static error_t parse_opt(int key, char* arg, struct argp_state* state) {
     StartParameters* params = (StartParameters*)state->input;
 
@@ -130,6 +258,16 @@ static error_t parse_opt(int key, char* arg, struct argp_state* state) {
     switch (key) {
     case 'i': {
         exit(print_system_info());
+        break;
+    }
+    case 'k': {
+        kill_all();
+        exit(0);
+        break;
+    }
+    case 'b': {
+        binfmt_misc();
+        exit(0);
         break;
     }
     case 'c': {
@@ -290,6 +428,14 @@ int main(int argc, char* argv[]) {
             params.envp.push_back(*envp);
             envp++;
         }
+    }
+
+    // TODO: These "hacky" environment variables are bandaid solutions to problems that we need to eventually fix
+    // They are enabled by default
+    if (g_config.hacky_envs) {
+        // Go uses a bunch of signals for preemption and this breaks our current signal handling
+        // Apps like `snap` use go, and those are used sometimes by `apt`, and this async preemption is useless in a lot of programs
+        params.envp.push_back("GODEBUG=asyncpreemptoff=1");
     }
 
     auto it = params.envp.begin();

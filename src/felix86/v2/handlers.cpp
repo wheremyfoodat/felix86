@@ -1,10 +1,11 @@
 #include <Zydis/Zydis.h>
+#include "felix86/emulator.hpp"
 #include "felix86/hle/thunks.hpp"
 #include "felix86/v2/recompiler.hpp"
 
-void felix86_syscall(ThreadState* state);
+void felix86_syscall(felix86_frame* frame);
 
-void felix86_syscall32(ThreadState* state, u32 rip_nex);
+void felix86_syscall32(felix86_frame* frame, u32 rip_nex);
 
 void felix86_cpuid(ThreadState* state);
 
@@ -678,7 +679,9 @@ FAST_HANDLE(HLT) {
     rec.setExitReason(ExitReason::EXIT_REASON_HLT);
     rec.writebackDirtyState();
     rec.invalidStateUntilJump();
-    rec.backToDispatcher();
+    as.LI(t0, (u64)Emulator::ExitDispatcher);
+    as.MV(a0, sp);
+    as.JR(t0);
     rec.stopCompiling();
 }
 
@@ -2730,7 +2733,7 @@ FAST_HANDLE(SYSCALL) {
 
     rec.writebackDirtyState();
     rec.invalidStateUntilJump();
-    as.MV(a0, rec.threadStatePointer());
+    as.MV(a0, sp);
     rec.call((u64)&felix86_syscall);
     rec.restoreRoundingMode();
 }
@@ -2741,7 +2744,7 @@ FAST_HANDLE(INT) {
 
     rec.writebackDirtyState();
     rec.invalidStateUntilJump();
-    as.MV(a0, rec.threadStatePointer());
+    as.MV(a0, sp);
     as.LI(a1, rip + instruction.length);
     rec.call((u64)&felix86_syscall32);
     rec.restoreRoundingMode();
