@@ -1,6 +1,7 @@
 #include <csetjmp>
 #include <fstream>
 #include <argp.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <fmt/format.h>
 #include <grp.h>
@@ -186,59 +187,49 @@ void binfmt_misc() {
 }
 
 void kill_all() {
-    char exe_path[4096];
-    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
-    if (len == -1) {
-        perror("readlink");
-    }
-    exe_path[len] = '\0';
+    DIR* proc_dir;
+    struct dirent* entry;
+    pid_t self_pid = getpid();
 
-    std::vector<const char*> argv = {"pgrep", "-f", exe_path, NULL};
-    int pipefd[2];
-    if (pipe(pipefd) != 0) {
-        perror("pipe");
+    proc_dir = opendir("/proc");
+    if (!proc_dir) {
+        perror("opendir /proc");
     }
 
-    pid_t my_pid = getpid();
+    while ((entry = readdir(proc_dir)) != NULL) {
+        pid_t pid = atoi(entry->d_name);
+        if (pid == self_pid)
+            continue;
 
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDOUT_FILENO);
-    posix_spawn_file_actions_addclose(&actions, pipefd[0]);
+        if (pid == 0)
+            continue;
 
-    pid_t child_pid;
-    if (posix_spawnp(&child_pid, "pgrep", &actions, NULL, (char**)argv.data(), environ) != 0) {
-        perror("posix_spawnp");
-    }
+        char exe_path[PATH_MAX];
+        snprintf(exe_path, sizeof(exe_path), "/proc/%d/exe", pid);
 
-    close(pipefd[1]);
-    FILE* pgrep_output = fdopen(pipefd[0], "r");
-    if (!pgrep_output) {
-        perror("fdopen");
-    }
+        char exe_target[PATH_MAX];
+        ssize_t len = readlink(exe_path, exe_target, sizeof(exe_target) - 1);
+        if (len == -1)
+            continue;
 
-    bool at_least_one = false;
-    char line[32];
-    while (fgets(line, sizeof(line), pgrep_output)) {
-        pid_t pid = (pid_t)atoi(line);
-        if (pid > 0 && pid != my_pid) {
-            if (kill(pid, SIGKILL) == 0) {
-                printf("Killed PID %d\n", pid);
-            } else {
-                printf("Failed to kill PID %d (no privileges?)\n", pid);
-            }
-            at_least_one = true;
+        exe_target[len] = '\0';
+
+        std::string path = exe_target;
+        if (path.find(' ') != std::string::npos) {
+            // Sometimes paths come up as "/path/to/felix86 (deleted)"
+            path = path.substr(0, path.find(' '));
         }
-        printf("line: %s\n", line);
-    }
 
-    if (!at_least_one) {
-        printf("No instances of the emulator are running, at least from the path %s\n", exe_path);
-    }
+        char* base = basename(path.data());
 
-    fclose(pgrep_output);
-    waitpid(child_pid, NULL, 0);
-    posix_spawn_file_actions_destroy(&actions);
+        if (strcmp(base, "felix86") == 0) {
+            if (kill(pid, SIGKILL) == 0) {
+                printf("Killed process %d\n", pid);
+            } else {
+                printf("Failed to kill process %d", pid);
+            }
+        }
+    }
 }
 
 static error_t parse_opt(int key, char* arg, struct argp_state* state) {

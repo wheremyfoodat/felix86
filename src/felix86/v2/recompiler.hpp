@@ -114,19 +114,19 @@ struct Recompiler {
 
     void setExitReason(ExitReason reason);
 
-    void writebackDirtyState();
+    void restoreMMXState();
 
     void writebackMMXState();
 
-    void restoreRoundingMode();
-
     void backToDispatcher();
+
+    void writebackState();
+
+    void restoreState();
 
     void enterDispatcher(ThreadState* state);
 
     [[noreturn]] void exitDispatcher(felix86_frame* state);
-
-    void* getCompileNext();
 
     void disableSignals();
 
@@ -140,13 +140,7 @@ struct Recompiler {
 
     void addi(biscuit::GPR dest, biscuit::GPR src, u64 imm);
 
-    void invalidStateUntilJump();
-
     biscuit::GPR flag(x86_ref_e ref);
-
-    biscuit::GPR flagW(x86_ref_e ref);
-
-    biscuit::GPR flagWR(x86_ref_e ref);
 
     void updateParity(biscuit::GPR result);
 
@@ -175,8 +169,6 @@ struct Recompiler {
     constexpr static biscuit::GPR threadStatePointer() {
         return x27; // saved register so that when we exit VM we don't have to save it
     }
-
-    void setFlagUndefined(x86_ref_e ref);
 
     // TODO: move these elsewhere
     static x86_ref_e zydisToRef(ZydisRegister reg);
@@ -259,76 +251,78 @@ struct Recompiler {
     static constexpr biscuit::Vec allocatedVec(x86_ref_e reg) {
         switch (reg) {
         case X86_REF_XMM0: {
-            return biscuit::v1;
-        }
-        case X86_REF_XMM1: {
+            // Important to start on an even vector register so vector grouping works when we save/restore the entire state,
+            // but also not use v0 because that's used for the mask register
             return biscuit::v2;
         }
-        case X86_REF_XMM2: {
+        case X86_REF_XMM1: {
             return biscuit::v3;
         }
-        case X86_REF_XMM3: {
+        case X86_REF_XMM2: {
             return biscuit::v4;
         }
-        case X86_REF_XMM4: {
+        case X86_REF_XMM3: {
             return biscuit::v5;
         }
-        case X86_REF_XMM5: {
+        case X86_REF_XMM4: {
             return biscuit::v6;
         }
-        case X86_REF_XMM6: {
+        case X86_REF_XMM5: {
             return biscuit::v7;
         }
-        case X86_REF_XMM7: {
+        case X86_REF_XMM6: {
             return biscuit::v8;
         }
-        case X86_REF_XMM8: {
+        case X86_REF_XMM7: {
             return biscuit::v9;
         }
-        case X86_REF_XMM9: {
+        case X86_REF_XMM8: {
             return biscuit::v10;
         }
-        case X86_REF_XMM10: {
+        case X86_REF_XMM9: {
             return biscuit::v11;
         }
-        case X86_REF_XMM11: {
+        case X86_REF_XMM10: {
             return biscuit::v12;
         }
-        case X86_REF_XMM12: {
+        case X86_REF_XMM11: {
             return biscuit::v13;
         }
-        case X86_REF_XMM13: {
+        case X86_REF_XMM12: {
             return biscuit::v14;
         }
-        case X86_REF_XMM14: {
+        case X86_REF_XMM13: {
             return biscuit::v15;
         }
-        case X86_REF_XMM15: {
+        case X86_REF_XMM14: {
             return biscuit::v16;
         }
-        case X86_REF_MM0: {
+        case X86_REF_XMM15: {
             return biscuit::v17;
         }
-        case X86_REF_MM1: {
+        case X86_REF_MM0: {
             return biscuit::v18;
         }
-        case X86_REF_MM2: {
+        case X86_REF_MM1: {
             return biscuit::v19;
         }
-        case X86_REF_MM3: {
+        case X86_REF_MM2: {
             return biscuit::v20;
         }
-        case X86_REF_MM4: {
+        case X86_REF_MM3: {
             return biscuit::v21;
         }
-        case X86_REF_MM5: {
+        case X86_REF_MM4: {
             return biscuit::v22;
         }
-        case X86_REF_MM6: {
+        case X86_REF_MM5: {
             return biscuit::v23;
         }
-        case X86_REF_MM7: {
+        case X86_REF_MM6: {
             return biscuit::v24;
+        }
+        case X86_REF_MM7: {
+            return biscuit::v25;
         }
         default: {
             UNREACHABLE();
@@ -379,8 +373,6 @@ struct Recompiler {
 
     u64 getImmediate(ZydisDecodedOperand* operand);
 
-    void emitSigreturnThunk();
-
     auto& getBlockMap() {
         return block_metadata;
     }
@@ -390,10 +382,6 @@ struct Recompiler {
     }
 
     u64 getCompiledBlock(ThreadState* state, u64 rip);
-
-    void pushCalltrace();
-
-    void popCalltrace();
 
     void unlinkBlock(ThreadState* state, u64 rip);
 
@@ -434,6 +422,7 @@ struct Recompiler {
     void clearCodeCache(ThreadState* state);
 
     void call(u64 target) {
+        current_sew = SEW::E1024; // set state to garbage as a call may overwrite it
         call(as, target);
     }
 
@@ -444,11 +433,32 @@ struct Recompiler {
         } else if (IsValid2GBImm(offset)) {
             const auto hi20 = static_cast<int32_t>(((static_cast<uint32_t>(offset) + 0x800) >> 12) & 0xFFFFF);
             const auto lo12 = static_cast<int32_t>(offset << 20) >> 20;
-            as.AUIPC(t0, hi20);
-            as.JALR(ra, lo12, t0);
+            as.AUIPC(t5, hi20);
+            as.JALR(ra, lo12, t5);
         } else {
-            as.LI(t0, target);
+            as.LI(t5, target);
+            as.JALR(t5);
+        }
+    }
+
+    void pushCalltrace() {
+        if (g_config.calltrace) {
+            writebackState();
+            as.LI(t0, (u64)push_calltrace);
+            as.MV(a0, threadStatePointer());
+            as.LI(a1, current_rip);
             as.JALR(t0);
+            restoreState();
+        }
+    }
+
+    void popCalltrace() {
+        if (g_config.calltrace) {
+            writebackState();
+            as.LI(t0, (u64)pop_calltrace);
+            as.MV(a0, threadStatePointer());
+            as.JALR(t0);
+            restoreState();
         }
     }
 
@@ -526,29 +536,25 @@ struct Recompiler {
 
     void compileInstruction(ZydisDecodedInstruction& instruction, ZydisDecodedOperand* operands, u64 rip);
 
-    void assumeLoaded();
-
-    void markDirty(x86_ref_e ref) {
-        auto& metadata = getMetadata(ref);
-        metadata.dirty = true;
-        metadata.loaded = true; // since the value is fresh it's as if we read it from memory
-    }
-
     void setFlagMode(FlagMode mode) {
         flag_mode = mode;
     }
 
 private:
-    struct RegisterMetadata {
-        bool dirty = false;  // whether an instruction modified this value, so we know to store it to memory before exiting execution
-        bool loaded = false; // whether a previous instruction loaded this value from memory, so we don't load it again
-                             // if a syscall happens for example, this would be set to false so we load it again
-    };
-
     struct FlagAccess {
         bool modification; // true if modified, false if used
         u64 position;
     };
+
+    void emitNecessaryStuff();
+
+    void emitDispatcher();
+
+    void emitSigreturnThunk();
+
+    void emitInvalidateCallerThunk();
+
+    void emitExitDispatcherThunk();
 
     // Get the register and load the value into it if needed
     biscuit::GPR gpr(ZydisRegister reg);
@@ -557,21 +563,9 @@ private:
 
     void resetScratch();
 
-    void emitDispatcher();
-
-    void emitInvalidateCallerThunk();
-
-    void loadGPR(x86_ref_e reg, biscuit::GPR gpr);
-
-    void loadVec(x86_ref_e reg, biscuit::Vec vec);
-
-    RegisterMetadata& getMetadata(x86_ref_e reg);
-
     void scanAhead(u64 rip);
 
     void expirePendingLinks(u64 rip);
-
-    void emitNecessaryStuff();
 
     void markPagesAsReadOnly(u64 start, u64 end);
 
@@ -596,16 +590,11 @@ private:
 
     void (*exit_dispatcher)(felix86_frame*){};
 
-    void* compile_next_handler{};
+    u64 compile_next_handler{};
 
     u64 invalidate_caller_thunk{};
 
     void* start_of_code_cache{};
-
-    std::array<RegisterMetadata, 16> gpr_metadata{};
-    std::array<RegisterMetadata, 16> xmm_metadata{};
-    std::array<RegisterMetadata, 8> mm_metadata{};
-    std::array<RegisterMetadata, 4> flag_metadata{};
 
     std::unordered_map<u64, BlockMetadata> block_metadata{};
 
@@ -617,6 +606,8 @@ private:
     std::map<u64, BlockMetadata*> host_pc_map{};
 
     bool compiling{};
+
+    bool using_mmx = false;
 
     int scratch_index = 0;
 
@@ -632,7 +623,6 @@ private:
     SEW current_sew = SEW::E1024;
     u8 current_vlen = 0;
     LMUL current_grouping = LMUL::M1;
-    bool rounding_mode_set = false;
     int perf_fd = -1;
 
     biscuit::GPR cached_lea = x0;
@@ -649,5 +639,5 @@ private:
     // This has to do with the fact we want even registers sometimes so widening operations can use
     // the register group. In the future with a proper allocator we can make it so the order here doesn't
     // matter and the order picks an available group.
-    constexpr static std::array scratch_vec = {v26, v27, v28, v29, v30, v31, v25}; // If changed, also change hardcoded in punpckh
+    constexpr static std::array scratch_vec = {v26, v27, v28, v29, v30, v31, v1}; // If changed, also change hardcoded in punpckh
 };
