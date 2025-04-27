@@ -9,6 +9,7 @@
   "HostFeatures": ["CLZERO"]
 }
 %endif
+org 10000h
 bits 32
 
 ; Starting address to store to

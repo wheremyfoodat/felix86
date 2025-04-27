@@ -348,7 +348,7 @@ void Recompiler::markPagesAsReadOnly(u64 start, u64 end) {
     u64 size = end_page - start_page;
     int result = mprotect((void*)start_page, size, PROT_READ);
     if (result != 0) {
-        ERROR("Failed to protect pages %016lx-%016lx", start_page, end_page);
+        ERROR("Failed to protect pages %016lx-%016lx -- Error: %s", start_page, end_page, strerror(errno));
     }
 }
 
@@ -1562,7 +1562,7 @@ void Recompiler::scanAhead(u64 rip) {
         auto& [instruction, operands] = instructions.back();
         ZydisMnemonic mnemonic = decode(rip, instruction, operands);
         bool is_jump = instruction.meta.branch_type != ZYDIS_BRANCH_TYPE_NONE;
-        bool is_ret = mnemonic == ZYDIS_MNEMONIC_RET;
+        bool is_ret = mnemonic == ZYDIS_MNEMONIC_RET || mnemonic == ZYDIS_MNEMONIC_IRETD || mnemonic == ZYDIS_MNEMONIC_IRETQ;
         bool is_call = mnemonic == ZYDIS_MNEMONIC_CALL;
         bool is_illegal = mnemonic == ZYDIS_MNEMONIC_UD2;
         bool is_hlt = mnemonic == ZYDIS_MNEMONIC_HLT;
@@ -1959,7 +1959,7 @@ void Recompiler::jumpAndLink(u64 rip) {
         u64 target = target_meta.address;
 
         u64 offset = target - (u64)as.GetCursorPointer();
-        if (IsValidJTypeImm(offset)) {
+        if (IsValidJTypeImm(offset - 4)) {
             // TODO: if falling through to block, replace jump with auipc+addi to t5
             as.NOP();
             as.JAL(t5, offset - 4);

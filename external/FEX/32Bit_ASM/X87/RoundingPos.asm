@@ -10,6 +10,7 @@
   "Mode": "32BIT"
 }
 %endif
+org 10000h
 bits 32
 
 

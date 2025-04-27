@@ -7,6 +7,7 @@
   "Mode": "32BIT"
 }
 %endif
+org 10000h
 bits 32
 
 mov eax, 0x42

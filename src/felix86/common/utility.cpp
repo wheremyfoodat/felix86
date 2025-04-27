@@ -7,6 +7,7 @@
 #include "felix86/common/elf.hpp"
 #include "felix86/common/state.hpp"
 #include "felix86/common/utility.hpp"
+#include "felix86/v2/recompiler.hpp"
 #include "fmt/format.h"
 
 #ifdef __riscv
@@ -227,9 +228,11 @@ __attribute__((visibility("default"))) int guest_breakpoint_abs(u64 address) {
     return g_breakpoints.size();
 }
 
-__attribute__((visibility("default"))) void disassemble_x64(u64 host_address) {
+__attribute__((visibility("default"))) void disassemble(u64 host_address) {
     ZydisDecoder decoder;
-    ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
+    ZydisMachineMode mode = g_mode32 ? ZYDIS_MACHINE_MODE_LONG_COMPAT_32 : ZYDIS_MACHINE_MODE_LONG_64;
+    ZydisStackWidth stack_width = g_mode32 ? ZYDIS_STACK_WIDTH_32 : ZYDIS_STACK_WIDTH_64;
+    ZydisDecoderInit(&decoder, mode, stack_width);
 
     u64 cur = host_address;
     while (true) {
@@ -243,14 +246,14 @@ __attribute__((visibility("default"))) void disassemble_x64(u64 host_address) {
 
         ZydisMnemonic mnemonic = instruction.mnemonic;
         bool is_jump = instruction.meta.branch_type != ZYDIS_BRANCH_TYPE_NONE;
-        bool is_ret = mnemonic == ZYDIS_MNEMONIC_RET;
+        bool is_ret = mnemonic == ZYDIS_MNEMONIC_RET || mnemonic == ZYDIS_MNEMONIC_IRETD || mnemonic == ZYDIS_MNEMONIC_IRETQ;
         bool is_call = mnemonic == ZYDIS_MNEMONIC_CALL;
         bool is_illegal = mnemonic == ZYDIS_MNEMONIC_UD2;
         bool is_hlt = mnemonic == ZYDIS_MNEMONIC_HLT;
         bool stop = is_jump || is_ret || is_call || is_illegal || is_hlt;
 
         ZydisDisassembledInstruction instr;
-        ZydisDisassembleIntel(ZYDIS_MACHINE_MODE_LONG_64, cur, (void*)cur, 15, &instr);
+        ZydisDisassembleIntel(mode, cur, (void*)cur, 15, &instr);
 
         printf("%016lx: %s\n", cur, instr.text);
 
@@ -266,6 +269,34 @@ int clear_breakpoints() {
     int count = g_breakpoints.size();
     g_breakpoints.clear();
     return count;
+}
+
+void felix86_iret(struct ThreadState* state) {
+    int size = g_mode32 ? 4 : 8;
+    u64 rsp = state->gprs[X86_REF_RSP];
+    u8* rsp_ptr = (u8*)rsp;
+    u64 rip = 0, rflags = 0, cs = 0, ss = 0, new_rsp = 0;
+    memcpy(&rip, rsp_ptr, size);
+    memcpy(&cs, rsp_ptr + (size * 1), size);
+    memcpy(&rflags, rsp_ptr + (size * 2), size);
+
+    if (!g_mode32) {
+        memcpy(&new_rsp, rsp_ptr + (size * 3), size);
+        memcpy(&ss, rsp_ptr + (size * 4), size);
+        state->SetGpr(X86_REF_RSP, new_rsp);
+        // TODO: what are we supposed to do with ss?
+    }
+
+    u64 mask = 0x3F7BD7;
+    rflags &= mask;
+    // TODO: actually set rflags
+
+    state->SetRip(rip);
+
+    if (g_mode32) {
+        felix86_set_segment(state, cs, ZYDIS_REGISTER_CS);
+        state->SetGpr(X86_REF_RSP, rsp + 3 * 4); // 3 values popped
+    }
 }
 
 void felix86_fxsave(struct ThreadState* state, u64 address, bool fxsave64) {
@@ -350,8 +381,8 @@ void dump_states() {
         print_address(state->rip);
 
         if (g_config.calltrace) {
-            auto it = state->calltrace.rbegin();
-            while (it != state->calltrace.rend()) {
+            auto it = state->recompiler->getCalltrace().rbegin();
+            while (it != state->recompiler->getCalltrace().rend()) {
                 print_address(*it);
                 it++;
             }
@@ -583,7 +614,7 @@ void print_address(u64 address) {
 }
 
 void push_calltrace(ThreadState* state, u64 address) {
-    state->calltrace.push_back(address);
+    state->recompiler->getCalltrace().push_back(address);
 
     if (g_print_all_calls) {
         dprintf(g_output_fd, "Thread %ld calling: ", state->tid);
@@ -592,7 +623,7 @@ void push_calltrace(ThreadState* state, u64 address) {
 }
 
 void pop_calltrace(ThreadState* state) {
-    if (state->calltrace.empty()) {
+    if (state->recompiler->getCalltrace().empty()) {
         return;
     }
 
@@ -601,7 +632,7 @@ void pop_calltrace(ThreadState* state) {
         print_address(state->rip);
     }
 
-    state->calltrace.pop_back();
+    state->recompiler->getCalltrace().pop_back();
 }
 
 Float80 f64_to_80(double x) {
@@ -1008,39 +1039,45 @@ u64 mmap_min_addr() {
 
 void felix86_set_segment(ThreadState* state, u64 value, ZydisRegister segment) {
     int index = value >> 3;
-    ASSERT_MSG(index >= 12 && index <= 14, "Segment register index is not 12, 13, 14");
 
-    index -= 12;
+    u32 base = 0;
+    if (index >= 12 && index <= 14) {
+        index -= 12;
+        base = state->gdt[index];
+    } else {
+        WARN("Segment register index is not 12, 13, 14");
+        base = 0;
+    }
 
     switch (segment) {
     case ZYDIS_REGISTER_CS: {
         state->cs = value;
-        state->csbase = state->gdt[index];
+        state->csbase = base;
         break;
     }
     case ZYDIS_REGISTER_DS: {
         state->ds = value;
-        state->dsbase = state->gdt[index];
+        state->dsbase = base;
         break;
     }
     case ZYDIS_REGISTER_SS: {
         state->ss = value;
-        state->ssbase = state->gdt[index];
+        state->ssbase = base;
         break;
     }
     case ZYDIS_REGISTER_ES: {
         state->es = value;
-        state->esbase = state->gdt[index];
+        state->esbase = base;
         break;
     }
     case ZYDIS_REGISTER_FS: {
         state->fs = value;
-        state->fsbase = state->gdt[index];
+        state->fsbase = base;
         break;
     }
     case ZYDIS_REGISTER_GS: {
         state->gs = value;
-        state->gsbase = state->gdt[index];
+        state->gsbase = base;
         break;
     }
     default: {
