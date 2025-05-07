@@ -240,7 +240,10 @@ Result felix86_syscall_common(felix86_frame* frame, int rv_syscall, u64 arg1, u6
         break;
     }
     case felix86_riscv64_shmat: {
-        result = SYSCALL(shmat, arg1, (void*)arg2, arg3);
+        result = SYSCALL(shmat, arg1, arg2, arg3);
+        if (result > mmap_min_addr() && result < Mapper::addressSpaceEnd32) {
+            WARN("shmat in 32-bit address space, this could cause problems with MAP_32BIT");
+        }
         break;
     }
     case felix86_riscv64_shmctl: {
@@ -248,7 +251,10 @@ Result felix86_syscall_common(felix86_frame* frame, int rv_syscall, u64 arg1, u6
         break;
     }
     case felix86_riscv64_shmdt: {
-        result = SYSCALL(shmdt, (void*)arg1);
+        if (arg1 > mmap_min_addr() && arg1 < Mapper::addressSpaceEnd32) {
+            WARN("shmdt in 32-bit address space, this could cause problems with MAP_32BIT");
+        }
+        result = SYSCALL(shmdt, arg1);
         break;
     }
     case felix86_riscv64_bind: {
@@ -606,7 +612,7 @@ Result felix86_syscall_common(felix86_frame* frame, int rv_syscall, u64 arg1, u6
     }
     case felix86_riscv64_openat: {
         auto guard = state->GuardSignals();
-        result = Filesystem::OpenAt((int)arg1, (char*)arg2, (int)arg3, arg4);
+        result = g_fs->OpenAt((int)arg1, (char*)arg2, (int)arg3, arg4);
         break;
     }
     case felix86_riscv64_tgkill: {
@@ -1430,7 +1436,7 @@ void felix86_syscall(felix86_frame* frame) {
         }
         case felix86_x86_64_open: {
             auto guard = state->GuardSignals();
-            result = Filesystem::OpenAt(AT_FDCWD, (char*)arg1, (int)arg2, arg3);
+            result = g_fs->OpenAt(AT_FDCWD, (char*)arg1, (int)arg2, arg3);
             break;
         }
         case felix86_x86_64_alarm: {
@@ -1608,6 +1614,26 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             result = SYSCALL(writev, arg1, iovecs.data(), arg3);
             break;
         }
+        case felix86_x86_32_clock_gettime32: {
+            if (arg2) {
+                struct timespec time;
+                result = clock_gettime(arg1, &time);
+                *(x86_timespec*)arg2 = time;
+            } else {
+                result = -EFAULT;
+            }
+            break;
+        }
+        case felix86_x86_32_clock_settime32: {
+            if (arg2) {
+                struct timespec time;
+                time = *(x86_timespec*)arg2;
+                result = clock_settime(arg1, &time);
+            } else {
+                result = -EFAULT;
+            }
+            break;
+        }
         case felix86_x86_32_mmap_pgoff: {
             // mmap2 is like mmap but file offset is in pages (4096 bytes) to help with the lack of big enough integers in x86-32
             u64 offset = arg6 * 4096;
@@ -1651,7 +1677,20 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
         }
         case felix86_x86_32_open: {
             auto guard = state->GuardSignals();
-            result = Filesystem::OpenAt(AT_FDCWD, (char*)arg1, (int)arg2, arg3);
+            result = g_fs->OpenAt(AT_FDCWD, (char*)arg1, (int)arg2, arg3);
+            break;
+        }
+        case felix86_x86_32_shmat: {
+            u32 result_address = 0;
+            result = g_mapper->shmat32((int)arg1, (void*)arg2, (int)arg3, &result_address);
+            if (result == 0) {
+                ASSERT(result_address != 0);
+                result = result_address;
+            }
+            break;
+        }
+        case felix86_x86_32_shmdt: {
+            result = g_mapper->shmdt32((void*)arg1);
             break;
         }
         case felix86_x86_32_set_thread_area: {
@@ -1845,13 +1884,58 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             }
             break;
         }
+        case felix86_x86_32_fstatfs64: {
+            auto guard = state->GuardSignals();
+            ASSERT(arg2 == sizeof(x86_statfs64));
+            struct statfs statfs;
+            x86_statfs64* guest_statfs = (x86_statfs64*)arg3;
+            result = ::fstatfs(arg1, &statfs);
+            if (result >= 0) {
+                *guest_statfs = statfs;
+            }
+            break;
+        }
+        case felix86_x86_32_sysinfo: {
+            struct sysinfo host_sysinfo;
+            result = ::sysinfo(&host_sysinfo);
+            if (result == 0) {
+                *(x86_sysinfo*)arg1 = host_sysinfo;
+            }
+            break;
+        }
+        case felix86_x86_32_link: {
+            auto guard = state->GuardSignals();
+            result = Filesystem::SymlinkAt((char*)arg1, AT_FDCWD, (char*)arg2);
+            break;
+        }
         case felix86_x86_32_time32: {
             time_t time;
             result = ::time(&time);
-
             if (result == 0) {
                 *(u32*)arg1 = time;
             }
+            break;
+        }
+        case felix86_x86_32_ia32_fadvise64: {
+            int fd = arg1;
+            u64 offset_low = arg2;
+            u64 offset_high = arg3;
+            u64 len = arg4;
+            int advice = arg5;
+            u64 offset = offset_low | (offset_high << 32);
+            result = posix_fadvise64(fd, offset, len, advice);
+            break;
+        }
+        case felix86_x86_32_ia32_fadvise64_64: {
+            int fd = arg1;
+            u64 offset_low = arg2;
+            u64 offset_high = arg3;
+            u64 len_low = arg4;
+            u64 len_high = arg5;
+            int advice = arg6;
+            u64 offset = offset_low | (offset_high << 32);
+            u64 len = len_low | (len_high << 32);
+            result = posix_fadvise64(fd, offset, len, advice);
             break;
         }
         case felix86_x86_32_readlink: {
@@ -1873,6 +1957,23 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             result = Filesystem::FStatAt(AT_FDCWD, (char*)arg1, &stat, 0);
             if (result >= 0) {
                 *(x86_stat64*)arg2 = stat;
+            }
+            break;
+        }
+        case felix86_x86_32_lstat64: {
+            auto guard = state->GuardSignals();
+            struct stat host_stat;
+            result = Filesystem::FStatAt(AT_FDCWD, (char*)arg1, &host_stat, AT_SYMLINK_NOFOLLOW);
+            if (result >= 0) {
+                *(x86_stat64*)arg2 = host_stat;
+            }
+            break;
+        }
+        case felix86_x86_32_fstat64: {
+            struct stat host_stat;
+            result = ::fstat(arg1, &host_stat);
+            if (result >= 0) {
+                *(x86_stat64*)arg2 = host_stat;
             }
             break;
         }

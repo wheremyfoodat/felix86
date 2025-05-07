@@ -379,6 +379,23 @@ u64 Recompiler::getCompiledBlock(ThreadState* state, u64 rip) {
 
 u64 Recompiler::compileSequence(u64 rip) {
     compiling = true;
+    u8* bytes = (u8*)rip;
+    bool all_zeroes = true;
+    if (bytes[0] == 0x00) {
+        for (int i = 0; i < 16; i++) {
+            if (bytes[i + 1] != 0x00) {
+                all_zeroes = false;
+                break;
+            }
+        }
+    } else {
+        all_zeroes = false;
+    }
+
+    if (all_zeroes) {
+        ERROR("Jumped to address %lx which has a sequence of zeroes -- probably a bad jump?");
+    }
+
     scanAhead(rip);
     BlockMetadata& block_meta = getBlockMetadata(rip);
 
@@ -417,7 +434,7 @@ u64 Recompiler::compileSequence(u64 rip) {
         if (using_mmx && index == instructions.size() - 1) {
             // Block is over but we didn't run an EMMS, writeback MMX state here as it's not
             // written back in the dispatcher
-            writebackMMXState();
+            writebackMMXState(true);
         }
 
         compileInstruction(instruction, operands, rip);
@@ -431,7 +448,7 @@ u64 Recompiler::compileSequence(u64 rip) {
         if (g_config.single_step && compiling) {
             resetScratch();
             if (using_mmx) {
-                writebackMMXState();
+                writebackMMXState(true);
             }
             biscuit::GPR rip_after = scratch();
             as.LI(rip_after, rip);
@@ -1412,12 +1429,15 @@ void Recompiler::restoreMMXState() {
     current_grouping = LMUL::M1;
 }
 
-void Recompiler::writebackMMXState() {
+void Recompiler::writebackMMXState(bool reset_using_mmx) {
     current_sew = SEW::E1024;
     current_vlen = 0;
     current_grouping = LMUL::M1;
 
-    using_mmx = false;
+    if (reset_using_mmx) {
+        using_mmx = false;
+    }
+
     biscuit::GPR address = scratch();
     ASSERT(address != t6);
     // TODO: can we optimize these using special stores
@@ -1461,7 +1481,7 @@ void Recompiler::writebackState() {
     popScratch();
 
     if (using_mmx) {
-        writebackMMXState();
+        writebackMMXState(false);
     }
 
     biscuit::GPR cf = allocatedGPR(X86_REF_CF);
