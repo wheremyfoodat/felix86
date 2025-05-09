@@ -140,18 +140,15 @@ void Recompiler::emitDispatcher() {
         biscuit::GPR temp = scratch();
         biscuit::GPR temp2 = scratch();
         biscuit::GPR rip = scratch();
-        biscuit::GPR mask = scratch();
+        biscuit::GPR ripreg = allocatedGPR(X86_REF_RIP);
         biscuit::Label not_equal;
-        as.LD(temp2, offsetof(ThreadState, rip), threadStatePointer());
         as.LI(temp, (u64)address_cache.data());
-        as.LI(mask, (1 << address_cache_bits) - 1);
-        as.MV(rip, temp2);
-        as.AND(temp2, temp2, mask);
+        as.SLLI(temp2, ripreg, 64 - address_cache_bits);
         // Multiply by 16, which is size of each address cache entry
-        as.SLLI(temp2, temp2, 4);
+        as.SRLI(temp2, temp2, 64 - address_cache_bits - 4);
         as.ADD(temp, temp, temp2);
         as.LD(temp2, 8, temp); // read the AddressCacheEntry::guest field
-        as.BNE(rip, temp2, &not_equal);
+        as.BNE(temp2, ripreg, &not_equal);
 
         // Address cache was correct, jump to host address
         as.LD(rip, 0, temp);
@@ -159,7 +156,6 @@ void Recompiler::emitDispatcher() {
         as.JR(rip);
 
         as.Bind(&not_equal);
-        popScratch();
         popScratch();
         popScratch();
         popScratch();
@@ -480,9 +476,8 @@ u64 Recompiler::compileSequence(u64 rip) {
             if (using_mmx) {
                 switchToX87();
             }
-            biscuit::GPR rip_after = scratch();
+            biscuit::GPR rip_after = allocatedGPR(X86_REF_RIP);
             as.LI(rip_after, rip);
-            setRip(rip_after);
             backToDispatcher();
             stopCompiling();
         }
@@ -1422,6 +1417,9 @@ void Recompiler::writebackState() {
 
     switchToX87();
 
+    biscuit::GPR rip = allocatedGPR(X86_REF_RIP);
+    as.SD(rip, offsetof(ThreadState, rip), threadStatePointer());
+
     for (int i = 0; i < 16; i++) {
         x86_ref_e ref = (x86_ref_e)(X86_REF_RAX + i);
         as.SD(allocatedGPR(ref), offsetof(ThreadState, gprs) + i * sizeof(u64), threadStatePointer());
@@ -1473,6 +1471,9 @@ void Recompiler::restoreState() {
     current_sew = SEW::E1024;
     current_vlen = 0;
     current_grouping = LMUL::M1;
+
+    biscuit::GPR rip = allocatedGPR(X86_REF_RIP);
+    as.LD(rip, offsetof(ThreadState, rip), threadStatePointer());
 
     for (int i = 0; i < 16; i++) {
         x86_ref_e ref = (x86_ref_e)(X86_REF_RAX + i);
@@ -1926,16 +1927,6 @@ void Recompiler::updateSign(biscuit::GPR result, x86_size_e size) {
     as.ANDI(sf, sf, 1);
 }
 
-void Recompiler::setRip(biscuit::GPR rip) {
-    as.SD(rip, offsetof(ThreadState, rip), threadStatePointer());
-}
-
-biscuit::GPR Recompiler::getRip() {
-    biscuit::GPR rip = scratch();
-    as.LD(rip, offsetof(ThreadState, rip), threadStatePointer());
-    return rip;
-}
-
 void Recompiler::jumpAndLink(u64 rip) {
     if (!g_config.link) {
         // Just emit jump to dispatcher
@@ -1979,15 +1970,14 @@ void Recompiler::jumpAndLinkConditional(biscuit::GPR condition, u64 rip_true, u6
     Label true_label;
     as.BNEZ(condition, &true_label);
 
-    biscuit::GPR gpr_false = scratch();
-    as.LI(gpr_false, rip_false);
-    setRip(gpr_false);
+    biscuit::GPR rip = allocatedGPR(X86_REF_RIP);
+    u64 rip_false_offset = rip_false - getCurrentMetadata().guest_address;
+    addi(rip, rip, rip_false_offset);
     jumpAndLink(rip_false);
 
     as.Bind(&true_label);
-    biscuit::GPR gpr_true = scratch();
-    as.LI(gpr_true, rip_true);
-    setRip(gpr_true);
+    u64 rip_true_offset = rip_true - getCurrentMetadata().guest_address;
+    addi(rip, rip, rip_true_offset);
     jumpAndLink(rip_true);
 }
 

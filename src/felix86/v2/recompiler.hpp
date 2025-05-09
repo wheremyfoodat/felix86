@@ -41,6 +41,7 @@ struct BlockMetadata {
     std::vector<std::pair<u64, u64>> instruction_spans{};
 };
 
+// WARN: don't allocate this struct on the stack as it's quite big due to address_cache and can lead to stack overflow
 struct Recompiler {
     explicit Recompiler();
     ~Recompiler();
@@ -151,10 +152,6 @@ struct Recompiler {
 
     u64 getSignMask(x86_size_e size_e);
 
-    void setRip(biscuit::GPR reg);
-
-    biscuit::GPR getRip();
-
     void jumpAndLink(u64 rip);
 
     void jumpAndLinkConditional(biscuit::GPR condition, u64 rip_true, u64 rip_false);
@@ -180,6 +177,9 @@ struct Recompiler {
     static constexpr biscuit::GPR allocatedGPR(x86_ref_e reg) {
         // RDI, RSI, RDX, R10, R8, R9 are allocated to a0, a1, a2, a3, a4, a5 to match the syscall abi and save some swapping instructions
         switch (reg) {
+        case X86_REF_RIP: {
+            return biscuit::gp; // we set --no-relax flag so that we can allocate gp
+        }
         case X86_REF_RAX: {
             return biscuit::x5;
         }
@@ -588,6 +588,11 @@ struct Recompiler {
     void switchToMMX();
 
     void switchToX87();
+
+    BlockMetadata& getCurrentMetadata() {
+        ASSERT(current_block_metadata);
+        return *current_block_metadata;
+    }
 
 private:
     struct FlagAccess {

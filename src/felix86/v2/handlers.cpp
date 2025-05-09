@@ -821,7 +821,8 @@ FAST_HANDLE(CALL) {
     case ZYDIS_OPERAND_TYPE_REGISTER:
     case ZYDIS_OPERAND_TYPE_MEMORY: {
         biscuit::GPR src = rec.getOperandGPR(&operands[0]);
-        rec.setRip(src);
+        biscuit::GPR ripreg = rec.allocatedGPR(X86_REF_RIP);
+        as.MV(ripreg, src);
         biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, rec.stackWidth());
         as.ADDI(rsp, rsp, -rec.stackPointerSize());
         rec.setRefGPR(X86_REF_RSP, rec.stackWidth(), rsp);
@@ -836,19 +837,16 @@ FAST_HANDLE(CALL) {
     }
     case ZYDIS_OPERAND_TYPE_IMMEDIATE: {
         u64 displacement = rec.sextImmediate(rec.getImmediate(&operands[0]), operands[0].imm.size);
-        u64 return_address = rip + instruction.length;
+        u64 return_address_offset = (rip - rec.getCurrentMetadata().guest_address) + instruction.length;
 
         biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, rec.stackWidth());
         as.ADDI(rsp, rsp, -rec.stackPointerSize());
         rec.setRefGPR(X86_REF_RSP, rec.stackWidth(), rsp);
 
-        biscuit::GPR scratch = rec.scratch();
-        as.LI(scratch, return_address);
-        rec.writeMemory(scratch, rsp, 0, rec.stackWidth());
-
-        rec.addi(scratch, scratch, displacement);
-
-        rec.setRip(scratch);
+        biscuit::GPR ripreg = rec.allocatedGPR(X86_REF_RIP);
+        rec.addi(ripreg, ripreg, return_address_offset);
+        rec.writeMemory(ripreg, rsp, 0, rec.stackWidth());
+        rec.addi(ripreg, ripreg, displacement);
         rec.jumpAndLink(rip + instruction.length + displacement);
         rec.stopCompiling();
         break;
@@ -875,7 +873,9 @@ FAST_HANDLE(RET) {
     rec.addi(rsp, rsp, imm);
 
     rec.setRefGPR(X86_REF_RSP, rec.stackWidth(), rsp);
-    rec.setRip(scratch);
+
+    biscuit::GPR ripreg = rec.allocatedGPR(X86_REF_RIP);
+    as.MV(ripreg, scratch);
     rec.backToDispatcher();
     rec.stopCompiling();
 }
@@ -1478,7 +1478,8 @@ FAST_HANDLE(JMP) {
     case ZYDIS_OPERAND_TYPE_REGISTER:
     case ZYDIS_OPERAND_TYPE_MEMORY: {
         biscuit::GPR src = rec.getOperandGPR(&operands[0]);
-        rec.setRip(src);
+        biscuit::GPR ripreg = rec.allocatedGPR(X86_REF_RIP);
+        as.MV(ripreg, src);
         rec.backToDispatcher();
         rec.stopCompiling();
         break;
@@ -1486,10 +1487,10 @@ FAST_HANDLE(JMP) {
     case ZYDIS_OPERAND_TYPE_IMMEDIATE: {
         u64 displacement = rec.sextImmediate(rec.getImmediate(&operands[0]), operands[0].imm.size);
         u64 address = rip + instruction.length + displacement;
-        biscuit::GPR scratch = rec.scratch();
-        as.LI(scratch, address);
-        rec.setRip(scratch);
-        rec.jumpAndLink(rip + instruction.length + displacement);
+        u64 offset = (rip - rec.getCurrentMetadata().guest_address) + instruction.length + displacement;
+        biscuit::GPR ripreg = rec.allocatedGPR(X86_REF_RIP);
+        rec.addi(ripreg, ripreg, offset);
+        rec.jumpAndLink(address);
         rec.stopCompiling();
         break;
     }
@@ -3617,15 +3618,17 @@ FAST_HANDLE(CMPSB) {
     biscuit::GPR src1 = rec.scratch();
     biscuit::GPR src2 = rec.scratch();
     biscuit::GPR result = rec.scratch();
+
+    x86_size_e size = rec.zydisToSize(width);
     biscuit::GPR df = rec.scratch();
     as.LBU(df, offsetof(ThreadState, df), rec.threadStatePointer());
-    x86_size_e size = rec.zydisToSize(width);
 
     Label end;
     as.LI(temp, -width / 8);
     as.BNEZ(df, &end);
     as.LI(temp, width / 8);
     as.Bind(&end);
+    rec.popScratch(); // pop df
 
     Label loop_end, loop_body;
     if (HAS_REP) {
@@ -5879,6 +5882,7 @@ FAST_HANDLE(CMPXCHG_lock) {
             as.Bind(&not_equal);
             rec.popScratch();
             rec.popScratch();
+            rec.popScratch();
 
             // Load back the unshifted value of AX
             as.LHU(rax, -2, sp);
@@ -6383,14 +6387,17 @@ FAST_HANDLE(CVTSD2SI) {
 FAST_HANDLE(CVTSS2SD) {
     biscuit::Vec dst = rec.getOperandVec(&operands[0]);
     biscuit::Vec src = rec.getOperandVec(&operands[1]);
-    biscuit::FPR temp = rec.scratchFPR();
-    biscuit::FPR temp2 = rec.scratchFPR();
 
-    rec.setVectorState(SEW::E32, 1);
-    as.VFMV_FS(temp, src);
-    as.FCVT_D_S(temp2, temp);
-    rec.setVectorState(SEW::E64, 1);
-    as.VFMV_SF(dst, temp2);
+    if (dst == src) {
+        rec.setVectorState(SEW::E8, 16);
+        biscuit::Vec temp = rec.scratchVec();
+        as.VMV(temp, dst);
+        dst = temp;
+    }
+
+    rec.setVectorState(SEW::E32, 1, LMUL::MF2);
+
+    as.VFWCVT_F_F(dst, src);
 
     rec.setOperandVec(&operands[0], dst);
 }
@@ -6398,14 +6405,16 @@ FAST_HANDLE(CVTSS2SD) {
 FAST_HANDLE(CVTSD2SS) {
     biscuit::Vec dst = rec.getOperandVec(&operands[0]);
     biscuit::Vec src = rec.getOperandVec(&operands[1]);
-    biscuit::FPR temp = rec.scratchFPR();
-    biscuit::FPR temp2 = rec.scratchFPR();
 
-    rec.setVectorState(SEW::E64, 1);
-    as.VFMV_FS(temp, src);
-    as.FCVT_S_D(temp2, temp);
-    rec.setVectorState(SEW::E32, 1);
-    as.VFMV_SF(dst, temp2);
+    if (dst == src) {
+        rec.setVectorState(SEW::E8, 16);
+        biscuit::Vec temp = rec.scratchVec();
+        as.VMV(temp, dst);
+        dst = temp;
+    }
+
+    rec.setVectorState(SEW::E32, 1, LMUL::MF2);
+    as.VFNCVT_F_F(dst, src);
 
     rec.setOperandVec(&operands[0], dst);
 }
