@@ -1,6 +1,5 @@
 #include <algorithm>
 #include <cstring>
-#include <fstream>
 #include <string>
 #include <fcntl.h>
 #include <linux/perf_event.h>
@@ -14,6 +13,7 @@
 #include "felix86/common/info.hpp"
 #include "felix86/common/log.hpp"
 #include "felix86/common/overlay.hpp"
+#include "felix86/common/perf.hpp"
 #include "felix86/common/state.hpp"
 #include "felix86/hle/filesystem.hpp"
 #include "felix86/hle/mmap.hpp"
@@ -51,30 +51,6 @@ u64 g_interpreter_start{};
 u64 g_interpreter_end{};
 u64 g_executable_start{};
 u64 g_executable_end{};
-
-bool is_running_under_perf() {
-    // Always enable symbol emission when this is enabled, in case our detection fails
-    if (g_config.perf) {
-        return true;
-    }
-
-    int ppid = getppid();
-
-    std::string line;
-    std::ifstream ifs("/proc/" + std::to_string(ppid) + "/comm");
-    if (!ifs) {
-        WARN("Failed to check if perf is a parent process");
-        return false;
-    }
-
-    std::getline(ifs, line);
-
-    if (line == "perf") {
-        return true;
-    }
-
-    return false;
-}
 
 bool is_running_under_gdb() {
     if (g_config.gdb) {
@@ -114,6 +90,8 @@ void ProcessGlobals::initialize() {
 
     // And the GDB mappings
     g_gdbjit = std::make_unique<GDBJIT>();
+
+    perf = std::make_unique<Perf>();
 
     // Don't reset the /proc/self/maps mapped regions, we can reuse the ones from parent process
 }
@@ -355,21 +333,18 @@ void initialize_globals() {
         environment += "\nFELIX86_ENV_FILE=" + std::string(env_file);
     }
 
-    g_config.perf = is_running_under_perf();
-    if (g_config.perf) {
-        if (!std::filesystem::exists("/tmp")) {
-            std::filesystem::create_directory("/tmp");
-        }
+    // For perf symbols
+    if (!std::filesystem::exists("/tmp")) {
+        std::filesystem::create_directory("/tmp");
+    }
 
-        LOG("Emitting symbols for " ANSI_BOLD "perf" ANSI_COLOR_RESET "!");
+    int perfs = g_config.perf_blocks + g_config.perf_libs + g_config.perf_global;
+    if (perfs > 1) {
+        ERROR("Conflicting perf settings, only enable per-block OR per-library OR global, not multiple at once");
     }
 
     g_config.gdb = is_running_under_gdb();
     if (g_config.gdb) {
-        if (!std::filesystem::exists("/tmp")) {
-            std::filesystem::create_directory("/tmp");
-        }
-
         LOG("Emitting symbols for " ANSI_BOLD "gdb" ANSI_COLOR_RESET "!");
     }
 

@@ -5,9 +5,11 @@
 #include "Zydis/Disassembler.h"
 #include "felix86/common/frame.hpp"
 #include "felix86/common/gdbjit.hpp"
+#include "felix86/common/perf.hpp"
 #include "felix86/emulator.hpp"
 #include "felix86/hle/syscall.hpp"
 #include "felix86/v2/recompiler.hpp"
+#include "fmt/format.h"
 
 #define X(name) void fast_##name(Recompiler& rec, u64 rip, Assembler& as, ZydisDecodedInstruction& instruction, ZydisDecodedOperand* operands);
 #include "felix86/v2/handlers.inc"
@@ -66,6 +68,23 @@ Recompiler::Recompiler() : code_cache(allocateCodeCache()), as(code_cache, code_
     if (g_config.always_flags || g_config.paranoid) {
         flag_mode = FlagMode::AlwaysEmit;
     }
+
+    if (g_config.perf_blocks || g_config.perf_global || g_config.perf_libs) {
+        std::string path = "/tmp/perf-" + std::to_string(getpid()) + ".map";
+        FILE* file = fopen(path.c_str(), "a");
+        ASSERT(file);
+        perf_fd = fileno(file);
+        ASSERT(perf_fd > 0);
+
+        u64 end = (u64)as.GetCursorPointer();
+        u64 size = end - (u64)enter_dispatcher;
+        g_process_globals.perf->addToFile((u64)enter_dispatcher, size, "felix86 dispatcher");
+    }
+
+    if (g_config.perf_global) {
+        g_process_globals.perf->addToFile((u64)start_of_code_cache, code_cache_size - ((u64)start_of_code_cache - (u64)code_cache),
+                                          "felix86 code cache");
+    }
 }
 
 Recompiler::~Recompiler() {
@@ -116,6 +135,35 @@ void Recompiler::emitDispatcher() {
     restoreState();
 
     compile_next_handler = (u64)as.GetCursorPointer();
+
+    if (g_config.address_cache) {
+        biscuit::GPR temp = scratch();
+        biscuit::GPR temp2 = scratch();
+        biscuit::GPR rip = scratch();
+        biscuit::GPR mask = scratch();
+        biscuit::Label not_equal;
+        as.LD(temp2, offsetof(ThreadState, rip), threadStatePointer());
+        as.LI(temp, (u64)address_cache.data());
+        as.LI(mask, (1 << address_cache_bits) - 1);
+        as.MV(rip, temp2);
+        as.AND(temp2, temp2, mask);
+        // Multiply by 16, which is size of each address cache entry
+        as.SLLI(temp2, temp2, 4);
+        as.ADD(temp, temp, temp2);
+        as.LD(temp2, 8, temp); // read the AddressCacheEntry::guest field
+        as.BNE(rip, temp2, &not_equal);
+
+        // Address cache was correct, jump to host address
+        as.LD(rip, 0, temp);
+        as.MV(t5, x0); // zero out t5, see invalidate_caller_thunk
+        as.JR(rip);
+
+        as.Bind(&not_equal);
+        popScratch();
+        popScratch();
+        popScratch();
+        popScratch();
+    }
 
     writebackState();
     as.MV(a0, threadStatePointer());
@@ -302,37 +350,43 @@ u64 Recompiler::compile(ThreadState* state, u64 rip) {
         }
     }
 
+    if (g_config.address_cache) {
+        AddressCacheEntry& entry = address_cache[block_meta.guest_address & ((1 << address_cache_bits) - 1)];
+        entry.host = block_meta.address;
+        entry.guest = block_meta.guest_address;
+    }
+
     // If other blocks were waiting for this block to be linked, link them now
     expirePendingLinks(rip);
 
     // Mark the page as read-only to catch self-modifying code
     markPagesAsReadOnly(rip, end_rip);
 
-    if (g_config.perf) {
-        if (perf_fd == -1) {
-            std::string path = "/tmp/perf-" + std::to_string(getpid()) + ".map";
-            FILE* file = fopen(path.c_str(), "w");
-            ASSERT(file);
-            perf_fd = fileno(file);
-        }
+    if (g_config.perf_blocks || g_config.perf_symbols) {
+        std::string symbol;
+        size_t size = block_meta.address_end - block_meta.address;
+        if (g_config.perf_symbols) {
+            if (!has_region(rip)) {
+                // Executed region not found, update the symbols
+                update_symbols();
+            }
 
-        // Executed region not found, update the symbols
+            symbol = get_perf_symbol(rip);
+        } else {
+            symbol = fmt::format("block_0x{:x}", block_meta.guest_address);
+        }
+        g_process_globals.perf->addToFile(block_meta.address, size, symbol);
+    }
+
+    if (g_config.perf_libs) {
         if (!has_region(rip)) {
+            // Executed region not found, update the symbols
             update_symbols();
         }
 
-        BlockMetadata& metadata = getBlockMetadata(rip);
-        std::string symbol = get_perf_symbol(rip);
-        char buffer[4096];
-        size_t size = metadata.address_end - metadata.address;
-        int string_size = snprintf(buffer, 4096, "%lx %lx %s\n", metadata.address, size, symbol.c_str());
-        ASSERT(string_size > 0 && string_size < 4095);
-
-        int locked = flock(perf_fd, LOCK_EX);
-        ASSERT(locked == 0);
-        int written = syscall(SYS_write, perf_fd, buffer, string_size);
-        ASSERT(written == string_size);
-        flock(perf_fd, LOCK_UN);
+        std::filesystem::path symbol = get_region(rip);
+        size_t size = block_meta.address_end - block_meta.address;
+        g_process_globals.perf->addToFile(block_meta.address, size, "guest " + symbol.filename().string());
     }
 
     return start;
@@ -350,31 +404,6 @@ void Recompiler::markPagesAsReadOnly(u64 start, u64 end) {
     if (result != 0) {
         ERROR("Failed to protect pages %016lx-%016lx -- Error: %s", start_page, end_page, strerror(errno));
     }
-}
-
-u64 Recompiler::getCompiledBlock(ThreadState* state, u64 rip) {
-    if (g_config.address_cache) {
-        AddressCacheEntry& entry = address_cache[rip & ((1 << address_cache_bits) - 1)];
-        if (entry.guest == rip) {
-            return entry.host;
-        } else if (blockExists(rip)) {
-            u64 host = getBlockMetadata(rip).address;
-            entry.guest = rip;
-            entry.host = host;
-            return host;
-        } else {
-            return compile(state, rip);
-        }
-    } else {
-        if (blockExists(rip)) {
-            return getBlockMetadata(rip).address;
-        } else {
-            return compile(state, rip);
-        }
-    }
-
-    UNREACHABLE();
-    return {};
 }
 
 u64 Recompiler::compileSequence(u64 rip) {
