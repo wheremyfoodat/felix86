@@ -1913,9 +1913,27 @@ FAST_HANDLE(SAHF) {
     as.ANDI(sf, sf, 1);
 }
 
+void validate_address_u16(u64 address) {
+    if ((address & 0b11) == 0b11) {
+        WARN("Address %p in 16-bit xchg is badly aligned, it won't be an atomic access", address);
+    }
+}
+
 FAST_HANDLE(XCHG_lock) {
-    x86_size_e size = rec.getOperandSize(&operands[0]);
     biscuit::GPR address = rec.lea(&operands[0]);
+    x86_size_e size = rec.getOperandSize(&operands[0]);
+
+    if (g_config.paranoid && size == X86_SIZE_WORD) {
+        rec.writebackState();
+        as.MV(a0, address);
+        rec.call((u64)validate_address_u16);
+        rec.restoreState();
+
+        // Restore address
+        rec.resetScratch();
+        address = rec.lea(&operands[0]);
+    }
+
     biscuit::GPR src = rec.getOperandGPR(&operands[1]);
     biscuit::GPR scratch = rec.scratch();
     biscuit::GPR dst = rec.scratch();
@@ -1956,10 +1974,26 @@ FAST_HANDLE(XCHG_lock) {
             WARN("Zabha is untested");
             as.AMOSWAP_H(Ordering::AQRL, dst, src, address);
         } else {
-            Label loop;
+            Label loop, end, normal;
             biscuit::GPR address_masked = rec.scratch();
             biscuit::GPR mask = rec.scratch();
             biscuit::GPR mask_shifted = rec.scratch();
+
+            as.ANDI(mask, address, 0b11);
+            as.ADDI(mask, mask, -0b11);
+            as.BNEZ(mask, &normal);
+
+            // (Address & 0b11) == 0b11
+            // This won't be properly emulated with lr.w/sc.w
+            // We could use lr.d/sc.d, but then it wouldn't work for
+            // (Address & 0b111) == 0b111
+            // So whatever, let's handle both cases here
+            as.LHU(scratch, 0, address);
+            as.SH(src, 0, address);
+            as.MV(dst, scratch);
+            as.J(&end);
+
+            as.Bind(&normal);
             as.ANDI(address_masked, address, -4ll);
             as.SLLI(address, address, 3);
             as.LI(mask, 0xFFFF);
@@ -1975,6 +2009,9 @@ FAST_HANDLE(XCHG_lock) {
             as.SC_W(Ordering::AQRL, scratch, scratch, address_masked);
             as.BNEZ(scratch, &loop);
             as.SRLW(dst, dst, address);
+
+            as.Bind(&end);
+
             rec.popScratch();
             rec.popScratch();
             rec.popScratch();
@@ -7655,13 +7692,10 @@ FAST_HANDLE(PAUSE) {
     }
 }
 
-// This is a pseudo-instruction that we generate in our thunked guest libraries to basically
-// notify the recompiler that whatever follows here is thunked code and it should call the equivalent
-// host function.
-// After this instruction (which must be 3 bytes as it always is INVLPG[RAX], see generator.cpp) follows
-// a null terminated string with the name of the host function we want to call. We pass this name to
-// Thunks::generateTrampoline to generate us a trampoline to go boing.
-// After this INVLPG there will always be a RET, to simulate what a normal function would do
+// INVLPG is used during thunking to do various special stuff based on the operand
+// It is an instruction that no userspace program should ever use which is why it was picked
+// ----------------------------------------------------------------------------------------------------
+// <!> <!> See src/felix86/hle/guest_libs/README.md for more info on these functions <!> <!>
 FAST_HANDLE(INVLPG) {
     if (g_config.thunks_path.empty()) {
         ERROR("INVLPG while thunking path not set?");
@@ -7670,6 +7704,8 @@ FAST_HANDLE(INVLPG) {
     enum {
         INVLPG_GENERATE_TRAMPOLINE = ZYDIS_REGISTER_RAX,
         INVLPG_THUNK_CONSTRUCTOR = ZYDIS_REGISTER_RBX,
+        INVLPG_GENERATE_TRAMPOLINE_PTR = ZYDIS_REGISTER_RCX,
+        INVLPG_GUEST_CODE_FINISHED = ZYDIS_REGISTER_RDX,
     };
 
     ASSERT_MSG(instruction.length == 3, "Hit INVLPG instruction but it's not 3 bytes?");
@@ -7677,15 +7713,31 @@ FAST_HANDLE(INVLPG) {
 
     switch (operands[0].mem.base) {
     case INVLPG_GENERATE_TRAMPOLINE: {
-        const char* name = (const char*)(rip + instruction.length); // also skip a RET -> 1 byte
+        const char* name = (const char*)(rip + instruction.length);
         size_t name_size = strlen(name);
         ASSERT(name_size > 0);
         VERBOSE("Generating trampoline for %s", name);
         rec.writebackState();
-        void* trampoline = Thunks::generateTrampoline(rec, as, name);
+        void* trampoline = Thunks::generateTrampoline(rec, name);
         ASSERT_MSG(trampoline != nullptr, "Failed to install trampoline for \"%s\" (%lx)", name, (u64)name);
-        rip += name_size + 1; // also skip null byte
         rec.restoreState();
+        rip += name_size + 1; // also skip null byte
+        break;
+    }
+    case INVLPG_GENERATE_TRAMPOLINE_PTR: {
+        // Instead of generating a trampoline using a name, generate one using a ptr
+        // This is good when we want to generate a trampoline when we have a host ptr ie. from getprocaddr functions
+        // and we know its signature but we need a way to make the guest switch to host code when it tries to jump to that host ptr
+        u64* address_ptr = (u64*)(rip + instruction.length);
+        u64 address = *address_ptr;
+        const char* signature = (const char*)(rip + instruction.length + 8);
+        size_t signature_size = strlen(signature);
+        VERBOSE("Generating trampoline for %lx (%s)", address, signature);
+        rec.writebackState();
+        void* trampoline = Thunks::generateTrampoline(rec, signature, address);
+        ASSERT_MSG(trampoline != nullptr, "Failed to install trampoline for %lx", address);
+        rec.restoreState();
+        rip += 8 + signature_size + 1; // also skip null byte
         break;
     }
     case INVLPG_THUNK_CONSTRUCTOR: {
@@ -7701,6 +7753,15 @@ FAST_HANDLE(INVLPG) {
         VERBOSE("Running constructor for thunked library %s", name);
 
         Thunks::runConstructor(name, guest_pointers);
+        break;
+    }
+    case INVLPG_GUEST_CODE_FINISHED: {
+        rec.setExitReason(ExitReason::EXIT_REASON_GUEST_CODE_FINISHED);
+        rec.writebackState();
+        as.LI(t5, (u64)Emulator::ExitDispatcher);
+        as.MV(a0, sp);
+        as.JR(t5);
+        rec.stopCompiling();
         break;
     }
     default: {

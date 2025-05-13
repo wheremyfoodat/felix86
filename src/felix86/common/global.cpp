@@ -12,13 +12,11 @@
 #include "felix86/common/global.hpp"
 #include "felix86/common/info.hpp"
 #include "felix86/common/log.hpp"
-#include "felix86/common/overlay.hpp"
 #include "felix86/common/perf.hpp"
 #include "felix86/common/state.hpp"
 #include "felix86/hle/filesystem.hpp"
 #include "felix86/hle/mmap.hpp"
 
-bool g_testing = false;
 bool g_extensions_manually_specified = false;
 bool g_print_all_calls = false;
 bool g_mode32 = false;
@@ -279,53 +277,6 @@ void initialize_globals() {
     ASSERT(std::filesystem::exists(g_config.rootfs_path));
     ASSERT(std::filesystem::is_directory(g_config.rootfs_path));
     g_rootfs_fd = open(g_config.rootfs_path.c_str(), O_DIRECTORY);
-
-    if (!g_config.thunks_path.empty() && !g_testing) {
-        std::filesystem::path thunks = g_config.thunks_path;
-        ASSERT_MSG(std::filesystem::exists(thunks), "The thunks path set with FELIX86_THUNKS %s does not exist", thunks.c_str());
-        std::string srootfs = g_config.rootfs_path.string();
-
-        // TODO: should probably not be done here?
-        std::filesystem::path glx_thunk;
-        bool found_glx = false;
-
-        auto check_glx = [&](const char* path) {
-            if (!found_glx && std::filesystem::exists(thunks / path)) {
-                glx_thunk = thunks / path;
-                found_glx = true;
-            }
-        };
-
-        check_glx("libGLX.so.0");
-        check_glx("libGLX.so");
-        check_glx("libGLX-thunked.so");
-
-        if (!glx_thunk.empty()) {
-            Overlays::addOverlay("libGLX.so.0", glx_thunk);
-        } else {
-            WARN("I couldn't find libGLX-thunked.so in %s", thunks.c_str());
-        }
-
-        std::filesystem::path egl_thunk;
-        bool found_egl = false;
-
-        auto check_egl = [&](const char* path) {
-            if (!found_egl && std::filesystem::exists(thunks / path)) {
-                egl_thunk = thunks / path;
-                found_egl = true;
-            }
-        };
-
-        check_egl("libEGL.so.1");
-        check_egl("libEGL.so");
-        check_egl("libEGL-thunked.so");
-
-        if (!egl_thunk.empty()) {
-            Overlays::addOverlay("libEGL.so.1", egl_thunk);
-        } else {
-            WARN("I couldn't find libEGL-thunked.so in %s", thunks.c_str());
-        }
-    }
 
     const char* env_file = getenv("FELIX86_ENV_FILE");
     if (env_file) {

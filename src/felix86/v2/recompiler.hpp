@@ -78,6 +78,8 @@ struct Recompiler {
 
     void popScratchFPR();
 
+    void resetScratch();
+
     biscuit::GPR getTOP();
 
     void setTOP(biscuit::GPR top);
@@ -608,14 +610,10 @@ private:
 
     void emitInvalidateCallerThunk();
 
-    void emitExitDispatcherThunk();
-
     // Get the register and load the value into it if needed
     biscuit::GPR gpr(ZydisRegister reg);
 
     biscuit::Vec vec(ZydisRegister reg);
-
-    void resetScratch();
 
     void scanAhead(u64 rip);
 
@@ -687,7 +685,9 @@ private:
 
     FlagMode flag_mode = FlagMode::Default;
 
-    constexpr static std::array scratch_gprs = {x1, x6, x28, x29, x30, x31, x7};
+    constexpr static std::array scratch_gprs = {
+        x1, x6, x28, x29, x7, x30, x31,
+    };
 
     // TODO: For better or for worst (definitely for worst) we rely on the fact that we start with an even
     // register and go sequentially like this

@@ -1,28 +1,40 @@
-#include "felix86/hle/libgl_guest_ptrs.hpp"
 #include "felix86/hle/thunks.hpp"
+
+// TODO: this file is messy. Split it up to separate files per library once our thunking implementation is more concrete
 
 // Thunks need libX11
 #ifndef BUILD_THUNKING
 void Thunks::initialize() {}
 
-void* Thunks::generateTrampoline(Recompiler& rec, Assembler& as, const char* name) {
+void* Thunks::generateTrampoline(Recompiler&, const char*) {
     return nullptr;
 }
 
-void Thunks::runConstructor(const char* libname, GuestPointers* pointers) {}
+void* Thunks::generateTrampoline(Recompiler&, const char*, u64) {
+    return nullptr;
+}
+
+void Thunks::runConstructor(const char*, GuestPointers*) {}
 
 #else
 #include <cmath>
 #include <dlfcn.h>
+#include <sys/mman.h>
+#include "felix86/common/overlay.hpp"
 #include "felix86/common/state.hpp"
+#include "felix86/hle/abi.hpp"
 #include "felix86/v2/recompiler.hpp"
 
 #include <X11/Xlibint.h>
 #include <X11/Xutil.h>
+#include <vulkan/vulkan.h>
+#include <wayland-client.h>
 
 static void* libGLX = nullptr;
 static void* libX11 = nullptr;
 static void* libEGL = nullptr;
+static void* libvulkan = nullptr;
+static void* libwayland = nullptr;
 
 using XGetVisualInfoType = decltype(&XGetVisualInfo);
 using XSyncType = decltype(&XSync);
@@ -122,136 +134,24 @@ XVisualInfo* getHostVisualInfo(Display* host_display, XVisualInfo* guest) {
     }
 }
 
-biscuit::GPR gprarg(int i) {
-    switch (i) {
-    case 0:
-        return a0;
-    case 1:
-        return a1;
-    case 2:
-        return a2;
-    case 3:
-        return a3;
-    case 4:
-        return a4;
-    case 5:
-        return a5;
-    case 6:
-        return a6;
-    case 7:
-        return a7;
-    default:
-        ERROR("Invalid GPR argument index: %d", i);
-        return x0;
-    }
-}
-
-biscuit::FPR fprarg(int i) {
-    switch (i) {
-    case 0:
-        return fa0;
-    case 1:
-        return fa1;
-    case 2:
-        return fa2;
-    case 3:
-        return fa3;
-    case 4:
-        return fa4;
-    case 5:
-        return fa5;
-    case 6:
-        return fa6;
-    case 7:
-        return fa7;
-    default:
-        ERROR("Invalid FPR argument index: %d", i);
-        return fa0;
-    }
-}
-
-int x86offset(int i) {
-    switch (i) {
-    case 0:
-        return offsetof(ThreadState, gprs) + (8 * (X86_REF_RDI - X86_REF_RAX));
-    case 1:
-        return offsetof(ThreadState, gprs) + (8 * (X86_REF_RSI - X86_REF_RAX));
-    case 2:
-        return offsetof(ThreadState, gprs) + (8 * (X86_REF_RDX - X86_REF_RAX));
-    case 3:
-        return offsetof(ThreadState, gprs) + (8 * (X86_REF_RCX - X86_REF_RAX));
-    case 4:
-        return offsetof(ThreadState, gprs) + (8 * (X86_REF_R8 - X86_REF_RAX));
-    case 5:
-        return offsetof(ThreadState, gprs) + (8 * (X86_REF_R9 - X86_REF_RAX));
-    default:
-        ERROR("Invalid x86 offset index: %d", i);
-        return 0;
-    }
-}
-
-// Actual host function pointers
-// u64's as we don't really care about the type here,
-// these are just pointers for the assembler to create trampolines
-namespace thunkptr {
-#define X(libname, name, ...) u64 name = 0;
-#include "egl_thunks.inc" // <- these are loaded on Thunks::Initialize
-#include "gl_thunks.inc"  // <- these are loaded on felix86_thunk_glXGetProcAddress, as they are requested
-#include "glx_thunks.inc" // <- these are loaded on Thunks::Initialize
-#undef X
-} // namespace thunkptr
-
 struct Thunk {
     const char* lib_name;
     const char* function_name;
     const char* signature;
-    u64* host_function = 0;
+    u64 pointer = 0;
 };
 
-#define X(lib_name, function_name, signature) {lib_name, #function_name, #signature, &thunkptr::function_name},
+#define X(lib_name, function_name, signature) {lib_name, #function_name, #signature, 0},
 
 static Thunk thunk_metadata[] = {
 #include "egl_thunks.inc"
 #include "gl_thunks.inc"
 #include "glx_thunks.inc"
+#include "vulkan_thunks.inc"
+#include "wayland-client_thunks.inc"
 };
 
 #undef X
-
-constexpr unsigned long hashstr(const char* str, int h = 0) {
-    return !str[h] ? 55 : (hashstr(str, h + 1) * 33) + (unsigned char)(str[h]);
-}
-
-void* felix86_thunk_GetProcAddressCommon(void* (*getProcAddress)(const char* name), const char* name) {
-    // Get the host pointer, return a pointer from libgl_guest_ptrs.hpp for the recompiler to generate a trampoline
-    // when it is actually called.
-    switch (hashstr(name)) {
-#define X(libname, function, ...)                                                                                                                    \
-    case hashstr(#function):                                                                                                                         \
-        thunkptr::function = (u64)getProcAddress(name);                                                                                              \
-        return (void*)felix86_guest_##function;
-#include "gl_thunks.inc"
-    default: {
-        VERBOSE("felix86_thunk_GetProcAddressCommon could not find %s in thunked functions", name);
-        return nullptr;
-    }
-    }
-#undef X
-}
-
-void* felix86_thunk_glXGetProcAddress(const char* name) {
-    PLAIN("glXGetProcAddress: %s", name);
-    static auto actual = (void* (*)(const char*))dlsym(libGLX, "glXGetProcAddress");
-    ASSERT_MSG(actual, "Couldn't find glXGetProcAddress?");
-    return felix86_thunk_GetProcAddressCommon(actual, name);
-}
-
-void* felix86_thunk_eglGetProcAddress(const char* name) {
-    PLAIN("eglGetProcAddress: %s", name);
-    static auto actual = (void* (*)(const char*))dlsym(libEGL, "eglGetProcAddress");
-    ASSERT_MSG(actual, "Couldn't find eglGetProcAddress?");
-    return felix86_thunk_GetProcAddressCommon(actual, name);
-}
 
 // We don't care about the internals
 using GLXContext = void*;
@@ -260,6 +160,193 @@ using GLXPixmap = void*;
 using GLXFBConfig = void*;
 using GLXWindow = void*;
 using GLXPbuffer = void*;
+
+void* generate_guest_pointer(const char* name, u64 host_ptr) {
+    const Thunk* thunk = nullptr;
+    std::string sname = name;
+    for (auto& meta : thunk_metadata) { // TODO: speed it up? only search specific lib
+        if (meta.function_name == sname) {
+            thunk = &meta;
+            break;
+        }
+    }
+
+    if (!thunk) {
+        WARN("Couldn't find signature for %s", name);
+        return nullptr;
+    }
+
+    const char* signature = thunk->signature;
+    size_t sigsize = strlen(signature);
+    ThreadState* state = ThreadState::Get();
+    state->signals_disabled = true;
+    // We can't put this code in code cache, because it needs to outlive potential code cache clears
+    u8* memory = state->x86_trampoline_storage;
+    // Our recompiler marks guest code as PROT_READ, we need to undo this as it may have marked previous trampolines
+    mprotect((u8*)((u64)memory & ~0xFFFull), 4096, PROT_READ | PROT_WRITE);
+
+    // 0f 01 39 ; invlpg [rcx] ; see handlers.cpp -- invlpg (magic instruction that generates jump to host code)
+    // 00 00 00 00 00 00 00 00 ; pointer we jump to
+    // ... 00 ; signature const char*
+    // c3 ; ret
+    memory[0] = 0x0f;
+    memory[1] = 0x01;
+    memory[2] = 0x39;
+    memcpy(&memory[3], &host_ptr, sizeof(u64));
+    memcpy(&memory[3 + 8], signature, sigsize);
+    memory[3 + 8 + sigsize + 1] = 0xc3;
+    state->x86_trampoline_storage += 3 + 8 + sigsize + 2;
+    state->signals_disabled = false;
+    VERBOSE("Created guest-callable host pointer for %s: %p", name, host_ptr);
+    return memory;
+}
+
+VkResult felix86_thunk_vkCreateInstance(const VkInstanceCreateInfo* pCreateInfo, const VkAllocationCallbacks*, VkInstance* pInstance) {
+    // Remove debug callbacks from VkInstanceCreateInfo
+    VkBaseInStructure* base = (VkBaseInStructure*)pCreateInfo;
+    while (base->pNext) {
+        VkBaseInStructure* next = (VkBaseInStructure*)base->pNext;
+        if (next->sType == VK_STRUCTURE_TYPE_DEBUG_REPORT_CREATE_INFO_EXT) {
+            base->pNext = next->pNext;
+
+            if (!base->pNext) {
+                break;
+            }
+        }
+
+        base = (VkBaseInStructure*)base->pNext;
+    }
+
+    static auto actual = (VkResult(*)(const VkInstanceCreateInfo*, const VkAllocationCallbacks*, VkInstance*))dlsym(libvulkan, "vkCreateInstance");
+    return actual(pCreateInfo, nullptr, pInstance);
+}
+
+void* host_vkGetInstanceProcAddr(VkInstance instance, const char* name);
+void* host_vkGetDeviceProcAddr(VkDevice device, const char* name);
+void* host_eglGetProcAddress(const char* name);
+void* get_custom_vk_thunk(const std::string& name);
+void* get_custom_egl_thunk(const std::string& name);
+
+void* felix86_thunk_glXGetProcAddress(const char* name) {
+    UNIMPLEMENTED();
+    return nullptr;
+}
+
+// TODO: Kinda wasteful to code cache if this gets called more than once per name
+void* felix86_thunk_vkGetInstanceProcAddr(VkInstance instance, const char* name) {
+    VERBOSE("vkGetInstanceProcAddr: %s", name);
+    void* ptr = get_custom_vk_thunk(name);
+    if (ptr == nullptr) {
+        ptr = host_vkGetInstanceProcAddr(instance, name);
+    }
+
+    if (ptr) {
+        // We can't return `ptr` here because it's a host pointer
+        // But we also can't return our own thunked pointers, we need to return the one
+        // getprocaddr returned. So we generate an invlpg [rcx] to create a proper guest pointer that will jump to our pointer
+        return generate_guest_pointer(name, (u64)ptr);
+    } else {
+        return nullptr;
+    }
+}
+
+void* felix86_thunk_vkGetDeviceProcAddr(VkDevice device, const char* name) {
+    VERBOSE("vkGetDeviceProcAddr: %s", name);
+    void* ptr = get_custom_vk_thunk(name);
+    if (ptr == nullptr) {
+        ptr = host_vkGetDeviceProcAddr(device, name);
+    }
+
+    if (ptr) {
+        return generate_guest_pointer(name, (u64)ptr);
+    } else {
+        return nullptr;
+    }
+}
+
+void* felix86_thunk_eglGetProcAddress(const char* name) {
+    VERBOSE("eglGetProcAddress: %s", name);
+    void* ptr = get_custom_egl_thunk(name);
+    if (ptr == nullptr) {
+        ptr = host_eglGetProcAddress(name);
+    }
+
+    if (ptr) {
+        return generate_guest_pointer(name, (u64)ptr);
+    } else {
+        return nullptr;
+    }
+}
+
+VkResult felix86_thunk_vkCreateDebugReportCallbackEXT(VkInstance instance, const VkDebugReportCallbackCreateInfoEXT* pCreateInfo,
+                                                      const VkAllocationCallbacks* pAllocator, VkDebugReportCallbackEXT* pCallback) {
+    // TODO: implement one day, needs callback support
+    return VK_SUCCESS;
+}
+
+void felix86_thunk_vkDestroyDebugReportCallbackEXT(VkInstance instance, VkDebugReportCallbackEXT callback, const VkAllocationCallbacks* pAllocator) {
+    // See vkCreateDebugReportCallbackEXT above
+}
+
+#define WL_CLOSURE_MAX_ARGS 20
+
+// Convert the wayland callback signature to a felix86 thunk signature to generate a host->guest trampoline
+std::string wl_to_felix86_signature(const std::string& wayland_signature) {
+    std::string ret = "v_qq"; // wayland callbacks return void and take void*, wl_proxy* as the first two args
+    for (auto c : wayland_signature) {
+        switch (c) {
+        case 's': // const char*
+        case 'o': // wl_proxy*
+        case 'n': // wl_proxy*
+        case 'a': // wl_array*
+        {
+            ret += 'q';
+            break;
+        }
+        case 'u': // u32
+        case 'i': // i32
+        case 'f': // wl_fixed_t ie. i32
+        case 'h': {
+            ret += 'd';
+            break;
+        }
+        case '?': {
+            continue;
+        }
+        case '0' ... '9': {
+            continue;
+        }
+        default: {
+            ERROR("Unknown wayland signature character: %c", c);
+            break;
+        }
+        }
+    }
+    return ret;
+}
+
+void* host_wl_proxy_get_listener(struct wl_proxy* proxy) {
+    static auto host_wl_proxy_get_listener = (void* (*)(struct wl_proxy*))dlsym(libwayland, "wl_proxy_get_listener");
+    return host_wl_proxy_get_listener(proxy);
+}
+
+int felix86_thunk_wl_proxy_add_listener(struct wl_proxy* proxy, void** callbacks, void* data) {
+    void* old_listener = host_wl_proxy_get_listener(proxy);
+    delete[] (u64*)old_listener;
+
+    struct wl_interface* interface = *(struct wl_interface**)proxy;
+    u64* host_callable = new u64[WL_CLOSURE_MAX_ARGS];
+    for (u32 i = 0; i < interface->event_count; i++) {
+        const char* signature = interface->events[i].signature;
+        std::string f86_signature = wl_to_felix86_signature(signature);
+        void* callback = callbacks[i];
+        void* host_callback = ABIMadness::hostToGuestTrampoline(f86_signature.c_str(), callback);
+        host_callable[i] = (u64)host_callback;
+    }
+
+    static auto host_wl_proxy_add_listener = (int (*)(struct wl_proxy*, void*, void*))dlsym(libwayland, "wl_proxy_add_listener");
+    return host_wl_proxy_add_listener(proxy, host_callable, data);
+}
 
 #define PRINTME PLAIN("Calling thunked %s", __PRETTY_FUNCTION__)
 
@@ -452,117 +539,295 @@ void felix86_thunk_glXGetSelectedEvent(Display* dpy, GLXDrawable drawable, unsig
     return host_glXGetSelectedEvent(guestToHostDisplay(dpy), drawable, mask);
 }
 
+void* get_custom_vk_thunk(const std::string& name) {
+    if (name == "vkGetInstanceProcAddr") {
+        return (void*)felix86_thunk_vkGetInstanceProcAddr;
+    } else if (name == "vkGetDeviceProcAddr") {
+        return (void*)felix86_thunk_vkGetDeviceProcAddr;
+    } else if (name == "vkCreateInstance") {
+        return (void*)felix86_thunk_vkCreateInstance;
+    } else if (name == "vkCreateDebugReportCallbackEXT") {
+        return (void*)felix86_thunk_vkCreateDebugReportCallbackEXT;
+    } else if (name == "vkDestroyDebugReportCallbackEXT") {
+        return (void*)felix86_thunk_vkDestroyDebugReportCallbackEXT;
+    } else {
+        return nullptr;
+    }
+}
+
+void* get_custom_egl_thunk(const std::string& name) {
+    if (name == "eglGetProcAddress") {
+        return (void*)felix86_thunk_eglGetProcAddress;
+    } else {
+        return nullptr;
+    }
+}
+
+void* get_custom_wl_thunk(const std::string& name) {
+    if (name == "wl_proxy_add_listener") {
+        return (void*)felix86_thunk_wl_proxy_add_listener;
+    } else {
+        return nullptr;
+    }
+}
+
+void* get_custom_glx_thunk(const std::string& name) {
+    if (name == "glXGetProcAddress") {
+        return (void*)felix86_thunk_glXGetProcAddress;
+    } else if (name == "glXGetProcAddressARB") {
+        return (void*)felix86_thunk_glXGetProcAddress;
+    } else if (name == "glXChooseVisual") {
+        return (void*)felix86_thunk_glXChooseVisual;
+    } else if (name == "glXCreateContext") {
+        return (void*)felix86_thunk_glXCreateContext;
+    } else if (name == "glXDestroyContext") {
+        return (void*)felix86_thunk_glXDestroyContext;
+    } else if (name == "glXMakeCurrent") {
+        return (void*)felix86_thunk_glXMakeCurrent;
+    } else if (name == "glXCopyContext") {
+        return (void*)felix86_thunk_glXCopyContext;
+    } else if (name == "glXSwapBuffers") {
+        return (void*)felix86_thunk_glXSwapBuffers;
+    } else if (name == "glXCreateGLXPixmap") {
+        return (void*)felix86_thunk_glXCreateGLXPixmap;
+    } else if (name == "glXDestroyGLXPixmap") {
+        return (void*)felix86_thunk_glXDestroyGLXPixmap;
+    } else if (name == "glXQueryExtension") {
+        return (void*)felix86_thunk_glXQueryExtension;
+    } else if (name == "glXQueryVersion") {
+        return (void*)felix86_thunk_glXQueryVersion;
+    } else if (name == "glXIsDirect") {
+        return (void*)felix86_thunk_glXIsDirect;
+    } else if (name == "glXGetConfig") {
+        return (void*)felix86_thunk_glXGetConfig;
+    } else if (name == "glXQueryExtensionsString") {
+        return (void*)felix86_thunk_glXQueryExtensionsString;
+    } else if (name == "glXQueryServerString") {
+        return (void*)felix86_thunk_glXQueryServerString;
+    } else if (name == "glXGetClientString") {
+        return (void*)felix86_thunk_glXGetClientString;
+    } else if (name == "glXChooseFBConfig") {
+        return (void*)felix86_thunk_glXChooseFBConfig;
+    } else if (name == "glXGetFBConfigAttrib") {
+        return (void*)felix86_thunk_glXGetFBConfigAttrib;
+    } else if (name == "glXGetFBConfigs") {
+        return (void*)felix86_thunk_glXGetFBConfigs;
+    } else if (name == "glXGetVisualFromFBConfig") {
+        return (void*)felix86_thunk_glXGetVisualFromFBConfig;
+    } else if (name == "glXCreateWindow") {
+        return (void*)felix86_thunk_glXCreateWindow;
+    } else if (name == "glXDestroyWindow") {
+        return (void*)felix86_thunk_glXDestroyWindow;
+    } else if (name == "glXCreatePixmap") {
+        return (void*)felix86_thunk_glXCreatePixmap;
+    } else if (name == "glXDestroyPixmap") {
+        return (void*)felix86_thunk_glXDestroyPixmap;
+    } else if (name == "glXCreatePbuffer") {
+        return (void*)felix86_thunk_glXCreatePbuffer;
+    } else if (name == "glXDestroyPbuffer") {
+        return (void*)felix86_thunk_glXDestroyPbuffer;
+    } else if (name == "glXQueryDrawable") {
+        return (void*)felix86_thunk_glXQueryDrawable;
+    } else if (name == "glXCreateNewContext") {
+        return (void*)felix86_thunk_glXCreateNewContext;
+    } else if (name == "glXMakeContextCurrent") {
+        return (void*)felix86_thunk_glXMakeContextCurrent;
+    } else if (name == "glXQueryContext") {
+        return (void*)felix86_thunk_glXQueryContext;
+    } else if (name == "glXSelectEvent") {
+        return (void*)felix86_thunk_glXSelectEvent;
+    } else if (name == "glXGetSelectedEvent") {
+        return (void*)felix86_thunk_glXGetSelectedEvent;
+    } else {
+        return nullptr;
+    }
+}
+
+void* host_vkGetInstanceProcAddr(VkInstance instance, const char* name) {
+    static auto vkGetInstanceProcAddr = (void* (*)(VkInstance, const char*))dlsym(libvulkan, "vkGetInstanceProcAddr");
+    return vkGetInstanceProcAddr(instance, name);
+}
+
+void* host_vkGetDeviceProcAddr(VkDevice device, const char* name) {
+    static auto vkGetDeviceProcAddr = (void* (*)(VkDevice, const char*))dlsym(libvulkan, "vkGetDeviceProcAddr");
+    return vkGetDeviceProcAddr(device, name);
+}
+
+void* host_eglGetProcAddress(const char* name) {
+    static auto eglGetProcAddress = (void* (*)(const char*))dlsym(libEGL, "eglGetProcAddress");
+    return eglGetProcAddress(name);
+}
+
 // Load the host function pointers in the thunkptr namespace with pointers using dlopen + dlsym
 void Thunks::initialize() {
-    thunkptr::glXGetProcAddress = (u64)felix86_thunk_glXGetProcAddress;
-    thunkptr::glXGetProcAddressARB = (u64)felix86_thunk_glXGetProcAddress;
-    thunkptr::eglGetProcAddress = (u64)felix86_thunk_eglGetProcAddress;
-
-    // These need to be handled specially to map Display* and a couple other things
-    // For these we don't dlsym
-    thunkptr::glXChooseVisual = (u64)felix86_thunk_glXChooseVisual;
-    thunkptr::glXCreateContext = (u64)felix86_thunk_glXCreateContext;
-    thunkptr::glXDestroyContext = (u64)felix86_thunk_glXDestroyContext;
-    thunkptr::glXMakeCurrent = (u64)felix86_thunk_glXMakeCurrent;
-    thunkptr::glXCopyContext = (u64)felix86_thunk_glXCopyContext;
-    thunkptr::glXSwapBuffers = (u64)felix86_thunk_glXSwapBuffers;
-    thunkptr::glXCreateGLXPixmap = (u64)felix86_thunk_glXCreateGLXPixmap;
-    thunkptr::glXDestroyGLXPixmap = (u64)felix86_thunk_glXDestroyGLXPixmap;
-    thunkptr::glXQueryExtension = (u64)felix86_thunk_glXQueryExtension;
-    thunkptr::glXQueryVersion = (u64)felix86_thunk_glXQueryVersion;
-    thunkptr::glXIsDirect = (u64)felix86_thunk_glXIsDirect;
-    thunkptr::glXGetConfig = (u64)felix86_thunk_glXGetConfig;
-    thunkptr::glXQueryExtensionsString = (u64)felix86_thunk_glXQueryExtensionsString;
-    thunkptr::glXQueryServerString = (u64)felix86_thunk_glXQueryServerString;
-    thunkptr::glXGetClientString = (u64)felix86_thunk_glXGetClientString;
-    thunkptr::glXChooseFBConfig = (u64)felix86_thunk_glXChooseFBConfig;
-    thunkptr::glXGetFBConfigAttrib = (u64)felix86_thunk_glXGetFBConfigAttrib;
-    thunkptr::glXGetFBConfigs = (u64)felix86_thunk_glXGetFBConfigs;
-    thunkptr::glXGetVisualFromFBConfig = (u64)felix86_thunk_glXGetVisualFromFBConfig;
-    thunkptr::glXCreateWindow = (u64)felix86_thunk_glXCreateWindow;
-    thunkptr::glXDestroyWindow = (u64)felix86_thunk_glXDestroyWindow;
-    thunkptr::glXCreatePixmap = (u64)felix86_thunk_glXCreatePixmap;
-    thunkptr::glXDestroyPixmap = (u64)felix86_thunk_glXDestroyPixmap;
-    thunkptr::glXCreatePbuffer = (u64)felix86_thunk_glXCreatePbuffer;
-    thunkptr::glXDestroyPbuffer = (u64)felix86_thunk_glXDestroyPbuffer;
-    thunkptr::glXQueryDrawable = (u64)felix86_thunk_glXQueryDrawable;
-    thunkptr::glXCreateNewContext = (u64)felix86_thunk_glXCreateNewContext;
-    thunkptr::glXMakeContextCurrent = (u64)felix86_thunk_glXMakeContextCurrent;
-    thunkptr::glXQueryContext = (u64)felix86_thunk_glXQueryContext;
-    thunkptr::glXSelectEvent = (u64)felix86_thunk_glXSelectEvent;
-    thunkptr::glXGetSelectedEvent = (u64)felix86_thunk_glXGetSelectedEvent;
-
 #if 0
     constexpr const char* glx_name = "libGLX.so";
-    libGLX = dlopen(glx_name, RTLD_LAZY);
+    libGLX = dlopen(glx_name, RTLD_NOW | RTLD_LOCAL);
     if (!libGLX) {
         ERROR("I couldn't open libGLX.so, error: %s", dlerror());
     }
 
     constexpr const char* x11_name = "libX11.so";
-    libX11 = dlopen(x11_name, RTLD_LAZY);
+    libX11 = dlopen(x11_name, RTLD_NOW | RTLD_LOCAL);
     if (!libX11) {
         ERROR("I couldn't open libX11.so, error: %s", dlerror());
     }
 #endif
+    std::filesystem::path thunks = g_config.thunks_path;
+    ASSERT_MSG(std::filesystem::exists(thunks), "The thunks path set with FELIX86_THUNKS %s does not exist", thunks.c_str());
+    std::string srootfs = g_config.rootfs_path.string();
+
+#ifndef BUILD_THUNKING
+    ERROR("FELIX86_THUNKS is set, but this build of felix86 was not built with thunking support, enable BUILD_THUNKING in cmake configuration");
+    return;
+#endif
+
+    bool thunk_vk = false;
+    bool thunk_egl = false;
+    bool thunk_wayland = false;
+    std::string enabled_thunks = g_config.enabled_thunks;
+    if (enabled_thunks == "all") {
+        thunk_vk = true;
+        thunk_egl = true;
+        thunk_wayland = true;
+    } else if (!enabled_thunks.empty()) {
+        std::vector<std::string> list = split_string(enabled_thunks, ',');
+        for (const auto& t : list) {
+            std::string n = t;
+            for (auto& c : n) {
+                c = tolower(c);
+            }
+
+            if (n == "libvulkan" || n == "vulkan" || n == "vk") {
+                thunk_vk = true;
+            } else if (n == "libegl" || n == "egl") {
+                thunk_egl = true;
+            } else if (n == "libwayland-client" || n == "libwayland" || n == "wayland-client" || n == "wayland" || n == "wl") {
+                thunk_wayland = true;
+            } else {
+                ERROR("Unknown option: %s in FELIX86_ENABLED_THUNKS", t.c_str());
+            }
+        }
+    }
+
+    if (thunk_egl) {
+        std::filesystem::path egl_thunk;
+        bool found_egl = false;
+
+        auto check_egl = [&](const char* path) {
+            if (!found_egl && std::filesystem::exists(thunks / path)) {
+                egl_thunk = thunks / path;
+                found_egl = true;
+            }
+        };
+
+        check_egl("libEGL.so.1");
+        check_egl("libEGL.so");
+        check_egl("libEGL-thunked.so");
+
+        if (!egl_thunk.empty()) {
+            Overlays::addOverlay("libEGL.so.1", egl_thunk);
+            Overlays::addOverlay("libEGL.so", egl_thunk);
+        } else {
+            WARN("I couldn't find libEGL-thunked.so in %s", thunks.c_str());
+        }
+    }
+
+    if (thunk_vk) {
+        std::filesystem::path vulkan_thunk;
+        bool found_vulkan = false;
+
+        auto check_vulkan = [&](const char* path) {
+            if (!found_vulkan && std::filesystem::exists(thunks / path)) {
+                vulkan_thunk = thunks / path;
+                found_vulkan = true;
+            }
+        };
+
+        check_vulkan("libvulkan.so.1");
+        check_vulkan("libvulkan.so");
+        check_vulkan("libvulkan-thunked.so");
+
+        if (!vulkan_thunk.empty()) {
+            Overlays::addOverlay("libvulkan.so.1", vulkan_thunk);
+            Overlays::addOverlay("libvulkan.so", vulkan_thunk);
+        } else {
+            WARN("I couldn't find libvulkan.so in %s", thunks.c_str());
+        }
+    }
+
+    if (thunk_wayland) {
+        std::filesystem::path wayland_thunk;
+        bool found_wayland = false;
+
+        auto check_wayland = [&](const char* path) {
+            if (!found_wayland && std::filesystem::exists(thunks / path)) {
+                wayland_thunk = thunks / path;
+                found_wayland = true;
+            }
+        };
+
+        check_wayland("libwayland-client.so.0");
+        check_wayland("libwayland-client.so");
+        check_wayland("libwayland-client-thunked.so");
+
+        if (!wayland_thunk.empty()) {
+            Overlays::addOverlay("libwayland-client.so.0", wayland_thunk);
+            Overlays::addOverlay("libwayland-client.so", wayland_thunk);
+        } else {
+            WARN("I couldn't find libwayland-client.so in %s", thunks.c_str());
+        }
+    }
 
     constexpr const char* egl_name = "libEGL.so.1";
-    libEGL = dlopen(egl_name, RTLD_LAZY);
+    libEGL = dlopen(egl_name, RTLD_NOW | RTLD_LOCAL);
     if (!libEGL) {
         ERROR("I couldn't open libEGL.so, error: %s", dlerror());
     }
 
-#if 0
-#define X(libname, name, ...)                                                                                                                        \
-    if (thunkptr::name == 0) {                                                                                                                       \
-        thunkptr::name = (u64)dlsym(libGLX, #name);                                                                                                  \
-        if (thunkptr::name == 0) {                                                                                                                   \
-            ERROR("Failed to find symbol %s in %s, error: %s", #name, "libGLX.so", dlerror());                                                       \
-        }                                                                                                                                            \
+    constexpr const char* vulkan_name = "libvulkan.so.1";
+    libvulkan = dlopen(vulkan_name, RTLD_NOW | RTLD_LOCAL);
+    if (!libvulkan) {
+        ERROR("I couldn't open libvulkan.so, error: %s", dlerror());
     }
-#include "glx_thunks.inc"
-#undef X
-#endif
-#define X(libname, name, ...)                                                                                                                        \
-    if (thunkptr::name == 0) {                                                                                                                       \
-        thunkptr::name = (u64)dlsym(libEGL, #name);                                                                                                  \
-        if (thunkptr::name == 0) {                                                                                                                   \
-            ERROR("Failed to find symbol %s in %s, error: %s", #name, "libEGL.so", dlerror());                                                       \
-        }                                                                                                                                            \
+
+    constexpr const char* wayland_name = "libwayland-client.so.0";
+    libwayland = dlopen(wayland_name, RTLD_NOW | RTLD_LOCAL);
+    if (!libwayland) {
+        ERROR("I couldn't open libwayland-client.so, error: %s", dlerror());
     }
-#include "egl_thunks.inc"
-#undef X
-    // gl_thunks are loaded from the getprocaddress functions
+
+    for (int i = 0; i < sizeof(thunk_metadata) / sizeof(Thunk); i++) {
+        Thunk& metadata = thunk_metadata[i];
+        void* ptr = nullptr;
+        std::string lib_name = metadata.lib_name;
+        if (lib_name == "libEGL.so") {
+            ptr = get_custom_egl_thunk(metadata.function_name);
+            if (!ptr) {
+                ptr = dlsym(libEGL, metadata.function_name);
+            }
+        } else if (lib_name == "libvulkan.so") {
+            ptr = get_custom_vk_thunk(metadata.function_name);
+            if (!ptr) {
+                ptr = dlsym(libvulkan, metadata.function_name);
+            }
+        } else if (lib_name == "libwayland-client.so") {
+            ptr = get_custom_wl_thunk(metadata.function_name);
+            if (!ptr) {
+                ptr = dlsym(libwayland, metadata.function_name);
+            }
+        } else {
+            continue;
+        }
+
+        if (ptr == nullptr) {
+            VERBOSE("Failed to find %s in thunked library %s", metadata.function_name, metadata.lib_name);
+        }
+        metadata.pointer = (u64)ptr;
+    }
 }
 
-/*
-    We use a custom signature format to describe the function.
-    return type, _, arguments.
-
-    void -> v
-    integer -> q, d, w, b with x86 naming convention (qword, dword, word, byte)
-    float, double -> F, D
-    add others here when we need them (will we?)
-
-    example:
-    v_iif -> void my_func(int a, short b, float c)
-
-    We only thunk simple functions so this should be fine.
-
-    x86-64 ABI:
-    If the class is INTEGER, the next available register of the sequence %rdi, %rsi, %rdx,
-    %rcx, %r8 and %r9 is used. Return value goes in %rax.
-
-    If the class is SSE, the next available vector register is used, the registers are taken
-    in the order from %xmm0 to %xmm7. Return value goes in %xmm0.
-
-    Note: When x86-64 functions return they zero the upper 96 or 64 bits of xmm0.
-
-    RISC-V ABI:
-    Uses a0-a7, fa0-fa7. This is enough for our purposes.
-    Return value goes in a0 or fa0.
-*/
-void* Thunks::generateTrampoline(Recompiler& rec, Assembler& as, const char* name) {
+void* Thunks::generateTrampoline(Recompiler& rec, const char* name) {
     if (!name) {
         return nullptr;
     }
@@ -580,101 +845,33 @@ void* Thunks::generateTrampoline(Recompiler& rec, Assembler& as, const char* nam
         return nullptr;
     }
 
+    Assembler& as = rec.getAssembler();
     const std::string& signature = thunk->signature;
-    const u64 target = *thunk->host_function;
+    const u64 target = thunk->pointer;
 
     ASSERT(signature.size() > 0);
     ASSERT_MSG(target != 0, "Symbol has nullptr address: %s", name);
 
     void* trampoline = as.GetCursorPointer();
-    char return_type = signature[0];
 
-    ASSERT(signature[1] == '_'); // maybe in the future separating arguments and return type will be useful (it won't)
-
-    // Check if we have arguments
-    std::vector<char> arguments;
-    if (signature.size() > 1) {
-        arguments = std::vector<char>(signature.begin() + 2, signature.end());
-    }
-
-    int current_int_arg = 0;
-    int current_float_arg = 0;
-    for (size_t i = 0; i < arguments.size(); i++) {
-        switch (arguments[i]) {
-        case 'q':
-            as.LD(gprarg(current_int_arg), x86offset(current_int_arg), Recompiler::threadStatePointer());
-            current_int_arg++;
-            ASSERT(current_int_arg <= 6);
-            break;
-        case 'd':
-            as.LWU(gprarg(current_int_arg), x86offset(current_int_arg), Recompiler::threadStatePointer());
-            current_int_arg++;
-            ASSERT(current_int_arg <= 6);
-            break;
-        case 'w':
-            as.LHU(gprarg(current_int_arg), x86offset(current_int_arg), Recompiler::threadStatePointer());
-            current_int_arg++;
-            ASSERT(current_int_arg <= 6);
-            break;
-        case 'b':
-            as.LBU(gprarg(current_int_arg), x86offset(current_int_arg), Recompiler::threadStatePointer());
-            current_int_arg++;
-            ASSERT(current_int_arg <= 6);
-            break;
-        case 'F':
-            as.FLW(fprarg(current_float_arg), offsetof(ThreadState, xmm) + (sizeof(XmmReg) * current_float_arg), Recompiler::threadStatePointer());
-            current_float_arg++;
-            ASSERT(current_float_arg <= 8);
-            break;
-        case 'D':
-            as.FLD(fprarg(current_float_arg), offsetof(ThreadState, xmm) + (sizeof(XmmReg) * current_float_arg), Recompiler::threadStatePointer());
-            current_float_arg++;
-            ASSERT(current_float_arg <= 8);
-            break;
-        default:
-            ERROR("Unknown argument type: %c", arguments[i]);
-            break;
-        }
-    }
-
+    GuestToHostMarshaller marshaller(name, signature);
+    marshaller.emitPrologue(as);
     Recompiler::call(as, target);
+    marshaller.emitEpilogue(as);
 
-    // Save return value to the correct x86-64 register
-    switch (return_type) {
-    case 'b':
-        // Preserves top bits in x86-64
-        as.SB(a0, offsetof(ThreadState, gprs) + 0, Recompiler::threadStatePointer());
-        break;
-    case 'w':
-        // Preserves top bits in x86-64
-        as.SH(a0, offsetof(ThreadState, gprs) + 0, Recompiler::threadStatePointer());
-        break;
-    case 'd':
-        as.SW(a0, offsetof(ThreadState, gprs) + 0, Recompiler::threadStatePointer());
-        as.SW(x0, offsetof(ThreadState, gprs) + 4, Recompiler::threadStatePointer()); // store 0 into bits 32-63
-        break;
-    case 'q':
-        as.SD(a0, offsetof(ThreadState, gprs) + 0, Recompiler::threadStatePointer());
-        break;
-    case 'F':
-        as.FSW(fa0, offsetof(ThreadState, xmm) + 0, Recompiler::threadStatePointer());
-        as.SW(x0, offsetof(ThreadState, xmm) + 4, Recompiler::threadStatePointer()); // store 0 into bits 32-63
-        for (int i = 1; i < Recompiler::maxVlen() / 64; i++) {
-            as.SD(x0, offsetof(ThreadState, xmm) + (i * 8), Recompiler::threadStatePointer());
-        }
-        break;
-    case 'D':
-        as.FSD(fa0, offsetof(ThreadState, xmm) + 0, Recompiler::threadStatePointer());
-        for (int i = 1; i < Recompiler::maxVlen() / 64; i++) {
-            as.SD(x0, offsetof(ThreadState, xmm) + (i * 8), Recompiler::threadStatePointer());
-        }
-        break;
-    case 'v':
-        // No return value
-        break;
-    default:
-        ERROR("Unknown return type: %c", return_type);
-    }
+    return trampoline;
+}
+
+void* Thunks::generateTrampoline(Recompiler& rec, const char* signature, u64 host_ptr) {
+    ASSERT(signature);
+    ASSERT(host_ptr);
+    Assembler& as = rec.getAssembler();
+    void* trampoline = as.GetCursorPointer();
+
+    GuestToHostMarshaller marshaller(std::string("ptr_") + signature, signature);
+    marshaller.emitPrologue(as);
+    Recompiler::call(as, host_ptr);
+    marshaller.emitEpilogue(as);
 
     return trampoline;
 }
@@ -705,6 +902,27 @@ void Thunks::runConstructor(const char* lib, GuestPointers* pointers) {
 
         ASSERT_MSG(felix86__x86_64__XGetVisualInfo, "Failed to find XGetVisualInfo in thunked libGLX");
         ASSERT_MSG(felix86__x86_64__XSync, "Failed to find XSync in thunked libGLX");
+        VERBOSE("Constructor for %s finished!", lib);
+        return; // everything ok!
+    } else if (libname == "libwayland-client.so") {
+        // The job of this constructor is to copy the host pointers to the interface objects like wl_keyboard_interface
+        while (pointers) {
+            u64* ptr = pointers->func;
+            if (!ptr) {
+                break;
+            }
+
+            const char* name = pointers->name;
+            u64 host_ptr = (u64)dlsym(libwayland, name);
+            ASSERT_MSG(host_ptr != 0, "Could not find host libwayland-client pointer for %s", host_ptr);
+            // Interfaces are placed in RO memory but we need to change their values to match our host library
+            // So hack away the protection
+            mprotect((void*)((u64)ptr & ~0xFFFull), 4096, PROT_READ | PROT_WRITE);
+            memcpy((void*)ptr, (void*)host_ptr, sizeof(wl_interface));
+            VERBOSE("libwayland-client thunk: %s set to %p (guest ptr: %p)", name, host_ptr, ptr);
+
+            pointers++;
+        }
         VERBOSE("Constructor for %s finished!", lib);
         return; // everything ok!
     }

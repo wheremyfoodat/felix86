@@ -393,7 +393,6 @@ void dump_states() {
     int i = 0;
     for (auto& state : states) {
         dprintf(g_output_fd, ANSI_COLOR_RED "State %d (%ld):" ANSI_COLOR_RESET "\n", i, state->tid);
-        print_address(state->rip);
 
         if (g_config.calltrace) {
             auto it = state->recompiler->getCalltrace().rbegin();
@@ -633,7 +632,7 @@ void print_address(u64 address) {
 void push_calltrace(ThreadState* state, u64 address) {
     state->recompiler->getCalltrace().push_back(address);
 
-    if (state->recompiler->getCalltrace().size() > 20) {
+    if (state->recompiler->getCalltrace().size() > 30) {
         state->recompiler->getCalltrace().pop_front();
     }
 

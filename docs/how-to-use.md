@@ -1,8 +1,9 @@
 # How to use
 
-:warning: felix86 is early in development. It can run some simple games. :warning:
-
-:warning: Currently the emulator is only tested on boards with **VLEN=256** :warning:
+> [!IMPORTANT]
+> felix86 is early in development. It can run some games, see https://felix86.com/compat/.
+>
+> Currently the emulator is only tested on boards with **VLEN=256**
 
 ## Required architecture
 You need a RISC-V board with `rv64gv` extensions.
@@ -37,6 +38,22 @@ cmake --build build -j$(nproc)
 ```
 
 Make sure to [grab a RootFS](#rootfs), set the `FELIX86_ROOTFS` environment variable, and then felix86 is ready to run!
+
+## Thunking
+
+> [!WARNING]
+> Thunking support is not great yet. Some games may not work with thunking enabled.
+
+On systems with a GPU that has no x86-64 drivers (for example any board with a PowerVR iGPU) you may be unable to use your GPU without thunking. Thunking enables using some RISC-V libraries instead of x86-64 libraries.
+
+To enable thunking, set the environment variable `FELIX86_THUNKS=/path/to/felix86/src/felix86/hle/guest_libs`
+
+Or the respective variable in `$HOME/.config/felix86/config.toml`
+
+Want to disable thunking? `export FELIX86_ENABLED_THUNKS=` will do the trick -- or you can unset the `FELIX86_THUNKS` path.
+
+Want to thunk Vulkan but not EGL? You can do so with `FELIX86_ENABLED_THUNKS=vulkan,wayland`
+
 
 ## QEMU
 
