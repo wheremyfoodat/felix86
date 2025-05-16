@@ -222,6 +222,15 @@ Result felix86_syscall_common(felix86_frame* frame, int rv_syscall, u64 arg1, u6
     }
     case felix86_riscv64_mprotect: {
         result = SYSCALL(mprotect, arg1, arg2, arg3, arg4, arg5, arg6);
+        u64 start = arg1;
+        u64 size = arg2;
+        int prot = arg3;
+        if ((prot & PROT_WRITE) && result == 0) {
+            // We mark pages as read-only when we recompile their code. But if the guest program
+            // decides to override that by marking them as PROT_WRITE then we can no longer keep track
+            // of them. So in that case, we will invalidate everything in that region to be safe.
+            Recompiler::invalidateRangeGlobal(start, start + size);
+        }
         break;
     }
     case felix86_riscv64_close: {
@@ -256,6 +265,10 @@ Result felix86_syscall_common(felix86_frame* frame, int rv_syscall, u64 arg1, u6
             WARN("shmdt in 32-bit address space, this could cause problems with MAP_32BIT");
         }
         result = SYSCALL(shmdt, arg1);
+        break;
+    }
+    case felix86_riscv64_getsid: {
+        result = SYSCALL(getsid, arg1);
         break;
     }
     case felix86_riscv64_bind: {
@@ -931,7 +944,7 @@ Result felix86_syscall_common(felix86_frame* frame, int rv_syscall, u64 arg1, u6
         x64_sigaction* act = (x64_sigaction*)arg2;
         if (act) {
             auto handler = act->handler;
-            Signals::registerSignalHandler(state, arg1, (u64)handler, act->sa_mask, act->sa_flags);
+            Signals::registerSignalHandler(state, arg1, (u64)handler, act->sa_mask, act->sa_flags, act->restorer);
             if (g_config.verbose) {
                 PLAIN("Installed signal handler %s at:", strsignal(arg1));
                 print_address((u64)handler);
@@ -941,9 +954,10 @@ Result felix86_syscall_common(felix86_frame* frame, int rv_syscall, u64 arg1, u6
 
         x64_sigaction* old_act = (x64_sigaction*)arg3;
         if (old_act) {
-            old_act->handler = (decltype(old_act->handler))old.func;
+            old_act->handler = old.func;
             old_act->sa_flags = old.flags;
             old_act->sa_mask = old.mask;
+            old_act->restorer = old.restorer;
         }
 
         result = 0;
@@ -1259,6 +1273,12 @@ Result felix86_syscall_common(felix86_frame* frame, int rv_syscall, u64 arg1, u6
     }
     case felix86_riscv64_rt_sigsuspend: {
         result = Signals::sigsuspend(state, (sigset_t*)arg1);
+        break;
+    }
+    case felix86_riscv64_rt_sigreturn: {
+        Signals::sigreturn(frame->state);
+        Emulator::ExitDispatcher(frame);
+        UNREACHABLE();
         break;
     }
     case felix86_riscv64_epoll_create1: {

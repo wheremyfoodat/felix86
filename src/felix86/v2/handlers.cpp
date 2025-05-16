@@ -306,8 +306,31 @@ FAST_HANDLE(MOV) {
             WARN("Getting segment register in 64-bit mode, ignoring");
         }
     } else {
-        biscuit::GPR src = rec.getOperandGPR(&operands[1]);
-        rec.setOperandGPR(&operands[0], src);
+        bool reg_reg = operands[0].type == ZYDIS_OPERAND_TYPE_REGISTER && operands[1].type == ZYDIS_OPERAND_TYPE_REGISTER;
+        bool not_same = rec.zydisToRef(operands[0].reg.value) != rec.zydisToRef(operands[1].reg.value);
+        bool reg_mem = operands[0].type == ZYDIS_OPERAND_TYPE_MEMORY && operands[1].type == ZYDIS_OPERAND_TYPE_REGISTER;
+        if (not_same && reg_reg) {
+            // Save a mask by doing it this way
+            biscuit::GPR src = rec.getRefGPR(rec.zydisToRef(operands[1].reg.value), X86_SIZE_QWORD);
+            if (rec.zydisToSize(operands[1].reg.value) == X86_SIZE_BYTE_HIGH) {
+                biscuit::GPR temp = rec.scratch();
+                as.SRLI(temp, src, 8);
+                src = temp;
+            }
+            rec.setOperandGPR(&operands[0], src);
+        } else if (reg_mem) {
+            // Save a mask by doing it this way
+            biscuit::GPR src = rec.getRefGPR(rec.zydisToRef(operands[1].reg.value), X86_SIZE_QWORD);
+            if (rec.zydisToSize(operands[1].reg.value) == X86_SIZE_BYTE_HIGH) {
+                biscuit::GPR temp = rec.scratch();
+                as.SRLI(temp, src, 8);
+                src = temp;
+            }
+            rec.setOperandGPR(&operands[0], src);
+        } else {
+            biscuit::GPR src = rec.getOperandGPR(&operands[1]);
+            rec.setOperandGPR(&operands[0], src);
+        }
     }
 }
 
@@ -4240,10 +4263,7 @@ FAST_HANDLE(PMOVMSKB) {
     rec.setVectorState(SEW::E64, 2);
     as.VMV_XS(scratch, temp);
 
-    if (rec.maxVlen() == 128)
-        rec.zext(scratch, scratch, X86_SIZE_WORD);
-    else if (rec.maxVlen() == 256)
-        rec.zext(scratch, scratch, X86_SIZE_DWORD);
+    rec.zext(scratch, scratch, X86_SIZE_WORD);
 
     rec.setOperandGPR(&operands[0], scratch);
 }
@@ -5251,33 +5271,42 @@ void REV8(Recompiler& rec, Assembler& as, biscuit::GPR result, biscuit::GPR src)
     if (Extensions::B) {
         as.REV8(result, src);
     } else {
-        biscuit::GPR scratch = rec.scratch();
-        // TODO: make this bswap implementation better
-        as.SRLI(scratch, src, 8);
-        as.ANDI(result, scratch, 0xFF);
-        as.SLLI(result, result, 8);
-        as.SRLI(scratch, src, 16);
-        as.ANDI(scratch, scratch, 0xFF);
-        as.OR(result, result, scratch);
-        as.SLLI(result, result, 8);
-        as.SRLI(scratch, src, 24);
-        as.ANDI(scratch, scratch, 0xFF);
-        as.OR(result, result, scratch);
-        as.SLLI(result, result, 8);
-        as.SRLI(scratch, src, 32);
-        as.ANDI(scratch, scratch, 0xFF);
-        as.OR(result, result, scratch);
-        as.SLLI(result, result, 8);
-        as.SRLI(scratch, src, 40);
-        as.ANDI(scratch, scratch, 0xFF);
-        as.OR(result, result, scratch);
-        as.SLLI(result, result, 8);
-        as.SRLI(scratch, src, 48);
-        as.ANDI(scratch, scratch, 0xFF);
-        as.OR(result, result, scratch);
-        as.SLLI(result, result, 8);
-        as.SRLI(scratch, src, 56);
-        as.OR(result, result, scratch);
+        biscuit::GPR a1 = rec.scratch();
+        biscuit::GPR a2 = rec.scratch();
+        biscuit::GPR a3 = rec.scratch();
+        biscuit::GPR a4 = rec.scratch();
+        biscuit::GPR a5 = rec.scratch();
+        // Lifted from clang
+        as.SRLI(a1, src, 40);
+        as.LUI(a2, 16);
+        as.SRLI(a3, src, 56);
+        as.SRLI(a4, src, 24);
+        as.LUI(a5, 4080);
+        as.ADDIW(a2, a2, -256);
+        as.AND(a1, a1, a2);
+        as.OR(a1, a1, a3);
+        as.SRLI(a3, src, 8);
+        as.AND(a4, a4, a5);
+        as.SRLIW(a3, a3, 24);
+        as.SLLI(a3, a3, 24);
+        as.OR(a3, a3, a4);
+        as.SRLIW(a4, src, 24);
+        as.AND(a5, a5, src);
+        as.AND(a2, a2, src);
+        as.SLLI(result, src, 56);
+        as.SLLI(a4, a4, 32);
+        as.SLLI(a5, a5, 24);
+        as.OR(a4, a4, a5);
+        as.SLLI(a2, a2, 40);
+        as.OR(a1, a1, a3);
+        as.OR(result, result, a2);
+        as.OR(result, result, a4);
+        as.OR(result, result, a1);
+        rec.popScratch();
+        rec.popScratch();
+        rec.popScratch();
+        rec.popScratch();
+        rec.popScratch();
     }
 }
 
@@ -5335,12 +5364,63 @@ FAST_HANDLE(MOVHLPS) {
 
 FAST_HANDLE(ROL) {
     x86_size_e size = rec.getOperandSize(&operands[0]);
+    bool needs_cf = rec.shouldEmitFlag(rip, X86_REF_CF);
+    bool needs_of = rec.shouldEmitFlag(rip, X86_REF_OF);
+    bool needs_any_flag = needs_cf || needs_of;
+    bool qword_or_dword = size == X86_SIZE_QWORD || size == X86_SIZE_DWORD;
+    bool is_immediate = operands[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE;
+    if (g_config.noflag_opts && qword_or_dword && is_immediate && !needs_any_flag) {
+        switch (size) {
+        case X86_SIZE_DWORD: {
+            biscuit::GPR dst;
+            if (operands[0].type == ZYDIS_OPERAND_TYPE_REGISTER) {
+                // Don't zext, we use the W instructions so it's ok
+                dst = rec.getRefGPR(rec.zydisToRef(operands[0].reg.value), X86_SIZE_QWORD);
+            } else {
+                dst = rec.getOperandGPR(&operands[0]);
+            }
+            u8 immediate = rec.getImmediate(&operands[1]) & 31;
+            u8 rotate_amount = 32 - immediate;
+            if (Extensions::B) {
+                as.RORIW(dst, dst, rotate_amount);
+            } else {
+                biscuit::GPR temp = rec.scratch();
+                as.SRLIW(temp, dst, rotate_amount);
+                as.SLLIW(dst, dst, immediate);
+                as.OR(dst, dst, temp);
+            }
+            rec.setOperandGPR(&operands[0], dst);
+            break;
+        }
+        case X86_SIZE_QWORD: {
+            biscuit::GPR dst = rec.getOperandGPR(&operands[0]);
+            u8 immediate = rec.getImmediate(&operands[1]) & 63;
+            u8 rotate_amount = 64 - immediate;
+            if (Extensions::B) {
+                as.RORI(dst, dst, rotate_amount);
+            } else {
+                biscuit::GPR temp = rec.scratch();
+                as.SRLI(temp, dst, rotate_amount);
+                as.SLLI(dst, dst, immediate);
+                as.OR(dst, dst, temp);
+            }
+            rec.setOperandGPR(&operands[0], dst);
+            break;
+        }
+        default: {
+            UNREACHABLE();
+        }
+        }
+        return;
+    }
+
     biscuit::GPR dst = rec.getOperandGPR(&operands[0]);
     biscuit::GPR src = rec.getOperandGPR(&operands[1]);
     biscuit::GPR count = rec.scratch();
 
     Label zero_count;
 
+    // TODO: optimize rotate with immediate to skip this check
     biscuit::GPR cf = rec.flag(X86_REF_CF);
     biscuit::GPR of = rec.flag(X86_REF_OF);
     as.ANDI(count, src, rec.getBitSize(size) == 64 ? 63 : 31);
@@ -5362,6 +5442,7 @@ FAST_HANDLE(ROL) {
     as.Bind(&zero_count);
 }
 
+// TODO: optimize me for immediates and no flags like ROL
 FAST_HANDLE(ROR) {
     x86_size_e size = rec.getOperandSize(&operands[0]);
     biscuit::GPR dst = rec.getOperandGPR(&operands[0]);
@@ -7616,7 +7697,6 @@ FAST_HANDLE(CMPXCHG16B) {
         rec.setRefGPR(X86_REF_RAX, X86_SIZE_QWORD, rax_t);
         rec.setRefGPR(X86_REF_RDX, X86_SIZE_QWORD, rdx_t);
     } else {
-        // TODO: using a lock would at least make this atomic with respect to other cmpxchg16b instructions
         WARN_ONCE("This program uses CMPXCHG16B and your chip doesn't have the Zacas extension, execution may be unstable");
         biscuit::GPR rax = rec.getRefGPR(X86_REF_RAX, X86_SIZE_QWORD);
         biscuit::GPR rdx = rec.getRefGPR(X86_REF_RDX, X86_SIZE_QWORD);
@@ -7625,7 +7705,20 @@ FAST_HANDLE(CMPXCHG16B) {
         biscuit::GPR mem0 = rec.scratch();
         biscuit::GPR mem1 = rec.scratch();
 
-        rec.readMemory(mem0, address, 0, X86_SIZE_QWORD);
+        // Definitely not actually atomic, but better than nothing ...
+        biscuit::Label spinloop, writeloop;
+        biscuit::GPR lock_address = rec.scratch();
+        biscuit::GPR lock = rec.scratch();
+        as.LI(lock_address, (u64)&g_process_globals.cas128_lock);
+
+        as.Bind(&spinloop);
+        as.LI(lock, 1);
+        as.AMOSWAP_W(Ordering::AQRL, lock, lock, lock_address);
+        as.BNEZ(lock, &spinloop);
+
+        // Again, not atomic, but at least checking if one of the two qwords checking is better than nothing
+        as.Bind(&writeloop);
+        as.LR_D(Ordering::AQRL, mem0, address);
         rec.readMemory(mem1, address, 8, X86_SIZE_QWORD);
 
         Label not_equal;
@@ -7635,7 +7728,8 @@ FAST_HANDLE(CMPXCHG16B) {
         as.BNE(mem1, rdx, &not_equal);
 
         as.LI(zf, 1);
-        rec.writeMemory(rbx, address, 0, X86_SIZE_QWORD);
+        as.SC_D(Ordering::AQRL, lock, rbx, address);
+        as.BNEZ(lock, &writeloop);
         rec.writeMemory(rcx, address, 8, X86_SIZE_QWORD);
 
         as.Bind(&not_equal);
@@ -7645,6 +7739,8 @@ FAST_HANDLE(CMPXCHG16B) {
 
         rec.setRefGPR(X86_REF_RAX, X86_SIZE_QWORD, rax);
         rec.setRefGPR(X86_REF_RDX, X86_SIZE_QWORD, rdx);
+
+        as.AMOSWAP_W(Ordering::AQRL, x0, x0, lock_address);
     }
 }
 
