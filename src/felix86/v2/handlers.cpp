@@ -845,6 +845,7 @@ FAST_HANDLE(CALL) {
     case ZYDIS_OPERAND_TYPE_MEMORY: {
         biscuit::GPR src = rec.getOperandGPR(&operands[0]);
         biscuit::GPR ripreg = rec.allocatedGPR(X86_REF_RIP);
+        // Don't need to zero extend here as it's loaded as a DWORD
         as.MV(ripreg, src);
         biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, rec.stackWidth());
         as.ADDI(rsp, rsp, -rec.stackPointerSize());
@@ -870,7 +871,12 @@ FAST_HANDLE(CALL) {
         rec.addi(ripreg, ripreg, return_address_offset);
         rec.writeMemory(ripreg, rsp, 0, rec.stackWidth());
         rec.addi(ripreg, ripreg, displacement);
-        rec.jumpAndLink(rip + instruction.length + displacement);
+        if (g_mode32) {
+            rec.zext(ripreg, ripreg, X86_SIZE_DWORD);
+            rec.jumpAndLink((u32)(rip + instruction.length + displacement));
+        } else {
+            rec.jumpAndLink(rip + instruction.length + displacement);
+        }
         rec.stopCompiling();
         break;
     }
@@ -898,6 +904,7 @@ FAST_HANDLE(RET) {
     rec.setRefGPR(X86_REF_RSP, rec.stackWidth(), rsp);
 
     biscuit::GPR ripreg = rec.allocatedGPR(X86_REF_RIP);
+    // Don't need to zero extend here as it's loaded as a DWORD
     as.MV(ripreg, scratch);
     rec.backToDispatcher();
     rec.stopCompiling();
@@ -924,7 +931,46 @@ FAST_HANDLE(IRETQ) {
 }
 
 FAST_HANDLE(PUSH) {
-    biscuit::GPR src = rec.getOperandGPR(&operands[0]);
+    biscuit::GPR src;
+    if (is_segment(operands[0])) {
+        biscuit::GPR seg = rec.scratch();
+        int offset = 0;
+        switch (operands[0].reg.value) {
+        case ZYDIS_REGISTER_CS: {
+            offset = offsetof(ThreadState, cs);
+            break;
+        }
+        case ZYDIS_REGISTER_DS: {
+            offset = offsetof(ThreadState, ds);
+            break;
+        }
+        case ZYDIS_REGISTER_SS: {
+            offset = offsetof(ThreadState, ss);
+            break;
+        }
+        case ZYDIS_REGISTER_ES: {
+            offset = offsetof(ThreadState, es);
+            break;
+        }
+        case ZYDIS_REGISTER_FS: {
+            offset = offsetof(ThreadState, fs);
+            break;
+        }
+        case ZYDIS_REGISTER_GS: {
+            offset = offsetof(ThreadState, gs);
+            break;
+        }
+        default: {
+            UNREACHABLE();
+            break;
+        }
+        }
+        as.LHU(seg, offset, rec.threadStatePointer());
+        src = seg;
+    } else {
+        src = rec.getOperandGPR(&operands[0]);
+    }
+
     biscuit::GPR rsp = rec.getRefGPR(X86_REF_RSP, rec.stackWidth());
     int imm = -size_to_bytes(instruction.operand_width);
     rec.writeMemory(src, rsp, imm, rec.zydisToSize(instruction.operand_width));
@@ -1502,6 +1548,7 @@ FAST_HANDLE(JMP) {
     case ZYDIS_OPERAND_TYPE_MEMORY: {
         biscuit::GPR src = rec.getOperandGPR(&operands[0]);
         biscuit::GPR ripreg = rec.allocatedGPR(X86_REF_RIP);
+        // Don't need to zero extend here as it's loaded as a DWORD
         as.MV(ripreg, src);
         rec.backToDispatcher();
         rec.stopCompiling();
@@ -1513,7 +1560,12 @@ FAST_HANDLE(JMP) {
         u64 offset = (rip - rec.getCurrentMetadata().guest_address) + instruction.length + displacement;
         biscuit::GPR ripreg = rec.allocatedGPR(X86_REF_RIP);
         rec.addi(ripreg, ripreg, offset);
-        rec.jumpAndLink(address);
+        if (g_mode32) {
+            rec.zext(ripreg, ripreg, X86_SIZE_DWORD);
+            rec.jumpAndLink((u32)address);
+        } else {
+            rec.jumpAndLink(address);
+        }
         rec.stopCompiling();
         break;
     }
@@ -7670,15 +7722,18 @@ FAST_HANDLE(CMPXCHG16B) {
         WARN_ONCE("cmpxchg16b with zacas, untested, please report results");
         // We are the luckiest emulator alive!
         // AMOCAS.Q needs a register group (meaning, 2 registers side by side like t0, t1) to work
-        (void)rec.scratch(); // waste a scratch so we pick 28-29 and 30-31
         biscuit::GPR rax = rec.getRefGPR(X86_REF_RAX, X86_SIZE_QWORD);
         biscuit::GPR rdx = rec.getRefGPR(X86_REF_RDX, X86_SIZE_QWORD);
         biscuit::GPR rbx = rec.getRefGPR(X86_REF_RBX, X86_SIZE_QWORD);
         biscuit::GPR rcx = rec.getRefGPR(X86_REF_RCX, X86_SIZE_QWORD);
-        biscuit::GPR rax_t = rec.scratch();
-        biscuit::GPR rdx_t = rec.scratch();
-        biscuit::GPR rbx_t = rec.scratch();
-        biscuit::GPR rcx_t = rec.scratch();
+        biscuit::GPR rax_t = x28;
+        biscuit::GPR rdx_t = x29;
+        biscuit::GPR rbx_t = x30;
+        biscuit::GPR rcx_t = x31;
+        static_assert(Recompiler::isScratch(x28));
+        static_assert(Recompiler::isScratch(x29));
+        static_assert(Recompiler::isScratch(x30));
+        static_assert(Recompiler::isScratch(x31));
         ASSERT(rax_t == x28 && rdx_t == x29 && rbx_t == x30 && rcx_t == x31); // in case we change the order
         as.MV(rax_t, rax);
         as.MV(rdx_t, rdx);
