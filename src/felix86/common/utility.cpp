@@ -362,7 +362,7 @@ void felix86_fsave_16(struct ThreadState* state, u64 address, int x87_state) {
 
     data->env.cw = state->fpu_cw;
     data->env.tw = state->fpu_tw;
-    data->env.sw = state->fpu_top << 11;
+    data->env.sw = (state->fpu_top << 11) | (state->fpu_sw & ~(0b111 << 11));
 
     // We use this reserved bit in FCW to signify we stored the registers as MMX and thus
     // will not need f80->f64 conversion if loaded with frstor
@@ -387,7 +387,7 @@ void felix86_fsave_32(struct ThreadState* state, u64 address, int x87_state) {
 
     data->env.cw = state->fpu_cw;
     data->env.tw = state->fpu_tw;
-    data->env.sw = state->fpu_top << 11;
+    data->env.sw = (state->fpu_top << 11) | (state->fpu_sw & ~(0b111 << 11));
 
     // We use this reserved bit in FCW to signify we stored the registers as MMX and thus
     // will not need f80->f64 conversion if loaded with frstor
@@ -403,6 +403,7 @@ void felix86_frstor_16(struct ThreadState* state, u64 address) {
     state->fpu_cw = data->env.cw;
     state->fpu_tw = data->env.tw;
     state->fpu_sw = data->env.sw;
+    state->rmode_x87 = rounding_mode(x86RoundingMode((state->fpu_cw >> 10) & 0b11));
 
     for (int i = 0; i < 8; i++) {
         if (state->fpu_cw & 0x8000) {
@@ -421,6 +422,7 @@ void felix86_frstor_32(struct ThreadState* state, u64 address) {
     state->fpu_cw = data->env.cw;
     state->fpu_tw = data->env.tw;
     state->fpu_sw = data->env.sw;
+    state->rmode_x87 = rounding_mode(x86RoundingMode((state->fpu_cw >> 10) & 0b11));
 
     for (int i = 0; i < 8; i++) {
         if (state->fpu_cw & 0x8000) {
@@ -453,7 +455,7 @@ void felix86_fxsave(struct ThreadState* state, u64 address, int x87_state) {
 
     data->fcw = state->fpu_cw;
     data->ftw = state->fpu_tw;
-    data->fsw = state->fpu_top << 11;
+    data->fsw = (state->fpu_top << 11) | (state->fpu_sw & ~(0b111 << 11));
     data->mxcsr = state->mxcsr;
 
     // We use this reserved bit in FCW to signify we stored the registers as MMX and thus
@@ -474,6 +476,7 @@ void felix86_fxrstor(struct ThreadState* state, u64 address) {
     state->fpu_tw = data->ftw;
     state->fpu_sw = data->fsw;
     state->fpu_top = (data->fsw >> 11) & 7;
+    state->mxcsr = data->mxcsr;
 
     for (int i = 0; i < 8; i++) {
         if (state->fpu_cw & 0x8000) {
@@ -484,8 +487,40 @@ void felix86_fxrstor(struct ThreadState* state, u64 address) {
         }
     }
 
-    state->mxcsr = data->mxcsr;
-    state->rmode = rounding_mode((x86RoundingMode)((state->mxcsr >> 13) & 3));
+    state->rmode_x87 = rounding_mode(x86RoundingMode((state->fpu_cw >> 10) & 0b11));
+    state->rmode_sse = rounding_mode((x86RoundingMode)((state->mxcsr >> 13) & 0b11));
+}
+
+void felix86_fstenv_16(ThreadState* state, u64 address) {
+    fenv_data_16* env = (fenv_data_16*)address;
+    env->cw = state->fpu_cw;
+    env->tw = state->fpu_tw;
+    env->sw = (state->fpu_top << 11) | (state->fpu_sw & ~(0b111 << 11));
+}
+
+void felix86_fstenv_32(ThreadState* state, u64 address) {
+    fenv_data_32* env = (fenv_data_32*)address;
+    env->cw = state->fpu_cw;
+    env->tw = state->fpu_tw;
+    env->sw = (state->fpu_top << 11) | (state->fpu_sw & ~(0b111 << 11));
+}
+
+void felix86_fldenv_16(struct ThreadState* state, u64 address) {
+    fenv_data_16* env = (fenv_data_16*)address;
+    state->fpu_cw = env->cw;
+    state->fpu_tw = env->tw;
+    state->fpu_sw = env->sw;
+    state->fpu_top = (env->sw >> 11) & 0b111;
+    state->rmode_x87 = rounding_mode(x86RoundingMode((state->fpu_cw >> 10) & 0b11));
+}
+
+void felix86_fldenv_32(struct ThreadState* state, u64 address) {
+    fenv_data_32* env = (fenv_data_32*)address;
+    state->fpu_cw = env->cw;
+    state->fpu_tw = env->tw;
+    state->fpu_sw = env->sw;
+    state->fpu_top = (env->sw >> 11) & 0b111;
+    state->rmode_x87 = rounding_mode(x86RoundingMode((state->fpu_cw >> 10) & 0b11));
 }
 
 void felix86_pmaddwd(i16* dst, i16* src) {
@@ -902,6 +937,7 @@ void felix86_fsin(ThreadState* state) {
     memcpy(&boop, &state->fp[0], sizeof(double));
     double result = ::sin(boop);
     memcpy(&state->fp[0], &result, sizeof(double));
+    state->fpu_sw &= ~C2_BIT;
 }
 
 void felix86_fcos(ThreadState* state) {
@@ -909,6 +945,7 @@ void felix86_fcos(ThreadState* state) {
     memcpy(&boop, &state->fp[0], sizeof(double));
     double result = ::cos(boop);
     memcpy(&state->fp[0], &result, sizeof(double));
+    state->fpu_sw &= ~C2_BIT;
 }
 
 void felix86_fpatan(ThreadState* state) {

@@ -592,6 +592,10 @@ struct Recompiler {
         return *current_block_metadata;
     }
 
+    void setFsrmSSE(bool is_sse) {
+        fsrm_sse = is_sse;
+    }
+
 private:
     struct FlagAccess {
         bool modification; // true if modified, false if used
@@ -672,6 +676,8 @@ private:
 
     biscuit::GPR cached_lea = x0;
     ZydisDecodedOperand* cached_lea_operand;
+
+    bool fsrm_sse = true;
 
     std::array<AddressCacheEntry, 1 << address_cache_bits> address_cache{};
 

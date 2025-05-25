@@ -422,6 +422,7 @@ u64 Recompiler::compileSequence(u64 rip) {
     current_vlen = 0;
     current_grouping = LMUL::M1;
     using_mmx = false;
+    fsrm_sse = true; // dispatcher loads SSE rounding mode as a default
 
     current_block_metadata->guest_address = rip;
 
@@ -437,11 +438,30 @@ u64 Recompiler::compileSequence(u64 rip) {
                       (operands[1].type == ZYDIS_OPERAND_TYPE_REGISTER && operands[1].reg.value >= ZYDIS_REGISTER_MM0 &&
                        operands[1].reg.value <= ZYDIS_REGISTER_MM7);
         bool is_x87 = instruction.meta.isa_ext == ZYDIS_ISA_EXT_X87;
+        bool is_sse = (operands[0].type == ZYDIS_OPERAND_TYPE_REGISTER && operands[0].reg.value >= ZYDIS_REGISTER_XMM0 &&
+                       operands[0].reg.value <= ZYDIS_REGISTER_XMM15) ||
+                      (operands[1].type == ZYDIS_OPERAND_TYPE_REGISTER && operands[1].reg.value >= ZYDIS_REGISTER_XMM0 &&
+                       operands[1].reg.value <= ZYDIS_REGISTER_XMM15);
         if (is_mmx && !using_mmx) {
             WARN_ONCE("This program makes use of MMX");
             switchToMMX();
         } else if (is_x87 && using_mmx) {
             ERROR("MMX and x87 instructions mixed in a block?");
+        }
+
+        if (is_x87 && fsrm_sse) {
+            // An x87 instruction, load the x87 rounding mode
+            biscuit::GPR rm = scratch();
+            as.LBU(rm, offsetof(ThreadState, rmode_x87), threadStatePointer());
+            as.FSRM(x0, rm);
+            popScratch();
+            setFsrmSSE(false);
+        } else if (is_sse && !fsrm_sse) {
+            biscuit::GPR rm = scratch();
+            as.LBU(rm, offsetof(ThreadState, rmode_sse), threadStatePointer());
+            as.FSRM(x0, rm);
+            popScratch();
+            setFsrmSSE(true);
         }
 
         if (g_breakpoints.find(rip) != g_breakpoints.end()) {
@@ -1507,10 +1527,17 @@ void Recompiler::restoreState() {
     as.LBU(of, offsetof(ThreadState, of), threadStatePointer());
 
     // Restore the rounding mode
-    biscuit::GPR rm = scratch();
-    as.LBU(rm, offsetof(ThreadState, rmode), threadStatePointer());
-    as.FSRM(x0, rm);
-    popScratch();
+    if (fsrm_sse) {
+        biscuit::GPR rm = scratch();
+        as.LBU(rm, offsetof(ThreadState, rmode_sse), threadStatePointer());
+        as.FSRM(x0, rm);
+        popScratch();
+    } else {
+        biscuit::GPR rm = scratch();
+        as.LBU(rm, offsetof(ThreadState, rmode_x87), threadStatePointer());
+        as.FSRM(x0, rm);
+        popScratch();
+    }
 
     // TODO: merge the following two writes to a SH
     static_assert((int)x87State::x87 == 0);

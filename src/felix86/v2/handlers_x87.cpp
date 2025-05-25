@@ -24,7 +24,24 @@ FAST_HANDLE(FLD) {
 FAST_HANDLE(FILD) {
     biscuit::FPR ftemp = rec.scratchFPR();
     biscuit::GPR value = rec.getOperandGPR(&operands[0]);
-    as.FCVT_D_L(ftemp, value);
+    switch (operands[0].size) {
+    case 16: {
+        rec.sext(value, value, X86_SIZE_WORD);
+        as.FCVT_D_W(ftemp, value);
+        break;
+    }
+    case 32: {
+        as.FCVT_D_W(ftemp, value);
+        break;
+    }
+    case 64: {
+        as.FCVT_D_L(ftemp, value);
+        break;
+    }
+    default: {
+        UNREACHABLE();
+    }
+    }
     rec.pushX87(ftemp);
 }
 
@@ -68,6 +85,7 @@ FAST_HANDLE(FDIVP) {
 FAST_HANDLE(FIDIV) {
     biscuit::FPR st0 = rec.getST(0);
     biscuit::GPR integer = rec.getOperandGPR(&operands[0]);
+    ASSERT(operands[0].type == ZYDIS_OPERAND_TYPE_MEMORY);
     biscuit::FPR scratch = rec.scratchFPR();
     biscuit::FPR result = rec.scratchFPR();
 
@@ -92,6 +110,7 @@ FAST_HANDLE(FDIVRP) {
 FAST_HANDLE(FIDIVR) {
     biscuit::FPR st0 = rec.getST(0);
     biscuit::GPR integer = rec.getOperandGPR(&operands[0]);
+    ASSERT(operands[0].type == ZYDIS_OPERAND_TYPE_MEMORY);
     biscuit::FPR scratch = rec.scratchFPR();
     biscuit::FPR result = rec.scratchFPR();
 
@@ -116,6 +135,7 @@ FAST_HANDLE(FMULP) {
 FAST_HANDLE(FIMUL) {
     biscuit::FPR st0 = rec.getST(0);
     biscuit::GPR integer = rec.getOperandGPR(&operands[0]);
+    ASSERT(operands[0].type == ZYDIS_OPERAND_TYPE_MEMORY);
     biscuit::FPR scratch = rec.scratchFPR();
     biscuit::FPR result = rec.scratchFPR();
 
@@ -162,6 +182,7 @@ FAST_HANDLE(FADDP) {
 FAST_HANDLE(FIADD) {
     biscuit::FPR st0 = rec.getST(0);
     biscuit::GPR integer = rec.getOperandGPR(&operands[0]);
+    ASSERT(operands[0].type == ZYDIS_OPERAND_TYPE_MEMORY);
     biscuit::FPR scratch = rec.scratchFPR();
     biscuit::FPR result = rec.scratchFPR();
 
@@ -186,6 +207,7 @@ FAST_HANDLE(FSUBP) {
 FAST_HANDLE(FISUB) {
     biscuit::FPR st0 = rec.getST(0);
     biscuit::GPR integer = rec.getOperandGPR(&operands[0]);
+    ASSERT(operands[0].type == ZYDIS_OPERAND_TYPE_MEMORY);
     biscuit::FPR scratch = rec.scratchFPR();
     biscuit::FPR result = rec.scratchFPR();
 
@@ -210,6 +232,7 @@ FAST_HANDLE(FSUBRP) {
 FAST_HANDLE(FISUBR) {
     biscuit::FPR st0 = rec.getST(0);
     biscuit::GPR integer = rec.getOperandGPR(&operands[0]);
+    ASSERT(operands[0].type == ZYDIS_OPERAND_TYPE_MEMORY);
     biscuit::FPR scratch = rec.scratchFPR();
     biscuit::FPR result = rec.scratchFPR();
 
@@ -306,7 +329,16 @@ FAST_HANDLE(FXAM) {
 }
 
 FAST_HANDLE(FNSTENV) {
-    WARN("Unhandled instruction FNSTENV, no operation");
+    biscuit::GPR address = rec.lea(&operands[0]);
+    rec.writebackState();
+    as.MV(a1, address);
+    as.MV(a0, rec.threadStatePointer());
+    if (instruction.attributes & ZYDIS_ATTRIB_HAS_OPERANDSIZE) {
+        rec.call((u64)felix86_fstenv_16);
+    } else {
+        rec.call((u64)felix86_fstenv_32);
+    }
+    rec.restoreState();
 }
 
 FAST_HANDLE(FNSTSW) {
@@ -316,7 +348,16 @@ FAST_HANDLE(FNSTSW) {
 }
 
 FAST_HANDLE(FLDENV) {
-    WARN("Unhandled instruction FLDENV, no operation");
+    biscuit::GPR address = rec.lea(&operands[0]);
+    rec.writebackState();
+    as.MV(a1, address);
+    as.MV(a0, rec.threadStatePointer());
+    if (instruction.attributes & ZYDIS_ATTRIB_HAS_OPERANDSIZE) {
+        rec.call((u64)felix86_fldenv_16);
+    } else {
+        rec.call((u64)felix86_fldenv_32);
+    }
+    rec.restoreState();
 }
 
 void FIST(Recompiler& rec, u64 rip, Assembler& as, ZydisDecodedOperand* operands, bool pop, RMode mode = RMode::DYN) {
@@ -355,11 +396,10 @@ FAST_HANDLE(FISTTP) {
 }
 
 void FCOMI(Recompiler& rec, Assembler& as, ZydisDecodedOperand* operands, bool pop) {
-    u8 index = operands[1].reg.value - ZYDIS_REGISTER_ST0;
     biscuit::GPR cond = rec.scratch();
     biscuit::GPR cond2 = rec.scratch();
-    biscuit::FPR st0 = rec.getST(0);
-    biscuit::FPR sti = rec.getST(index);
+    biscuit::FPR st0 = rec.getST(&operands[0]);
+    biscuit::FPR sti = rec.getST(&operands[1]);
 
     biscuit::GPR zf = rec.flag(X86_REF_ZF);
     biscuit::GPR cf = rec.flag(X86_REF_CF);
@@ -425,8 +465,14 @@ FAST_HANDLE(FUCOMIP) {
 }
 
 void FCOM(Recompiler& rec, Assembler& as, ZydisDecodedOperand* operands, int pop_count) {
-    biscuit::FPR st0 = rec.getST(0);
-    biscuit::FPR src = rec.getST(&operands[0]);
+    biscuit::FPR st0, src;
+    if (operands[0].type == ZYDIS_OPERAND_TYPE_REGISTER && operands[0].reg.value == ZYDIS_REGISTER_ST0) {
+        st0 = rec.getST(&operands[0]);
+        src = rec.getST(&operands[1]);
+    } else {
+        st0 = rec.getST(&operands[1]);
+        src = rec.getST(&operands[0]);
+    }
 
     biscuit::GPR c0 = rec.scratch();
     biscuit::GPR c2 = rec.scratch();
@@ -444,12 +490,12 @@ void FCOM(Recompiler& rec, Assembler& as, ZydisDecodedOperand* operands, int pop
     as.XORI(nan2, nan2, 1);
     as.OR(nan1, nan1, nan2);
 
+    as.FLT_D(c0, st0, src);
+    as.FEQ_D(c3, st0, src);
     // If either is NaN set all to 1s
     as.OR(c0, c0, nan1);
     as.OR(c3, c3, nan1);
     as.OR(c2, c2, nan1);
-    as.FLT_D(c0, st0, src);
-    as.FEQ_D(c3, st0, src);
     as.SLLI(c2, c2, 10);
     as.SLLI(c0, c0, 8);
     as.SLLI(c3, c3, 14);
@@ -582,12 +628,50 @@ FAST_HANDLE(FABS) {
     rec.setST(0, st0);
 }
 
-FAST_HANDLE(FNSTCW) {}
+FAST_HANDLE(FNSTCW) {
+    biscuit::GPR address = rec.lea(&operands[0]);
+    biscuit::GPR temp = rec.scratch();
+    as.LHU(temp, offsetof(ThreadState, fpu_cw), Recompiler::threadStatePointer());
+    as.SH(temp, 0, address);
+}
 
-FAST_HANDLE(FLDCW) {}
+FAST_HANDLE(FLDCW) {
+    biscuit::GPR address = rec.lea(&operands[0]);
+    biscuit::GPR temp = rec.scratch();
+    as.LHU(temp, 0, address);
+    as.SH(temp, offsetof(ThreadState, fpu_cw), Recompiler::threadStatePointer());
+
+    biscuit::GPR rc = rec.scratch();
+    // Extract rounding mode from FPU control word
+    as.SRLI(rc, temp, 10);
+    as.ANDI(rc, rc, 0b11);
+
+    // Here's how the rounding modes match up
+    // 00 - Round to nearest (even) x86 -> 00 RISC-V
+    // 01 - Round down (towards -inf) x86 -> 10 RISC-V
+    // 10 - Round up (towards +inf) x86 -> 11 RISC-V
+    // 11 - Round towards zero x86 -> 01 RISC-V
+    // So we can shift the following bit sequence to the right and mask it
+    // 01111000, shift by the rc * 2 and we get the RISC-V rounding mode
+    as.SLLI(rc, rc, 1);
+    as.LI(temp, 0b01111000);
+    as.SRL(temp, temp, rc);
+    as.ANDI(temp, temp, 0b11);
+    as.FSRM(x0, temp);
+
+    as.SB(temp, offsetof(ThreadState, rmode_x87), rec.threadStatePointer());
+
+    rec.setFsrmSSE(false);
+}
 
 FAST_HANDLE(FNINIT) {
-    WARN("Unhandled instruction FNINIT, no operation");
+    biscuit::GPR temp = rec.scratch();
+    as.LI(temp, 0x037F);
+    as.SH(temp, offsetof(ThreadState, fpu_cw), Recompiler::threadStatePointer());
+
+    // FINIT sets it to nearest neighbor which happens to be 0 in both x86 and RISC-V
+    as.FSRM(x0);
+    rec.setFsrmSSE(false);
 }
 
 void FCMOV(Recompiler& rec, Assembler& as, ZydisDecodedOperand* operands, biscuit::GPR cond) {
